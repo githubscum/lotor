@@ -1,10 +1,190 @@
+#!/usr/bin/env node
+
 /**
  * src/mcp/server.js
  *
  * MCP server exposing tools:
  *   - query_receipts
  *   - verify_chain
- *   - gated_action (delegates to gate/index.js)
+ *   - gated_action (stub for WO-B4)
+ *
+ * Uses stdio transport (standard for local MCP servers).
  */
 
-// TODO(WO-B3): Implement MCP server
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createStore } from '../store/index.js';
+import * as crypto from 'node:crypto';
+
+// Initialize store
+const store = createStore();
+
+/**
+ * Tool handler: query_receipts
+ * Returns receipt summaries from the persisted chain (most recent first).
+ * Optional filter by sessionId.
+ */
+function handleQueryReceipts(args) {
+  const { limit, sessionId } = args || {};
+
+  // Reload to get latest
+  const entries = store.reload();
+
+  // Map to receipt summaries, filter if needed
+  let receipts = entries.map(entry => ({
+    seq: entry.seq,
+    timestamp: entry.timestamp,
+    sessionId: entry.payload?.session?.id,
+    model: entry.payload?.session?.model,
+    hash: entry.hash,
+    touchedCount: entry.payload?.touched?.length || 0,
+    toolCalls: entry.payload?.counts?.toolCalls || 0
+  }));
+
+  // Filter by sessionId if provided
+  if (sessionId) {
+    receipts = receipts.filter(r => r.sessionId === sessionId);
+  }
+
+  // Most recent first (highest seq first)
+  receipts.reverse();
+
+  // Apply limit if provided
+  if (limit && typeof limit === 'number') {
+    receipts = receipts.slice(0, limit);
+  }
+
+  return { receipts };
+}
+
+/**
+ * Tool handler: verify_chain
+ * Verifies chain integrity using stored public key.
+ */
+function handleVerifyChain() {
+  // Reload to get latest chain state (ensures fresh view for verification)
+  store.reload();
+  const result = store.verify();
+  return {
+    ok: result.ok,
+    brokenAt: result.brokenAt ?? null,
+    reason: result.reason ?? null,
+    entryCount: store.entries.length
+  };
+}
+
+/**
+ * Tool handler: gated_action
+ * STUB for WO-B4: fail-closed gate logic arrives later.
+ */
+function handleGatedAction(args) {
+  const { action, params } = args || {};
+  return {
+    status: "not-implemented",
+    note: "gated action fail-closed logic arrives in WO-B4",
+    requestedAction: action ?? null
+  };
+}
+
+/**
+ * Create and configure the MCP server.
+ */
+function createMcpServer() {
+  const server = new Server(
+    {
+      name: 'agent-receipts-mcp',
+      version: '0.0.0'
+    },
+    {
+      capabilities: {
+        tools: {}
+      }
+    }
+  );
+
+  // Register tool handlers
+  server.setRequestHandler('tools/list', async () => {
+    return {
+      tools: [
+        {
+          name: 'query_receipts',
+          description: 'Query receipt summaries from the persisted chain (most recent first). Never returns full file contents.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'number',
+                description: 'Maximum number of receipts to return'
+              },
+              sessionId: {
+                type: 'string',
+                description: 'Filter by specific session ID'
+              }
+            }
+          }
+        },
+        {
+          name: 'verify_chain',
+          description: 'Verify the integrity of the receipt chain using the stored public key. Returns ok, brokenAt, reason, and entryCount.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'gated_action',
+          description: 'Execute a gated action (stub - fail-closed logic arrives in WO-B4)',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                description: 'Action to execute'
+              },
+              params: {
+                type: 'object',
+                description: 'Action parameters'
+              }
+            }
+          }
+        }
+      ]
+    };
+  });
+
+  server.setRequestHandler('tools/call', async (request) => {
+    const { name, arguments: args } = request.params;
+
+    switch (name) {
+      case 'query_receipts':
+        return { content: [{ type: 'text', text: JSON.stringify(handleQueryReceipts(args), null, 2) }] };
+      case 'verify_chain':
+        return { content: [{ type: 'text', text: JSON.stringify(handleVerifyChain(), null, 2) }] };
+      case 'gated_action':
+        return { content: [{ type: 'text', text: JSON.stringify(handleGatedAction(args), null, 2) }] };
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  });
+
+  return server;
+}
+
+// Export handlers for testing
+export {
+  handleQueryReceipts,
+  handleVerifyChain,
+  handleGatedAction
+};
+
+// Export store for testing (allows tests to reset/reload)
+export { store };
+
+// Main entry: start stdio server
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = createMcpServer();
+  const transport = new StdioServerTransport();
+
+  await server.connect(transport);
+  // Server runs until stdio closes
+}

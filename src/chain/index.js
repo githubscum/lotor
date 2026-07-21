@@ -12,11 +12,12 @@ const GENESIS_PREV_HASH = '0'.repeat(64);
 /**
  * Create a new signed hash chain.
  * @param {Object} keyPair - { publicKey: KeyObject, privateKey: KeyObject } from node:crypto
+ * @param {number} [startSeq=0] - Starting sequence number (for resuming from persisted chain)
  * @returns {Object} chain with append() and entries
  */
-function createChain(keyPair) {
+function createChain(keyPair, startSeq = 0) {
   const entries = [];
-  let seq = 0;
+  let seq = startSeq;
 
   return {
     entries,
