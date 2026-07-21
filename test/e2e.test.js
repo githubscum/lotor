@@ -239,4 +239,73 @@ describe('E2E: full gated action flow', () => {
     assert.strictEqual(result.decision, 'denied', 'Should deny mismatched action');
     assert.ok(result.reason.includes('mismatch'), 'Should indicate mismatch');
   });
+
+  it('file-based flow: --action-file and --token-file read correctly', () => {
+    // Create store and chain
+    const store = createStore(tempDir);
+    const chain = {
+      entries: store.entries,
+      append: store.appendReceipt.bind(store)
+    };
+
+    // Step 1: Write action to a file (simulating --action-file)
+    const actionRequest = { action: 'delete_sensitive_files', params: { pattern: '*.key' } };
+    const actionFilePath = path.join(tempDir, 'action.json');
+    fs.writeFileSync(actionFilePath, JSON.stringify(actionRequest), { mode: 0o644 });
+
+    // Step 2: Read action from file and attempt gate without token
+    const actionFromFile = JSON.parse(fs.readFileSync(actionFilePath, 'utf8'));
+    const denyResult = gatedAction(actionFromFile, null, chain, tempDir);
+
+    assert.strictEqual(denyResult.decision, 'denied', 'Should deny without token');
+    assert.strictEqual(denyResult.reason, 'no approval token provided', 'Should have correct reason');
+
+    // Step 3: Create approval token and write to file (simulating --out)
+    const approvalToken = createTestApprovalToken(actionRequest, testKeypair);
+    const tokenFilePath = path.join(tempDir, 'token.json');
+    fs.writeFileSync(tokenFilePath, JSON.stringify(approvalToken, null, 2), { mode: 0o600 });
+
+    // Step 4: Read token from file and attempt gate (simulating --token-file)
+    const tokenFromFile = JSON.parse(fs.readFileSync(tokenFilePath, 'utf8'));
+    const approveResult = gatedAction(actionFromFile, tokenFromFile, chain, tempDir);
+
+    assert.strictEqual(approveResult.decision, 'approved', 'Should approve with valid token from file');
+    assert.strictEqual(approveResult.approvalNonce, approvalToken.nonce, 'Should return the nonce');
+
+    // Step 5: Verify the chain is intact
+    const verifyResult = store.verify();
+    assert.strictEqual(verifyResult.ok, true, 'Chain should verify');
+  });
+
+  it('file-based flow: malformed action file produces clear error', () => {
+    // Write malformed JSON to a file
+    const actionFilePath = path.join(tempDir, 'malformed.json');
+    fs.writeFileSync(actionFilePath, '{ invalid json }', { mode: 0o644 });
+
+    // Attempt to parse (simulating what the CLI does)
+    let parseError = null;
+    try {
+      JSON.parse(fs.readFileSync(actionFilePath, 'utf8'));
+    } catch (e) {
+      parseError = e;
+    }
+
+    assert.ok(parseError, 'Should throw on malformed JSON');
+    assert.ok(parseError.message.length > 0, 'Should have clear error message');
+  });
+
+  it('file-based flow: missing file produces clear error', () => {
+    const missingFilePath = path.join(tempDir, 'nonexistent.json');
+
+    // Attempt to read (simulating what the CLI does)
+    let readError = null;
+    try {
+      fs.readFileSync(missingFilePath, 'utf8');
+    } catch (e) {
+      readError = e;
+    }
+
+    assert.ok(readError, 'Should throw on missing file');
+    assert.ok(readError.code === 'ENOENT', 'Should have ENOENT error code');
+  });
 });

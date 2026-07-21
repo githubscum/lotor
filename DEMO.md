@@ -12,8 +12,14 @@ npm install
 
 Remove the chain and keys to start with a clean slate:
 
+**PowerShell:**
+```powershell
+Remove-Item -Recurse -Force receipts, keys
+```
+
+**Bash:**
 ```bash
-rm -rf receipts/chain.jsonl keys/
+rm -rf receipts keys
 ```
 
 ## Step 1: Initialize the approval key
@@ -46,7 +52,7 @@ Ingested session. Chain entry seq=0, hash=<first-16-chars>...
 Without an approval token, the gate **denies by default**:
 
 ```bash
-npm run gate -- '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}'
+npm run gate -- --action-file test-data/sample-action.json
 ```
 
 **Expected response:**
@@ -65,10 +71,10 @@ A **denial receipt** is appended to the chain. This is the "fail closed" behavio
 The owner approves a specific action by signing its canonical representation:
 
 ```bash
-npm run approve -- '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}'
+npm run approve -- --action-file test-data/sample-action.json --out my-token.json
 ```
 
-**Enter your passphrase** when prompted. The output is the approval token:
+**Enter your passphrase** when prompted. The token is written to `my-token.json` and printed to stdout:
 
 ```json
 {
@@ -79,16 +85,16 @@ npm run approve -- '{"action":"delete_sensitive_files","params":{"pattern":"*.ke
 }
 ```
 
-Copy this JSON — it's the approval token.
+The token file (`my-token.json`) is gitignored — do not commit it.
 
 **Note:** This command requires a TTY and cannot be run in a non-interactive environment.
 
 ## Step 5: Attempt the same action WITH approval
 
-Now call `gate` with the approval token (paste the full token JSON as the second argument):
+Now call `gate` with the approval token file:
 
 ```bash
-npm run gate -- '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}' '<paste-token-json-here>'
+npm run gate -- --action-file test-data/sample-action.json --token-file my-token.json
 ```
 
 **Expected response:**

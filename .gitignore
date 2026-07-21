@@ -5,3 +5,5 @@ keys/
 nonces.log
 receipts/
 *.local.json
+my-token.json
+*.token.json
