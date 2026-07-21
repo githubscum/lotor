@@ -1,0 +1,19 @@
+{
+  "name": "agent-receipts",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Local-first receipt layer for AI agent sessions",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "echo 'TODO(WO-B2): implement tests' && exit 1",
+    "start": "echo 'TODO(WO-B3): implement MCP server start' && exit 1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "SEE LICENSE.TODO"
+}
