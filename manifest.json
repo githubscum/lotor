@@ -1,0 +1,48 @@
+{
+  "manifest_version": "0.3",
+  "name": "agent-receipts",
+  "display_name": "Agent Receipts",
+  "version": "0.0.0",
+  "description": "Local-first receipt layer for AI agent sessions",
+  "long_description": "A local-first, MCP-native receipt layer for AI agent sessions. It writes a signed, tamper-evident log of what an agent did during a session (actions performed, files touched, messages sent, costs incurred, failures encountered) and exposes tools to query those receipts, verify chain integrity, and run a fail-closed gated action that requires an owner-signed approval token.",
+  "author": {
+    "name": "githubscum"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "receipts",
+    "audit",
+    "local-first",
+    "tamper-evident"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "src/mcp/server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/src/mcp/server.js"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "query_receipts",
+      "description": "Query receipt summaries from the chain (most recent first). Optional params: limit, sessionId."
+    },
+    {
+      "name": "verify_chain",
+      "description": "Verify chain integrity. Returns { ok, brokenAt?, reason?, entryCount }."
+    },
+    {
+      "name": "gated_action",
+      "description": "Fail-closed gate. Denies an action unless a valid owner-signed approval token is presented for that exact action, and writes a receipt to the chain in both directions (denied and approved). Params: action, optional params, optional approvalToken."
+    }
+  ],
+  "compatibility": {
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}
