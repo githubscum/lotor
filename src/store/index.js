@@ -14,11 +14,7 @@ import { createChain, verifyChain, generateKeyPair } from '../chain/index.js';
  * The distinction: chain key = log integrity; approval key = authorization gate.
  */
 
-const RECEIPTS_DIR = 'receipts';
-const CHAIN_FILE = path.join(RECEIPTS_DIR, 'chain.jsonl');
-const KEYS_DIR = 'keys';
-const PUB_KEY_FILE = path.join(KEYS_DIR, 'chain.pub');
-const PRIV_KEY_FILE = path.join(KEYS_DIR, 'chain.key');
+const DEFAULT_BASE_DIR = '.';
 
 /**
  * Ensure directory exists.
@@ -32,14 +28,19 @@ function ensureDir(dir) {
 /**
  * Load or create the chain signing keypair.
  * On first use, generates Ed25519 keypair and writes to keys/chain.pub and keys/chain.key.
+ * @param {string} baseDir - Base directory for keys (default: '.')
  * @returns {Object} { publicKey: KeyObject, privateKey: KeyObject }
  */
-function loadOrCreateKeyPair() {
-  ensureDir(KEYS_DIR);
+function loadOrCreateKeyPair(baseDir = DEFAULT_BASE_DIR) {
+  const keysDir = path.join(baseDir, 'keys');
+  const pubKeyFile = path.join(keysDir, 'chain.pub');
+  const privKeyFile = path.join(keysDir, 'chain.key');
 
-  if (fs.existsSync(PUB_KEY_FILE) && fs.existsSync(PRIV_KEY_FILE)) {
-    const publicKeyPem = fs.readFileSync(PUB_KEY_FILE, 'utf-8');
-    const privateKeyPem = fs.readFileSync(PRIV_KEY_FILE, 'utf-8');
+  ensureDir(keysDir);
+
+  if (fs.existsSync(pubKeyFile) && fs.existsSync(privKeyFile)) {
+    const publicKeyPem = fs.readFileSync(pubKeyFile, 'utf-8');
+    const privateKeyPem = fs.readFileSync(privKeyFile, 'utf-8');
     return {
       publicKey: publicKeyPem,
       privateKey: privateKeyPem
@@ -50,24 +51,28 @@ function loadOrCreateKeyPair() {
   const keyPair = generateKeyPair();
 
   // Write keys (PEM format)
-  fs.writeFileSync(PUB_KEY_FILE, keyPair.publicKey, { mode: 0o644 });
-  fs.writeFileSync(PRIV_KEY_FILE, keyPair.privateKey, { mode: 0o600 });
+  fs.writeFileSync(pubKeyFile, keyPair.publicKey, { mode: 0o644 });
+  fs.writeFileSync(privKeyFile, keyPair.privateKey, { mode: 0o600 });
 
   return keyPair;
 }
 
 /**
  * Load the full chain from disk as an array of entries.
+ * @param {string} baseDir - Base directory for receipts (default: '.')
  * @returns {Array} Array of chain entries (empty if no chain exists yet)
  */
-function loadChain() {
-  ensureDir(RECEIPTS_DIR);
+function loadChain(baseDir = DEFAULT_BASE_DIR) {
+  const receiptsDir = path.join(baseDir, 'receipts');
+  const chainFile = path.join(receiptsDir, 'chain.jsonl');
 
-  if (!fs.existsSync(CHAIN_FILE)) {
+  ensureDir(receiptsDir);
+
+  if (!fs.existsSync(chainFile)) {
     return [];
   }
 
-  const content = fs.readFileSync(CHAIN_FILE, 'utf-8');
+  const content = fs.readFileSync(chainFile, 'utf-8');
   const lines = content.split('\n').filter(line => line.trim());
 
   return lines.map(line => {
@@ -83,33 +88,30 @@ function loadChain() {
  * Append a receipt (chain entry) to the append-only chain file.
  * Creates the chain file if it doesn't exist.
  * @param {Object} entry - The chain entry to append
+ * @param {string} baseDir - Base directory for receipts (default: '.')
  */
-function appendEntry(entry) {
-  ensureDir(RECEIPTS_DIR);
+function appendEntry(entry, baseDir = DEFAULT_BASE_DIR) {
+  const receiptsDir = path.join(baseDir, 'receipts');
+  const chainFile = path.join(receiptsDir, 'chain.jsonl');
+
+  ensureDir(receiptsDir);
 
   const line = JSON.stringify(entry);
-  fs.appendFileSync(CHAIN_FILE, line + '\n');
+  fs.appendFileSync(chainFile, line + '\n');
 }
 
 /**
  * Store interface: manages chain persistence and key management.
+ * @param {string} baseDir - Base directory for data (default: '.')
  */
-function createStore() {
-  const keyPair = loadOrCreateKeyPair();
-  const existingEntries = loadChain();
+function createStore(baseDir = DEFAULT_BASE_DIR) {
+  const keyPair = loadOrCreateKeyPair(baseDir);
+  const existingEntries = loadChain(baseDir);
 
-  // Create chain instance with correct starting sequence number
-  // If there are existing entries, start from that count so NEW entries continue the sequence
-  const chain = createChain(keyPair, existingEntries.length);
-
-  // Populate chain with existing entries if any
-  if (existingEntries.length > 0) {
-    // The chain entries are already signed; we just load them in
-    // The seq for NEW entries is already set via the startSeq parameter
-    for (const entry of existingEntries) {
-      chain.entries.push(entry);
-    }
-  }
+  // Create chain instance with:
+  // - correct starting sequence number (for NEW entries)
+  // - prior entries loaded so prevHash links correctly
+  const chain = createChain(keyPair, existingEntries.length, existingEntries);
 
   return {
     entries: chain.entries,
@@ -122,7 +124,7 @@ function createStore() {
      */
     appendReceipt(payload) {
       const entry = chain.append(payload);
-      appendEntry(entry);
+      appendEntry(entry, baseDir);
       return entry;
     },
 
@@ -131,7 +133,7 @@ function createStore() {
      * @returns {Array} Current chain entries
      */
     reload() {
-      const entries = loadChain();
+      const entries = loadChain(baseDir);
       this.entries.length = 0;
       for (const entry of entries) {
         this.entries.push(entry);

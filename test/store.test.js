@@ -1,28 +1,34 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { createStore, loadOrCreateKeyPair } from '../src/store/index.js';
 import { verifyChain } from '../src/chain/index.js';
 
-// Use a temp directory for test isolation
-const TEST_DIR = 'test-temp-store';
-const RECEIPTS_DIR = path.join(TEST_DIR, 'receipts');
-const KEYS_DIR = path.join(TEST_DIR, 'keys');
+// Use isolated temp directories for each test
+function createTempTestDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-receipts-test-'));
+}
 
 describe('store', () => {
-  beforeEach(() => {
-    // Clean up test directories before each test
-    if (fs.existsSync(TEST_DIR)) {
-      fs.rmSync(TEST_DIR, { recursive: true, force: true });
+  let testDirs = [];
+
+  afterEach(() => {
+    // Clean up all test directories
+    for (const dir of testDirs) {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
+    testDirs = [];
   });
 
   it('should create store and append entries with round-trip persistence', () => {
-    // Temporarily override the paths by patching the module (synthetic test approach)
-    // Instead, we'll test the actual store behavior and cleanup
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
 
-    const store = createStore();
+    const store = createStore(baseDir);
     const initialCount = store.entries.length;
 
     // Append a synthetic receipt
@@ -49,7 +55,7 @@ describe('store', () => {
     assert.strictEqual(store.entries.length, initialCount + 1);
 
     // Verify the persisted chain can be reloaded
-    const store2 = createStore();
+    const store2 = createStore(baseDir);
     const reloadedEntries = store2.reload();
     assert.ok(reloadedEntries.length >= 1, 'should have at least one entry after reload');
 
@@ -60,7 +66,10 @@ describe('store', () => {
   });
 
   it('should verify a persisted chain successfully', () => {
-    const store = createStore();
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
+    const store = createStore(baseDir);
 
     // Append multiple entries
     for (let i = 0; i < 3; i++) {
@@ -82,7 +91,10 @@ describe('store', () => {
   });
 
   it('should detect tampered chain on verification', () => {
-    const store = createStore();
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
+    const store = createStore(baseDir);
 
     // Append an entry
     store.appendReceipt({
@@ -104,31 +116,40 @@ describe('store', () => {
   });
 
   it('should generate keypair on first use', () => {
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
     // Create a fresh store - this should generate keys
-    const store = createStore();
+    const store = createStore(baseDir);
     assert.ok(store.keyPair, 'store should have keyPair');
     assert.ok(store.keyPair.publicKey, 'keyPair should have publicKey');
     assert.ok(store.keyPair.privateKey, 'keyPair should have privateKey');
 
     // Keys should exist on disk
-    assert.ok(fs.existsSync('keys/chain.pub'), 'public key should be written');
-    assert.ok(fs.existsSync('keys/chain.key'), 'private key should be written');
+    assert.ok(fs.existsSync(path.join(baseDir, 'keys/chain.pub')), 'public key should be written');
+    assert.ok(fs.existsSync(path.join(baseDir, 'keys/chain.key')), 'private key should be written');
   });
 
   it('should reload existing keys on subsequent use', () => {
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
     // First store creation generates keys
-    const store1 = createStore();
+    const store1 = createStore(baseDir);
     const pubKey1 = store1.keyPair.publicKey;
 
     // Second store should load same keys
-    const store2 = createStore();
+    const store2 = createStore(baseDir);
     const pubKey2 = store2.keyPair.publicKey;
 
     assert.strictEqual(pubKey1, pubKey2, 'should reuse existing keys');
   });
 
   it('should append multiple entries with correct sequence numbers', () => {
-    const store = createStore();
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
+    const store = createStore(baseDir);
     const startSeq = store.entries.length;
 
     const entries = [];
@@ -147,5 +168,36 @@ describe('store', () => {
       assert.strictEqual(entries[i].prevHash, entries[i - 1].hash,
         `entry ${i} should link to entry ${i - 1}`);
     }
+  });
+
+  it('should resume chain across store restarts with correct prevHash linkage', () => {
+    const baseDir = createTempTestDir();
+    testDirs.push(baseDir);
+
+    // First store instance: append initial entries
+    const store1 = createStore(baseDir);
+    const entry1 = store1.appendReceipt({ test: 'first-entry' });
+    const entry2 = store1.appendReceipt({ test: 'second-entry' });
+
+    // Second store instance (simulating process restart): append more entries
+    const store2 = createStore(baseDir);
+    assert.strictEqual(store2.entries.length, 2, 'should load 2 persisted entries');
+    assert.strictEqual(store2.entries[0].hash, entry1.hash, 'first entry should match');
+    assert.strictEqual(store2.entries[1].hash, entry2.hash, 'second entry should match');
+
+    // Append new entry - it should link to the last persisted entry
+    const entry3 = store2.appendReceipt({ test: 'third-entry' });
+    assert.strictEqual(entry3.seq, 2, 'new entry should have seq=2');
+    assert.strictEqual(entry3.prevHash, entry2.hash, 'new entry should link to previous');
+
+    // Verify the full chain
+    const result = store2.verify();
+    assert.strictEqual(result.ok, true, 'full chain should verify after restart');
+
+    // Third store instance: verify full chain persists
+    const store3 = createStore(baseDir);
+    assert.strictEqual(store3.entries.length, 3, 'should have 3 entries');
+    const verifyResult = store3.verify();
+    assert.strictEqual(verifyResult.ok, true, 'chain should verify from fresh load');
   });
 });

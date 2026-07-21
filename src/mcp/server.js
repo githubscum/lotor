@@ -6,7 +6,7 @@
  * MCP server exposing tools:
  *   - query_receipts
  *   - verify_chain
- *   - gated_action (stub for WO-B4)
+ *   - gated_action (WO-B4: fail-closed with approval)
  *
  * Uses stdio transport (standard for local MCP servers).
  */
@@ -14,6 +14,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createStore } from '../store/index.js';
+import { gatedAction } from '../gate/index.js';
 import * as crypto from 'node:crypto';
 
 // Initialize store
@@ -75,15 +76,29 @@ function handleVerifyChain() {
 
 /**
  * Tool handler: gated_action
- * STUB for WO-B4: fail-closed gate logic arrives later.
+ * WO-B4: fail-closed gate. Requires approval token for action execution.
+ * Returns structured denial on failure (not prose the model can argue with).
  */
 function handleGatedAction(args) {
-  const { action, params } = args || {};
-  return {
-    status: "not-implemented",
-    note: "gated action fail-closed logic arrives in WO-B4",
-    requestedAction: action ?? null
-  };
+  const { action, params, approvalToken } = args || {};
+
+  if (!action) {
+    return {
+      decision: 'denied',
+      reason: 'no action specified',
+      receiptSeq: null
+    };
+  }
+
+  const actionRequest = { action, params };
+
+  // Import the chain module to create a temporary chain for the receipt
+  // We use the store's chain via the internal chain instance
+  const result = gatedAction(actionRequest, approvalToken, {
+    append: (receipt) => store.appendReceipt(receipt)
+  });
+
+  return result;
 }
 
 /**
@@ -133,7 +148,7 @@ function createMcpServer() {
         },
         {
           name: 'gated_action',
-          description: 'Execute a gated action (stub - fail-closed logic arrives in WO-B4)',
+          description: 'Execute a gated action with approval token. FAILS CLOSED: without a valid approval token, returns decision:denied.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -144,8 +159,13 @@ function createMcpServer() {
               params: {
                 type: 'object',
                 description: 'Action parameters'
+              },
+              approvalToken: {
+                type: 'object',
+                description: 'Owner-signed approval token { request, nonce, timestamp, signature }'
               }
-            }
+            },
+            required: ['action']
           }
         }
       ]

@@ -188,22 +188,34 @@ describe('MCP tool handlers', () => {
   });
 
   describe('gated_action', () => {
-    it('should return not-implemented stub', () => {
+    it('should fail closed without approval token', () => {
       const result = handleGatedAction({ action: 'someAction', params: { key: 'value' } });
-      assert.strictEqual(result.status, 'not-implemented', 'should return not-implemented status');
-      assert.ok(result.note.includes('WO-B4'), 'should mention WO-B4');
-      assert.strictEqual(result.requestedAction, 'someAction', 'should echo requested action');
+      assert.strictEqual(result.decision, 'denied', 'should deny without token');
+      assert.strictEqual(result.reason, 'no approval token provided', 'should indicate missing token');
+      assert.ok(result.receiptSeq !== undefined, 'should have receiptSeq');
     });
 
     it('should handle empty args gracefully', () => {
       const result = handleGatedAction({});
-      assert.strictEqual(result.status, 'not-implemented');
-      assert.strictEqual(result.requestedAction, null, 'should have null action');
+      assert.strictEqual(result.decision, 'denied', 'should deny without action');
+      assert.strictEqual(result.reason, 'no action specified', 'should indicate missing action');
     });
 
     it('should handle null args', () => {
       const result = handleGatedAction(null);
-      assert.strictEqual(result.status, 'not-implemented');
+      assert.strictEqual(result.decision, 'denied', 'should deny with null args');
+      assert.strictEqual(result.reason, 'no action specified', 'should indicate missing action');
+    });
+
+    it('should deny with invalid approval token', () => {
+      const result = handleGatedAction({
+        action: 'sensitiveAction',
+        params: { target: 'important' },
+        approvalToken: { invalid: 'token' }
+      });
+      assert.strictEqual(result.decision, 'denied', 'should deny invalid token');
+      assert.ok(result.reason, 'should have denial reason');
+      assert.ok(result.receiptSeq !== undefined, 'should have receiptSeq');
     });
   });
 });

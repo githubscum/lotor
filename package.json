@@ -9,7 +9,9 @@
   "scripts": {
     "test": "node --test",
     "start": "node src/mcp/server.js",
-    "ingest": "node src/ingest/cli.js"
+    "ingest": "node src/ingest/cli.js",
+    "approve:init": "node bin/approve.js init",
+    "approve": "node bin/approve.js approve"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

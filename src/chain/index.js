@@ -13,10 +13,11 @@ const GENESIS_PREV_HASH = '0'.repeat(64);
  * Create a new signed hash chain.
  * @param {Object} keyPair - { publicKey: KeyObject, privateKey: KeyObject } from node:crypto
  * @param {number} [startSeq=0] - Starting sequence number (for resuming from persisted chain)
+ * @param {Array} [priorEntries=[]] - Existing entries to seed the chain (for resuming)
  * @returns {Object} chain with append() and entries
  */
-function createChain(keyPair, startSeq = 0) {
-  const entries = [];
+function createChain(keyPair, startSeq = 0, priorEntries = []) {
+  const entries = priorEntries.slice(); // Copy to avoid mutating the input
   let seq = startSeq;
 
   return {
