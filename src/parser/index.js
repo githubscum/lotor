@@ -1,7 +1,216 @@
+import crypto from 'node:crypto';
+
 /**
  * src/parser/index.js
  *
- * Claude Code JSONL → structured session events.
+ * Claude Code JSONL → structured session receipt.
  */
 
-// TODO(WO-B2): Implement parser
+/**
+ * Parse a Claude Code JSONL session file into a structured receipt.
+ * @param {string} jsonlText - The raw JSONL content (one JSON object per line)
+ * @returns {ReceiptSummary}
+ */
+function parseSession(jsonlText) {
+  const lines = jsonlText.split('\n').filter(line => line.trim());
+  const entries = lines.map(line => {
+    try {
+      return JSON.parse(line);
+    } catch (e) {
+      return null;
+    }
+  }).filter(Boolean);
+
+  // Session metadata from first entry
+  const sessionStart = entries.find(e => e.sessionId || e.session_id);
+  const session = {
+    id: sessionStart?.sessionId || sessionStart?.session_id || 'unknown',
+    model: null,
+    version: entries.find(e => e.version)?.version || 'unknown',
+    startedAt: null,
+    endedAt: null
+  };
+
+  const ran = [];        // { tool, id, paramsDigest }
+  const touched = new Map(); // path -> { via }
+  const failed = [];     // { tool, id, errorDigest }
+  const cost = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    note: 'tokens only; no USD in source'
+  };
+  const sent = {
+    items: [],
+    captureNote: 'self-attested; outbound not fully derivable from JSONL (see KNOWN-LIMITS #2)'
+  };
+
+  let turns = 0;
+  let toolCalls = 0;
+  let failures = 0;
+
+  // Track tool_use to tool_result linkage
+  const toolUseMap = new Map(); // tool_use_id -> { tool, paramsDigest }
+
+  for (const entry of entries) {
+    // Count assistant turns
+    if (entry.message?.role === 'assistant') {
+      turns++;
+      session.model = entry.message.model || session.model;
+
+      // Token usage
+      if (entry.message.usage) {
+        cost.inputTokens += entry.message.usage.input_tokens || 0;
+        cost.outputTokens += entry.message.usage.output_tokens || 0;
+        cost.cacheCreationTokens += entry.message.usage.cache_creation_input_tokens || 0;
+        cost.cacheReadTokens += entry.message.usage.cache_read_input_tokens || 0;
+      }
+
+      // Tool invocations (tool_use content items)
+      if (Array.isArray(entry.message.content)) {
+        for (const item of entry.message.content) {
+          if (item.type === 'tool_use') {
+            toolCalls++;
+            const toolName = item.name || 'unknown';
+            const toolId = item.id || `anon-${toolCalls}`;
+            const paramsDigest = digestParams(item.input);
+
+            ran.push({ tool: toolName, id: toolId, paramsDigest });
+            toolUseMap.set(toolId, { tool: toolName, paramsDigest });
+
+            // Check for network-capable tools for 'sent' tracking
+            if (isNetworkTool(toolName, item.input)) {
+              sent.items.push({
+                tool: toolName,
+                target: extractTarget(item.input, toolName)
+              });
+            }
+
+            // Track file mutations for 'touched'
+            if (toolName === 'Edit' || toolName === 'Write') {
+              const path = item.input?.file_path;
+              if (path) {
+                touched.set(path, { via: toolName.toLowerCase() });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Tool results (user turn with tool_result content)
+    if (entry.message?.role === 'user' && Array.isArray(entry.message.content)) {
+      for (const item of entry.message.content) {
+        if (item.type === 'tool_result') {
+          // Must walk EVERY tool_result to check for is_error
+          if (item.is_error === true) {
+            failures++;
+            const toolInfo = toolUseMap.get(item.tool_use_id);
+            const errorDigest = digestContent(item.content);
+            failed.push({
+              tool: toolInfo?.tool || 'unknown',
+              id: item.tool_use_id || 'unknown',
+              errorDigest
+            });
+          }
+          // Note: absent is_error = success, no action needed
+        }
+      }
+    }
+
+    // File history tracking (additional touch records)
+    if (entry.type === 'file-history-snapshot' && entry.snapshot?.trackedFileBackups) {
+      for (const [path, backup] of Object.entries(entry.snapshot.trackedFileBackups)) {
+        if (!touched.has(path)) {
+          touched.set(path, { via: 'file-history' });
+        }
+      }
+    }
+
+    if (entry.type === 'file-history-delta' && entry.trackingPath) {
+      if (!touched.has(entry.trackingPath)) {
+        touched.set(entry.trackingPath, { via: 'file-history' });
+      }
+    }
+  }
+
+  // Session timing from first/last entries
+  if (entries.length > 0) {
+    session.startedAt = entries[0].createdAt || null;
+    session.endedAt = entries[entries.length - 1].createdAt || null;
+  }
+
+  return {
+    session,
+    ran,
+    touched: Array.from(touched.entries()).map(([path, meta]) => ({ path, ...meta })),
+    failed,
+    cost,
+    sent,
+    counts: { turns, toolCalls, failures }
+  };
+}
+
+/**
+ * Create a short digest of parameters (NOT full content)
+ */
+function digestParams(input) {
+  if (!input) return 'empty';
+  const text = typeof input === 'string' ? input : JSON.stringify(input);
+  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/**
+ * Create a short digest of content (for error reporting)
+ */
+function digestContent(content) {
+  if (!content) return 'empty';
+  const text = typeof content === 'string' ? content : JSON.stringify(content);
+  if (text.length > 200) {
+    return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+  }
+  return text.slice(0, 50);
+}
+
+/**
+ * Check if a tool invocation is network-capable
+ */
+function isNetworkTool(toolName, input) {
+  const networkTools = ['WebFetch', 'WebSearch'];
+  if (networkTools.includes(toolName)) {
+    return true;
+  }
+
+  // Bash commands with network verbs
+  if (toolName === 'Bash' && input?.command) {
+    const cmd = input.command.toLowerCase();
+    const networkVerbs = ['curl', 'wget', 'git push', 'git pull', 'git fetch',
+                          'npm publish', 'npm install', 'npx', 'ssh', 'scp', 'rsync',
+                          'ping', 'telnet', 'nc ', 'netcat'];
+    return networkVerbs.some(verb => cmd.includes(verb.toLowerCase()));
+  }
+
+  return false;
+}
+
+/**
+ * Extract target from tool input for 'sent' tracking
+ */
+function extractTarget(input, toolName) {
+  if (!input) return 'unknown';
+
+  if (toolName === 'WebFetch') {
+    return input.url || 'unknown';
+  }
+  if (toolName === 'WebSearch') {
+    return input.query || 'unknown';
+  }
+  if (toolName === 'Bash' && input.command) {
+    return input.command.slice(0, 100);
+  }
+
+  return 'unknown';
+}
+
+export { parseSession };

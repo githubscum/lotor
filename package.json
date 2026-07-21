@@ -7,7 +7,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "echo 'TODO(WO-B2): implement tests' && exit 1",
+    "test": "node --test",
     "start": "echo 'TODO(WO-B3): implement MCP server start' && exit 1"
   },
   "dependencies": {
