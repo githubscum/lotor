@@ -13,3 +13,7 @@ The `sent` / outbound field in receipts is not fully derivable from Claude Code 
 ## 3. No external anchoring in v1
 
 The chain is local-only. External anchoring (to a timestamp authority, blockchain, or other notary) is a planned later enhancement. In v1, tamper detection relies on local key custody and periodic manual export/offsite backup.
+
+## 4. Cost is reported in tokens, not dollars
+
+Where the session transcript records per-turn token counts, receipts carry them. Dollar cost is not computed in v1: it requires an external, model-specific price table that is not bundled. Treat the cost column as token usage, not a billing figure.
