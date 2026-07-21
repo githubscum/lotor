@@ -6,7 +6,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { gatedAction, verifyApproval, isApprovalKeyInitialized } from '../src/gate/index.js';
 import {
-  canonicalizeRequest
+  canonicalizeRequest,
+  sortKeysReplacer
 } from '../src/gate/sign.js';
 
 // Synthetic test keypair (NEVER use for real approvals)
@@ -331,6 +332,125 @@ describe('gate', () => {
       // No key setup
 
       assert.strictEqual(isApprovalKeyInitialized(baseDir), false);
+    });
+  });
+
+  describe('canonicalization security (adversarial)', () => {
+    it('params-binding: token for pattern:"*.key" MUST NOT authorize pattern:"*" (SECURITY)', () => {
+      const baseDir = createTempTestDir();
+      testDirs.push(baseDir);
+      setupTestKey(baseDir);
+
+      // Sign token for specific pattern
+      const approvedAction = { action: 'del', params: { pattern: '*.key' } };
+      const token = createTestApprovalToken(approvedAction, testKeypair);
+
+      // Attempt to use token for broader pattern (should be DENIED)
+      const attemptedAction = { action: 'del', params: { pattern: '*' } };
+      const result = gatedAction(attemptedAction, token, mockChain, baseDir);
+
+      assert.strictEqual(result.decision, 'denied', 'different params should be denied');
+      assert.ok(result.reason.includes('mismatch'), 'should indicate request mismatch');
+    });
+
+    it('params-binding: token for pattern:"*.key" MUST NOT authorize pattern:"/etc/**" with extra keys', () => {
+      const baseDir = createTempTestDir();
+      testDirs.push(baseDir);
+      setupTestKey(baseDir);
+
+      const approvedAction = { action: 'del', params: { pattern: '*.key' } };
+      const token = createTestApprovalToken(approvedAction, testKeypair);
+
+      // Attempt to use token for different pattern with extra key
+      const attemptedAction = { action: 'del', params: { pattern: '/etc/**', recursive: true } };
+      const result = gatedAction(attemptedAction, token, mockChain, baseDir);
+
+      assert.strictEqual(result.decision, 'denied', 'different params with extra keys should be denied');
+      assert.ok(result.reason.includes('mismatch'), 'should indicate request mismatch');
+    });
+
+    it('stability: key order in params must not affect approval', () => {
+      const baseDir = createTempTestDir();
+      testDirs.push(baseDir);
+      setupTestKey(baseDir);
+
+      // Sign with one key order
+      const approvedAction = { action: 'del', params: { a: 1, b: 2 } };
+      const token = createTestApprovalToken(approvedAction, testKeypair);
+
+      // Present with different key order (should still APPROVE)
+      const attemptedAction = { params: { b: 2, a: 1 }, action: 'del' };
+      const result = gatedAction(attemptedAction, token, mockChain, baseDir);
+
+      assert.strictEqual(result.decision, 'approved', 'same params in different order should be approved');
+    });
+
+    it('deep nesting: nested object changes must be detected', () => {
+      const baseDir = createTempTestDir();
+      testDirs.push(baseDir);
+      setupTestKey(baseDir);
+
+      const approvedAction = {
+        action: 'config',
+        params: {
+          settings: {
+            deep: {
+              nested: 'original-value'
+            }
+          }
+        }
+      };
+      const token = createTestApprovalToken(approvedAction, testKeypair);
+
+      // Attempt with changed deeply nested value
+      const attemptedAction = {
+        action: 'config',
+        params: {
+          settings: {
+            deep: {
+              nested: 'changed-value'
+            }
+          }
+        }
+      };
+      const result = gatedAction(attemptedAction, token, mockChain, baseDir);
+
+      assert.strictEqual(result.decision, 'denied', 'changed deeply nested value should be denied');
+      assert.ok(result.reason.includes('mismatch'), 'should indicate request mismatch');
+    });
+
+    it('canonicalizeRequest produces different strings for different param values', () => {
+      const req1 = { action: 'del', params: { pattern: '*.key' } };
+      const req2 = { action: 'del', params: { pattern: '*' } };
+
+      const can1 = canonicalizeRequest(req1);
+      const can2 = canonicalizeRequest(req2);
+
+      assert.notStrictEqual(can1, can2, 'different param values must produce different canonical strings');
+    });
+
+    it('canonicalizeRequest produces same string regardless of key order', () => {
+      const req1 = { action: 'del', params: { a: 1, b: 2 } };
+      const req2 = { params: { b: 2, a: 1 }, action: 'del' };
+
+      const can1 = canonicalizeRequest(req1);
+      const can2 = canonicalizeRequest(req2);
+
+      assert.strictEqual(can1, can2, 'same content with different key order must produce same canonical string');
+    });
+
+    it('arrays preserve order (not sorted)', () => {
+      const req = { action: 'process', params: { items: ['z', 'a', 'm'] } };
+      const canonical = canonicalizeRequest(req);
+
+      // Array order should be preserved
+      assert.ok(canonical.includes('z'), 'canonical should include z');
+      assert.ok(canonical.includes('a'), 'canonical should include a');
+      assert.ok(canonical.includes('m'), 'canonical should include m');
+
+      // Verify it's the stringified array in original order
+      const parsed = JSON.parse(canonical);
+      assert.deepStrictEqual(parsed.params.items, ['z', 'a', 'm'], 'array order must be preserved');
     });
   });
 });

@@ -17,6 +17,7 @@ import { createStore } from '../src/store/index.js';
 import { gatedAction } from '../src/gate/index.js';
 import { renderSessionReceipt, renderMorningAfter } from '../src/views/index.js';
 import { verifyChain } from '../src/chain/index.js';
+import { canonicalizeRequest } from '../src/gate/sign.js';
 
 // Test key storage (key objects, not JWK)
 let testKeyObjects = null;
@@ -51,7 +52,7 @@ function generateTestKeypair() {
  * @param {Object} keyPair - The test keypair (JWK format, not used directly)
  */
 function createTestApprovalToken(actionRequest, keyPair) {
-  const canonical = JSON.stringify(actionRequest, Object.keys(actionRequest || {}).sort());
+  const canonical = canonicalizeRequest(actionRequest);
   const nonce = crypto.randomBytes(12).toString('base64url');
   const timestamp = Date.now();
 

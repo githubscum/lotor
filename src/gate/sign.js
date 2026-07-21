@@ -181,11 +181,27 @@ async function createApprovalToken(actionRequest) {
 }
 
 /**
+ * JSON.stringify replacer that sorts object keys alphabetically at all levels.
+ * Used for deterministic canonicalization.
+ */
+function sortKeysReplacer(key, value) {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const sorted = {};
+    for (const k of Object.keys(value).sort()) {
+      sorted[k] = value[k];
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
  * Canonicalize an action request for signing.
- * Sorts keys for deterministic serialization.
+ * Sorts keys recursively for deterministic serialization.
+ * NOTE: This must include ALL nested keys (not just top-level) for security.
  */
 function canonicalizeRequest(actionRequest) {
-  const sorted = JSON.stringify(actionRequest, Object.keys(actionRequest || {}).sort());
+  const sorted = JSON.stringify(actionRequest, sortKeysReplacer);
   return sorted;
 }
 
@@ -217,6 +233,7 @@ export {
   createApprovalToken,
   loadApprovalPubkey,
   canonicalizeRequest,
+  sortKeysReplacer,
   nonceUsed,
   recordNonce,
   getPaths,
