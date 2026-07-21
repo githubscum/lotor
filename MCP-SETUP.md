@@ -11,7 +11,7 @@ Add this to your Claude client's MCP config:
   "mcpServers": {
     "agent-receipts": {
       "command": "node",
-      "args": ["C:\\Users\\liemi\\agent-receipts\\src\\mcp\\server.js"]
+      "args": ["/absolute/path/to/agent-receipts/src/mcp/server.js"]
     }
   }
 }
@@ -21,9 +21,9 @@ Add this to your Claude client's MCP config:
 
 ## Tools Available
 
-- `query_receipts` — Query receipt summaries from the chain (most recent first). Optional params: `limit`, `sessionId`.
-- `verify_chain` — Verify chain integrity. Returns `{ ok, brokenAt?, reason?, entryCount }`.
-- `gated_action` — STUB: fail-closed gate logic arrives in WO-B4.
+- `query_receipts`: Query receipt summaries from the chain (most recent first). Optional params: `limit`, `sessionId`.
+- `verify_chain`: Verify chain integrity. Returns `{ ok, brokenAt?, reason?, entryCount }`.
+- `gated_action`: Fail-closed gate. Denies an action unless a valid owner-signed approval token is presented for that exact action, and writes a receipt to the chain in both directions (denied and approved). Params: `action`, optional `params`, optional `approvalToken` (`{ request, nonce, timestamp, signature }`). Returns `{ decision, reason?, approvalNonce?, receiptSeq }`.
 
 ## Prerequisites
 

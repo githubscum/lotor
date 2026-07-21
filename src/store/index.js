@@ -10,7 +10,7 @@ import { createChain, verifyChain, generateKeyPair } from '../chain/index.js';
  *
  * v1 simplification: The chain-signing key is stored locally unencrypted.
  * This key signs the CHAIN (integrity of the log). It is NOT the approval/gate
- * key — that one is Isaac's passphrase-derived key and arrives in WO-B4.
+ * key. That one is the owner's passphrase-derived key.
  * The distinction: chain key = log integrity; approval key = authorization gate.
  */
 
