@@ -13,6 +13,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { pathToFileURL } from 'node:url';
 import { createStore } from '../store/index.js';
 import { gatedAction } from '../gate/index.js';
 import * as crypto from 'node:crypto';
@@ -118,7 +120,7 @@ function createMcpServer() {
   );
 
   // Register tool handlers
-  server.setRequestHandler('tools/list', async () => {
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
         {
@@ -172,7 +174,7 @@ function createMcpServer() {
     };
   });
 
-  server.setRequestHandler('tools/call', async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     switch (name) {
@@ -201,7 +203,7 @@ export {
 export { store };
 
 // Main entry: start stdio server
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (pathToFileURL(process.argv[1]).href === import.meta.url) {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
 
