@@ -95,7 +95,7 @@ describe('E2E: full gated action flow', () => {
 
   beforeEach(() => {
     // Create isolated temp directory
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-receipts-e2e-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-e2e-'));
     originalCwd = process.cwd();
     process.chdir(tempDir);
 

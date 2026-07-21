@@ -9,9 +9,9 @@ Add this to your Claude client's MCP config:
 ```json
 {
   "mcpServers": {
-    "agent-receipts": {
+    "lotor": {
       "command": "node",
-      "args": ["/absolute/path/to/agent-receipts/src/mcp/server.js"]
+      "args": ["/absolute/path/to/lotor/src/mcp/server.js"]
     }
   }
 }
@@ -29,7 +29,7 @@ Build the bundle from the repo root:
 npx @anthropic-ai/mcpb pack
 ```
 
-This produces an `agent-receipts.mcpb` file (a build artifact, gitignored). To validate the manifest without packing:
+This produces a `lotor.mcpb` file (a build artifact, gitignored). To validate the manifest without packing:
 
 ```bash
 npx @anthropic-ai/mcpb validate manifest.json

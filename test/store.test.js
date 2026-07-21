@@ -8,7 +8,7 @@ import { verifyChain } from '../src/chain/index.js';
 
 // Use isolated temp directories for each test
 function createTempTestDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-receipts-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-test-'));
 }
 
 describe('store', () => {

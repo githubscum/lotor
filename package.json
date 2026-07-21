@@ -1,5 +1,5 @@
 {
-  "name": "agent-receipts",
+  "name": "lotor",
   "version": "0.0.0",
   "type": "module",
   "description": "Local-first receipt layer for AI agent sessions",

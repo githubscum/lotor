@@ -1,4 +1,4 @@
-# agent-receipts
+# Lotor
 
 A local-first, MCP-native receipt layer for AI agent sessions.
 

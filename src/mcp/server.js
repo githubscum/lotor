@@ -109,7 +109,7 @@ function handleGatedAction(args) {
 function createMcpServer() {
   const server = new Server(
     {
-      name: 'agent-receipts-mcp',
+      name: 'lotor-mcp',
       version: '0.0.0'
     },
     {

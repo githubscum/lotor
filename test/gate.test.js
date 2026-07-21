@@ -77,7 +77,7 @@ function createMockChain() {
 
 // Use isolated temp directories for each test
 function createTempTestDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-receipts-gate-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-gate-test-'));
 }
 
 describe('gate', () => {
