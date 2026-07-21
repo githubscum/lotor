@@ -11,7 +11,9 @@
     "start": "node src/mcp/server.js",
     "ingest": "node src/ingest/cli.js",
     "approve:init": "node bin/approve.js init",
-    "approve": "node bin/approve.js approve"
+    "approve": "node bin/approve.js approve",
+    "gate": "node bin/gate.js",
+    "receipts": "node bin/view.js --all"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

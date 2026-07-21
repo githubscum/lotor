@@ -8,6 +8,14 @@ This demo shows the complete flow: an agent proposes an action, the gate **fails
 npm install
 ```
 
+## Reset (to start fresh)
+
+Remove the chain and keys to start with a clean slate:
+
+```bash
+rm -rf receipts/chain.jsonl keys/
+```
+
 ## Step 1: Initialize the approval key
 
 The owner sets a passphrase once. The private key is **never written to disk** — it's derived from the passphrase at signing time.
@@ -18,22 +26,27 @@ npm run approve:init
 
 You'll be prompted for a passphrase (and confirmation). Only the public key is written to `keys/approval.pub`.
 
+**Note:** This command requires a TTY and cannot be run in a non-interactive environment.
+
 ## Step 2: Ingest a synthetic session
 
 Create a session receipt (this simulates an agent session being logged):
 
 ```bash
-npm run ingest -- test-data/sample-session.json
+npm run ingest -- test-data/sample-session.jsonl
+```
+
+**Expected output:**
+```
+Ingested session. Chain entry seq=0, hash=<first-16-chars>...
 ```
 
 ## Step 3: Attempt a gated action WITHOUT approval
 
-The MCP server exposes `gated_action`. Without an approval token, it **denies by default**:
+Without an approval token, the gate **denies by default**:
 
 ```bash
-# Using the MCP tool directly
-echo '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}' | \
-  npx @modelcontextprotocol/sdk client call gated_action --server ./src/mcp/server.js
+npm run gate -- '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}'
 ```
 
 **Expected response:**
@@ -60,56 +73,48 @@ npm run approve -- '{"action":"delete_sensitive_files","params":{"pattern":"*.ke
 ```json
 {
   "request": "{\"action\":\"delete_sensitive_files\",\"params\":{\"pattern\":\"*.key\"}}",
-  "nonce": "a1b2c3d4e5f6",
+  "nonce": "<base64url-nonce>",
   "timestamp": 1721563200000,
-  "signature": "d4e5f6..."
+  "signature": "<hex-signature>"
 }
 ```
 
 Copy this JSON — it's the approval token.
 
+**Note:** This command requires a TTY and cannot be run in a non-interactive environment.
+
 ## Step 5: Attempt the same action WITH approval
 
-Now call `gated_action` with the approval token:
+Now call `gate` with the approval token (paste the full token JSON as the second argument):
 
 ```bash
-echo '{
-  "action": "delete_sensitive_files",
-  "params": {"pattern": "*.key"},
-  "approvalToken": {
-    "request": "{\"action\":\"delete_sensitive_files\",\"params\":{\"pattern\":\"*.key\"}}",
-    "nonce": "a1b2c3d4e5f6",
-    "timestamp": 1721563200000,
-    "signature": "d4e5f6..."
-  }
-}' | npx @modelcontextprotocol/sdk client call gated_action --server ./src/mcp/server.js
+npm run gate -- '{"action":"delete_sensitive_files","params":{"pattern":"*.key"}}' '<paste-token-json-here>'
 ```
 
 **Expected response:**
 ```json
 {
   "decision": "approved",
-  "approvalNonce": "a1b2c3d4e5f6",
+  "approvalNonce": "<nonce-from-token>",
   "receiptSeq": 2
 }
 ```
 
 An **approval receipt** is appended to the chain. The action is now authorized.
 
-## Step 6: Verify the chain
+## Step 6: View receipts
 
-Both receipts (denial + approval) are in the chain:
+View both receipts (the session receipt + the gated action receipts) with the receipt view:
 
 ```bash
-npm run start -- verify_chain
+npm run receipts
 ```
 
-Or via MCP:
-```bash
-echo '{}' | npx @modelcontextprotocol/sdk client call verify_chain --server ./src/mcp/server.js
-```
-
-**Expected:** `ok: true`, with `entryCount` showing both the session receipt and the two gated-action receipts.
+**Expected:** A morning-after summary showing:
+- Total chain entries: 3
+- Session receipts: 1
+- Gated actions: 1 approved, 1 denied
+- Chain integrity: ✓ Chain intact
 
 ## What This Proves
 
@@ -120,9 +125,7 @@ echo '{}' | npx @modelcontextprotocol/sdk client call verify_chain --server ./sr
 
 ## Known Limits (CP-3 honest gaps)
 
-- **Self-attested capture**: The receipts are signed by the agent's chain key, not the owner's approval key. The owner verifies the token; the chain records the outcome. Full separation of concerns requires additional verification infrastructure.
-- **Owner key storage**: The owner's public key is stored locally. Compromise of the agent-receipts directory could allow deletion of the approval key, but NOT forgery of owner signatures (private key never on disk).
-- **Passphrase security**: The owner must keep their passphrase secret. No rate-limiting on passphrase attempts in v1.
+See [KNOWN-LIMITS.md](KNOWN-LIMITS.md) for v1 limitations.
 
 ## Summary
 
@@ -135,7 +138,7 @@ echo '{}' | npx @modelcontextprotocol/sdk client call verify_chain --server ./sr
                               │ Owner signs
                               ▼
                        ┌─────────────────┐
-                       │  Valid token? │
+                       │  Valid token?   │
                        │  APPROVED +     │
                        │  receipt        │
                        └─────────────────┘

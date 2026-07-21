@@ -1,0 +1,10 @@
+{"sessionId":"demo-session-001","version":"1.0.0","createdAt":"2026-07-21T10:00:00.000Z"}
+{"message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"I'll help you edit that file."}],"usage":{"input_tokens":50,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"createdAt":"2026-07-21T10:00:01.000Z"}
+{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","id":"demo-edit-001","input":{"file_path":"/home/demo/project/config.js","old_string":"const DEBUG = false;","new_string":"const DEBUG = true;"}}]},"createdAt":"2026-07-21T10:00:02.000Z"}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"demo-edit-001","content":"File edited successfully.","is_error":false}]},"createdAt":"2026-07-21T10:00:03.000Z"}
+{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"demo-bash-001","input":{"command":"rm -rf /home/demo/temp/*","description":"Clean temp directory"}}]},"createdAt":"2026-07-21T10:00:04.000Z"}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"demo-bash-001","content":"rm: cannot remove '/home/demo/temp/readonly.file': Permission denied","is_error":true}]},"createdAt":"2026-07-21T10:00:05.000Z"}
+{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","id":"demo-read-001","input":{"file_path":"/home/demo/project/README.md"}}]},"createdAt":"2026-07-21T10:00:06.000Z"}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"demo-read-001","content":"# Demo Project\n\nThis is a synthetic readme for demonstration.","is_error":false}]},"createdAt":"2026-07-21T10:00:07.000Z"}
+{"message":{"role":"assistant","content":[{"type":"tool_use","name":"WebFetch","id":"demo-fetch-001","input":{"url":"https://example.com/api/status"}}]},"createdAt":"2026-07-21T10:00:08.000Z"}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"demo-fetch-001","content":"{\"status\":\"ok\",\"version\":\"1.0.0\"}","is_error":false}]},"createdAt":"2026-07-21T10:00:09.000Z"}
