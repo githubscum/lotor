@@ -18,6 +18,14 @@ Lotor is routed local first. The receipt is written to your machine before anyth
 
 That is what a receipt means when the models centralize and the agents multiply. Your books. Local first. The floor that does not move when the vendor does.
 
+## A company cannot audit itself
+
+Every accountability story hits the same wall. The party that produced the record cannot also be the only one who keeps it and checks it. That is not an audit. That is a company grading its own homework. When the vendor whose model did the work also owns the sole log of what it did, you are trusting the audited party to certify itself.
+
+Trust used to be the default, because checking was expensive. That assumption is expiring in public, one incident at a time. What replaces it is not more faith in the vendor. It is a record the vendor does not hold.
+
+Lotor separates the two roles by construction. The receipt is written local first, to your machine, under your key. The party with the real stake in the record's integrity, you, is the party that keeps it. The one who did the work does not get to be the one who certifies it. That is why local first is not a feature here. It is the point.
+
 ## Use cases
 
 Lotor is one primitive, a signed local receipt, applied wherever "what did my agent actually do" is a question you need answered honestly.
