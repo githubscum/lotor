@@ -16,6 +16,15 @@
     "local-first",
     "tamper-evident"
   ],
+  "user_config": {
+    "lotor_home": {
+      "type": "directory",
+      "title": "Receipt store location",
+      "description": "Where Lotor writes your receipt chain and keys. Keep it on local disk. A synced cloud folder hands your receipt log to a third party, which is the custody Lotor exists to remove. Defaults to a .lotor folder in your home directory.",
+      "required": false,
+      "default": "${HOME}/.lotor"
+    }
+  },
   "server": {
     "type": "node",
     "entry_point": "src/mcp/server.js",
@@ -23,7 +32,10 @@
       "command": "node",
       "args": [
         "${__dirname}/src/mcp/server.js"
-      ]
+      ],
+      "env": {
+        "LOTOR_HOME": "${user_config.lotor_home}"
+      }
     }
   },
   "tools": [
