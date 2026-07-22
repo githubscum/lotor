@@ -65,3 +65,37 @@ Engine errors fail open by design. A Lotor bug (policy unreadable, evaluator cra
 A bare `git push` to a checked-out protected branch is not detected. The `push-protected` rule fires only when the command explicitly names `main` or `master` as a ref. A `git push` with no ref, or with the ref given through a shell variable, flows free; the merge point, not the push, is what protects the branch.
 
 Hook registration lives in the user's settings file, whose edits are themselves rule 1. A hostile edit landing between sessions is therefore only caught at the next session's snapshot, not in real time. Treat the registration surface as part of your threat model.
+
+## 12. Pre-fix receipts are permanently ~2x inflated (cost/2 corrects this going forward)
+
+Before 2026-07-22, the parser summed `message.usage` once per JSONL line. Claude Code
+writes one assistant message across several lines (a text block, then one line per
+`tool_use` block), and every one of those lines carries a byte-identical copy of the same
+usage object. The parser counted it 2 to 6 times, so every token figure in every receipt
+signed before this fix is inflated, empirically by a factor close to 2x (measured 2.083
+and 2.035 on two independent real transcripts; verified exact, not heuristic, since zero
+usage conflicts were found among lines sharing a `message.id`).
+
+The fix (this commit) dedups usage by `message.id`, with a fallback to `requestId`, then
+`uuid`, then a per-line key for entries that carry none. Receipts written from this point
+forward carry `cost.schema: 'cost/2'`; its absence marks a receipt as pre-fix and roughly
+double reality. Because the chain is append-only, no existing signed receipt can be
+corrected or replaced. Old figures stand as signed and wrong. Do not trust a token count
+on a receipt without a `cost.schema` field.
+
+## 13. Cost is not attributed per model or per harness
+
+`cost` is one flat total per session, summed across every assistant message regardless of
+which model produced it. `session.model` records only the last model seen in the
+transcript, overwritten on every assistant turn. It is not a breakdown: a session that
+touches more than one model (for example, the orchestrating session on Claude plus work
+dispatched mid-session to an Ollama-hosted model) reports a single blended total under a
+single trailing model name.
+
+This matters because different providers report token usage on fundamentally different
+bases. One real comparison found a service reporting 702,944,347 input tokens with zero
+cache activity, against another reporting 8,487 input tokens and 163,480,857 cache-read
+tokens for comparable work. Summing across services, or reading `session.model` as "the
+model this session's cost was incurred on," produces a number with no coherent meaning.
+Per-model, per-harness cost attribution is not built. Treat any total from a mixed-model
+session as directional at best, never as a cross-service comparison.

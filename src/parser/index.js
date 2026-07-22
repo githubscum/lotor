@@ -49,22 +49,33 @@ function parseSession(jsonlText) {
   let turns = 0;
   let toolCalls = 0;
   let failures = 0;
+  let assistantMessages = 0;
 
   // Track tool_use to tool_result linkage
   const toolUseMap = new Map(); // tool_use_id -> { tool, paramsDigest }
+  // Dedup usage across the lines Claude Code writes for one assistant message.
+  // Each line carries a full, byte-identical copy of message.usage, so we
+  // accumulate cost.* only the first time we see a given usage key.
+  const seenUsageKeys = new Set();
 
-  for (const entry of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
     // Count assistant turns
     if (entry.message?.role === 'assistant') {
       turns++;
       session.model = entry.message.model || session.model;
 
-      // Token usage
+      // Token usage (deduped per assistant message)
       if (entry.message.usage) {
-        cost.inputTokens += entry.message.usage.input_tokens || 0;
-        cost.outputTokens += entry.message.usage.output_tokens || 0;
-        cost.cacheCreationTokens += entry.message.usage.cache_creation_input_tokens || 0;
-        cost.cacheReadTokens += entry.message.usage.cache_read_input_tokens || 0;
+        const usageKey = usageIdentity(entry, i);
+        if (!seenUsageKeys.has(usageKey)) {
+          seenUsageKeys.add(usageKey);
+          assistantMessages++;
+          cost.inputTokens += entry.message.usage.input_tokens || 0;
+          cost.outputTokens += entry.message.usage.output_tokens || 0;
+          cost.cacheCreationTokens += entry.message.usage.cache_creation_input_tokens || 0;
+          cost.cacheReadTokens += entry.message.usage.cache_read_input_tokens || 0;
+        }
       }
 
       // Tool invocations (tool_use content items)
@@ -150,10 +161,31 @@ function parseSession(jsonlText) {
     ran,
     touched: Array.from(touched.entries()).map(([path, meta]) => ({ path, ...meta })),
     failed,
-    cost,
+    cost: { ...cost, schema: 'cost/2' },
     sent,
-    counts: { turns, toolCalls, failures, transcriptEntries: entries.length }
+    counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };
+}
+
+/**
+ * Resolve a stable identity for an assistant entry's usage block so that
+ * the several JSONL lines Claude Code writes for one assistant message
+ * all collapse to a single key. First non-empty wins:
+ *   entry.message.id -> entry.requestId -> entry.uuid -> synthetic fallback
+ *
+ * The fallback matters: the existing synthetic fixture in
+ * test/parser.test.js has assistant messages with NO id/requestId/uuid, and
+ * those turns are genuinely distinct. A per-line fallback keeps them apart.
+ */
+function usageIdentity(entry, lineIndex) {
+  const msgId = entry?.message?.id;
+  if (typeof msgId === 'string' && msgId.trim() !== '') return `mid:${msgId}`;
+  if (typeof entry?.requestId === 'string' && entry.requestId.trim() !== '') return `req:${entry.requestId}`;
+  if (typeof entry?.uuid === 'string' && entry.uuid.trim() !== '') return `uuid:${entry.uuid}`;
+  // Per-line fallback. The entry index in the JSONL is guaranteed unique
+  // for any single parseSession call, so distinct turns with no id stay
+  // distinct (matching the synthetic fixture's behavior).
+  return `line:${lineIndex}`;
 }
 
 /**
