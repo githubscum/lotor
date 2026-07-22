@@ -35,11 +35,13 @@ describe('MCP stdio e2e', () => {
       });
     }
 
-    // Spawn the real server over real stdio with cwd = temp dir.
+    // Spawn the real server over real stdio, pointing its canonical home at
+    // the seeded temp dir so it reads/writes the same chain (and never the real ~/.lotor).
     transport = new StdioClientTransport({
       command: process.execPath,
       args: [SERVER_PATH],
-      cwd: tempDir
+      cwd: tempDir,
+      env: { ...process.env, LOTOR_HOME: tempDir }
     });
     client = new Client(
       { name: 'e2e-client', version: '1.0.0' },
@@ -57,10 +59,10 @@ describe('MCP stdio e2e', () => {
     }
   });
 
-  it('completes a real initialize handshake and lists all three tools', async () => {
+  it('completes a real initialize handshake and lists all tools', async () => {
     const { tools } = await client.listTools();
     const names = tools.map(t => t.name).sort();
-    assert.deepStrictEqual(names, ['gated_action', 'query_receipts', 'verify_chain']);
+    assert.deepStrictEqual(names, ['gated_action', 'lotor_status', 'query_receipts', 'verify_chain']);
     for (const tool of tools) {
       assert.ok(
         typeof tool.description === 'string' && tool.description.length > 0,

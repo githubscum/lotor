@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import { init, createApprovalToken } from '../src/gate/sign.js';
+import { resolveHome } from '../src/home.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -33,7 +34,7 @@ If --out is provided, the token is also written to the specified file.
   }
 
   if (cmd === 'init') {
-    await init();
+    await init(resolveHome());
     return;
   }
 
@@ -78,7 +79,7 @@ If --out is provided, the token is also written to the specified file.
       process.exit(2);
     }
 
-    const token = await createApprovalToken(actionRequest);
+    const token = await createApprovalToken(actionRequest, resolveHome());
     const tokenJson = JSON.stringify(token, null, 2);
 
     // Always print to stdout

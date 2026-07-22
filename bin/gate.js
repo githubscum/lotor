@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import { createStore } from '../src/store/index.js';
 import { gatedAction } from '../src/gate/index.js';
+import { resolveHome } from '../src/home.js';
 
 function main() {
   let actionJson = null;
@@ -103,15 +104,16 @@ function main() {
     }
   }
 
-  // Create store and get chain
-  const store = createStore();
+  // Create store and get chain under the canonical Lotor home
+  const home = resolveHome();
+  const store = createStore(home);
   const chain = {
     entries: store.entries,
     append: store.appendReceipt.bind(store)
   };
 
   // Execute gated action
-  const result = gatedAction(actionRequest, approvalToken, chain);
+  const result = gatedAction(actionRequest, approvalToken, chain, home);
 
   // Output structured result
   console.log(JSON.stringify(result, null, 2));

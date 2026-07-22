@@ -1,22 +1,31 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
-import {
+import os from 'node:os';
+import path from 'node:path';
+import { createStore } from '../src/store/index.js';
+
+// Point the shared home at an isolated temp dir BEFORE importing the server,
+// so the server's singleton store lands there and never touches the real ~/.lotor.
+// The import is dynamic because ESM static imports are hoisted above this assignment.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-mcp-'));
+process.env.LOTOR_HOME = TEST_HOME;
+
+const {
   handleQueryReceipts,
   handleVerifyChain,
   handleGatedAction,
-  store as serverStore
-} from '../src/mcp/server.js';
-import { createStore } from '../src/store/index.js';
+  store: serverStore
+} = await import('../src/mcp/server.js');
 
 describe('MCP tool handlers', () => {
   beforeEach(() => {
     // Clean up any existing test state
-    if (fs.existsSync('receipts')) {
-      fs.rmSync('receipts', { recursive: true, force: true });
+    if (fs.existsSync(path.join(TEST_HOME, 'receipts'))) {
+      fs.rmSync(path.join(TEST_HOME, 'receipts'), { recursive: true, force: true });
     }
-    if (fs.existsSync('keys')) {
-      fs.rmSync('keys', { recursive: true, force: true });
+    if (fs.existsSync(path.join(TEST_HOME, 'keys'))) {
+      fs.rmSync(path.join(TEST_HOME, 'keys'), { recursive: true, force: true });
     }
 
     // IMPORTANT: serverStore is a singleton with cached keypair from import time.
@@ -41,7 +50,7 @@ describe('MCP tool handlers', () => {
 
     it('should return appended receipts (most recent first)', () => {
       // Create store and add some entries
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       for (let i = 0; i < 3; i++) {
         store.appendReceipt({
           session: { id: `session-${i}`, model: 'test-model' },
@@ -72,7 +81,7 @@ describe('MCP tool handlers', () => {
     });
 
     it('should respect limit parameter', () => {
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       for (let i = 0; i < 5; i++) {
         store.appendReceipt({
           session: { id: `limit-test-${i}`, model: 'test' },
@@ -89,7 +98,7 @@ describe('MCP tool handlers', () => {
     });
 
     it('should filter by sessionId', () => {
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       store.appendReceipt({
         session: { id: 'target-session', model: 'test' },
         ran: [],
@@ -113,7 +122,7 @@ describe('MCP tool handlers', () => {
     });
 
     it('should never return full file contents (summaries only)', () => {
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       store.appendReceipt({
         session: { id: 'summary-test', model: 'test' },
         ran: [{ tool: 'Edit', paramsDigest: 'abc123' }],
@@ -145,7 +154,7 @@ describe('MCP tool handlers', () => {
       // Note: serverStore is a singleton with keypair cached at import time.
       // The beforeEach cleanup deletes keys, but serverStore still has old keypair.
       // For this test, we verify using a local store (same keys for sign + verify).
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       store.appendReceipt({
         session: { id: 'verify-test', model: 'test' },
         ran: [],
@@ -164,7 +173,7 @@ describe('MCP tool handlers', () => {
     });
 
     it('should detect tampered chain', () => {
-      const store = createStore();
+      const store = createStore(TEST_HOME);
       store.appendReceipt({
         session: { id: 'tamper-test', model: 'test' },
         ran: [],

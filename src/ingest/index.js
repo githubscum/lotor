@@ -1,5 +1,6 @@
 import { parseSession } from '../parser/index.js';
 import { createStore } from '../store/index.js';
+import { resolveHome } from '../home.js';
 
 /**
  * src/ingest/index.js
@@ -16,8 +17,8 @@ function ingestSession(jsonlText) {
   // Parse the session into a ReceiptSummary
   const receiptSummary = parseSession(jsonlText);
 
-  // Create store and append to chain
-  const store = createStore();
+  // Create store and append to chain under the canonical Lotor home
+  const store = createStore(resolveHome());
   const entry = store.appendReceipt(receiptSummary);
 
   return entry;

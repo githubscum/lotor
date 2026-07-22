@@ -165,9 +165,10 @@ function renderSessionReceipt(receiptPayload) {
 /**
  * Render a morning-after summary of all receipts.
  * @param {Array} entries - Chain entries
+ * @param {string} baseDir - Base directory for the chain public key (default: '.')
  * @returns {string} Rendered summary
  */
-function renderMorningAfter(entries) {
+function renderMorningAfter(entries, baseDir = '.') {
   const lines = [];
 
   lines.push('═'.repeat(60));
@@ -214,7 +215,7 @@ function renderMorningAfter(entries) {
   // Get public key for verification
   let verifyResult = { ok: false, reason: 'no public key available' };
   try {
-    const keysDir = path.join('.', 'keys');
+    const keysDir = path.join(baseDir, 'keys');
     const pubKeyFile = path.join(keysDir, 'chain.pub');
     if (fs.existsSync(pubKeyFile)) {
       const publicKeyPem = fs.readFileSync(pubKeyFile, 'utf-8');
