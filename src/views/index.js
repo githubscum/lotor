@@ -66,6 +66,24 @@ function countGatedActions(entries) {
 }
 
 /**
+ * Count policy-warn receipts in the chain, grouped by ruleId.
+ * @param {Array} entries - Chain entries
+ * @returns {Object} { total: number, byRule: Map<string, number> }
+ */
+function countPolicyWarnings(entries) {
+  let total = 0;
+  const byRule = new Map();
+  for (const entry of entries) {
+    const payload = entry.payload;
+    if (payload?.type !== 'policy-warn') continue;
+    total++;
+    const ruleId = payload.ruleId || 'unknown';
+    byRule.set(ruleId, (byRule.get(ruleId) || 0) + 1);
+  }
+  return { total, byRule };
+}
+
+/**
  * Render a session receipt in human-readable form.
  * @param {Object} receiptPayload - The session receipt payload
  * @returns {string} Rendered view
@@ -216,6 +234,23 @@ function renderMorningAfter(entries, baseDir = '.') {
   }
   lines.push('');
 
+  // Policy warnings
+  const policyWarns = countPolicyWarnings(entries);
+  lines.push('─'.repeat(60));
+  lines.push('POLICY WARNINGS');
+  lines.push('─'.repeat(60));
+  lines.push(`  Total:               ${policyWarns.total}`);
+  if (policyWarns.total > 0) {
+    const ruleIds = Array.from(policyWarns.byRule.keys()).sort();
+    for (const ruleId of ruleIds) {
+      const n = policyWarns.byRule.get(ruleId);
+      if (n > 0) {
+        lines.push(`    ${ruleId.padEnd(20)} ${n}`);
+      }
+    }
+  }
+  lines.push('');
+
   // Chain integrity
   lines.push('─'.repeat(60));
   lines.push('CHAIN INTEGRITY');
@@ -255,6 +290,7 @@ export {
   loadReceiptChain,
   findLatestSessionReceipt,
   countGatedActions,
+  countPolicyWarnings,
   renderSessionReceipt,
   renderMorningAfter
 };
