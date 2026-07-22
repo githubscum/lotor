@@ -41,6 +41,7 @@ function handleQueryReceipts(args) {
     timestamp: entry.timestamp,
     sessionId: entry.payload?.session?.id,
     model: entry.payload?.session?.model,
+    subsession: entry.payload?.session?.subsession ?? null,
     hash: entry.hash,
     touchedCount: entry.payload?.touched?.length || 0,
     toolCalls: entry.payload?.counts?.toolCalls || 0

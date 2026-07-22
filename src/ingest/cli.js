@@ -19,8 +19,17 @@ if (!filePath) {
 
 try {
   const jsonlText = fs.readFileSync(filePath, 'utf-8');
-  const entry = ingestSession(jsonlText);
-  console.log(`Ingested session. Chain entry seq=${entry.seq}, hash=${entry.hash.slice(0, 16)}...`);
+  const result = ingestSession(jsonlText);
+
+  if (result.skipped) {
+    console.log(`No new activity for session ${result.sessionId}; nothing appended.`);
+  } else {
+    const { entry, subsession, sessionId } = result;
+    console.log(
+      `Ingested session ${sessionId} subsession=${subsession} ` +
+      `seq=${entry.seq} hash=${entry.hash.slice(0, 16)}...`
+    );
+  }
   process.exit(0);
 } catch (err) {
   console.error(`Error ingesting file: ${err.message}`);

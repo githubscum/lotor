@@ -21,15 +21,14 @@
  *   failure, store failure) is caught, reported on stderr, and exits 0.
  *   There is no non-zero exit path.
  *
- * IDEMPOTENCY
- *   Before appending, the existing chain is scanned for a receipt carrying the
- *   same session id. If one is present, the append is skipped.
+ * IDEMPOTENCY (subsession-aware)
+ *   Subsession logic lives in ingestSession: each SessionEnd appends a new
+ *   receipt for the same session indexed 0, 1, 2, ... n. The no-change guard
+ *   skips when the transcript has not grown since the last receipt.
  */
 
 import fs from 'node:fs';
-import { parseSession } from '../src/parser/index.js';
 import { ingestSession } from '../src/ingest/index.js';
-import { loadChain } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
 
 const STDIN_TIMEOUT_MS = 5000;
@@ -114,33 +113,23 @@ async function main() {
     return;
   }
 
-  let sessionId;
-  try {
-    sessionId = parseSession(text)?.session?.id;
-  } catch (e) {
-    note(`could not parse transcript (${e.message}); nothing ingested`);
-    return;
-  }
-
-  const home = resolveHome();
+  // resolveHome is read here so the home lookup failure (if any) is reported
+  // on stderr before the ingest path. ingestSession itself also calls
+  // resolveHome, so the value is the same.
+  resolveHome();
 
   try {
-    const existing = loadChain(home);
-    const already = existing.some(entry => entry?.payload?.session?.id === sessionId);
-    if (already) {
-      note(`receipt for session ${sessionId} already in chain; skipping`);
-      return;
+    const result = ingestSession(text);
+    if (result.skipped) {
+      note(`no new activity for session ${result.sessionId}; nothing appended`);
+    } else {
+      note(
+        `appended receipt seq ${result.entry.seq} subsession ${result.subsession} ` +
+        `for session ${result.sessionId}`
+      );
     }
   } catch (e) {
-    note(`could not load chain (${e.message}); nothing ingested`);
-    return;
-  }
-
-  try {
-    const entry = ingestSession(text);
-    note(`appended receipt seq ${entry?.seq} for session ${sessionId}`);
-  } catch (e) {
-    note(`could not append receipt (${e.message}); nothing ingested`);
+    note(`could not ingest (${e.message}); nothing appended`);
   }
 }
 

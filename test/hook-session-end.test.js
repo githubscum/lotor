@@ -125,7 +125,7 @@ describe('bin/hook-session-end.js', () => {
 
     assert.strictEqual(res.code, 0, 'hook should exit 0');
     assert.strictEqual(loadChain(home).length, 1, 'chain length should be unchanged');
-    assert.match(res.stderr, /already in chain/, 'should report the skip on stderr');
+    assert.match(res.stderr, /no new activity/, 'should report the skip on stderr');
   });
 
   it('accepts the transcriptPath camelCase fallback key', async () => {
