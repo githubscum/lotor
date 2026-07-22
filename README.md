@@ -97,6 +97,37 @@ Setup creates your log-integrity key automatically, then walks you through setti
 
 Inside Claude, the `lotor_status` tool reports your home path, how many receipts exist, whether the chain is intact, and whether the gate is active. From a terminal, `npm run receipts` prints the same. If you ever wonder whether Lotor is watching, ask it.
 
+### 6. Turn on automatic session receipts
+
+Installing the server gives you the tools. It does not yet record anything. To get a receipt written automatically every time a session ends, register the `SessionEnd` hook in your Claude Code settings (`~/.claude/settings.json`, or `%USERPROFILE%\.claude\settings.json` on Windows):
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /absolute/path/to/lotor/bin/hook-session-end.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Merge that `hooks` key into your existing settings rather than replacing the file. With no `matcher`, it fires on every session end.
+
+The hook is deliberately unable to break your session. It never exits non-zero, never writes to stdout, and swallows every failure (missing transcript, malformed payload, unreadable chain) with a one-line note to stderr. A receipt layer that can wedge your editor is worse than no receipt layer.
+
+Without the hook, nothing is recorded until you ingest a transcript by hand:
+
+```bash
+npm run ingest -- /path/to/session.jsonl
+```
+
 ## Quickstart
 
 Prerequisites: Node.js >= 18. Install dependencies with `npm install`.

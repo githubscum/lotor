@@ -17,3 +17,11 @@ The chain is local-only. External anchoring (to a timestamp authority, blockchai
 ## 4. Cost is reported in tokens, not dollars
 
 Where the session transcript records per-turn token counts, receipts carry them. Dollar cost is not computed in v1: it requires an external, model-specific price table that is not bundled. Treat the cost column as token usage, not a billing figure.
+
+## 5. Session receipts are first-write-wins, not superseding
+
+The `SessionEnd` hook dedupes by session id, so a session is receipted at most once. Claude Code can fire `SessionEnd` more than once for the same session (on clear, on resume, on exit), and the first firing is the one that lands. If a session is receipted and then resumes and does more work, that later work is not captured in a new receipt and does not amend the existing one. A superseding receipt is a later enhancement. Ingesting the transcript manually with `npm run ingest` has the same constraint, since the chain is append-only by design.
+
+## 6. Auto-capture is opt-in and hook-dependent
+
+Receipts are only written automatically if the `SessionEnd` hook is registered in your Claude Code settings. Installing the MCP server alone gives you the query, verify, and gate tools against an empty chain. Nothing is recorded until the hook is wired up or a transcript is ingested by hand.
