@@ -8,7 +8,7 @@ Tamper-evidence begins at signing time. The log proves that *what was recorded* 
 
 ## 2. Outbound message capture
 
-The `sent` / outbound field in receipts is not fully derivable from Claude Code JSONL session transcripts alone. Full capture requires MCP-boundary instrumentation to record what actually left the machine versus what was merely logged locally.
+Outbound activity is now captured live by a `PostToolUse` hook for egress-shaped tool calls (network requests, remote git operations, publish commands), using the same matchers the policy engine uses to decide what is gate-worthy. This is captured by the host at the moment the tool call completes, not reconstructed later from a transcript, which is a real improvement in attestation strength. It is still not wire-level capture: there is no network proxy, no TLS interception, and no independent verification that the tool's own implementation reported its outcome honestly. A tool that lies about its own `tool_response`, or an egress path this repo's matchers do not recognize, is not captured. True wire-level capture would require a network-boundary proxy, which is a larger architectural change and not in v1.
 
 ## 3. No external anchoring in v1
 

@@ -84,6 +84,24 @@ function countPolicyWarnings(entries) {
 }
 
 /**
+ * Count egress-event receipts in the chain, grouped by ruleId.
+ * @param {Array} entries - Chain entries
+ * @returns {Object} { total: number, byRule: Map<string, number> }
+ */
+function countEgressEvents(entries) {
+  let total = 0;
+  const byRule = new Map();
+  for (const entry of entries) {
+    const payload = entry.payload;
+    if (payload?.type !== 'egress-event') continue;
+    total++;
+    const ruleId = payload.ruleId || 'unknown';
+    byRule.set(ruleId, (byRule.get(ruleId) || 0) + 1);
+  }
+  return { total, byRule };
+}
+
+/**
  * Render a session receipt in human-readable form.
  * @param {Object} receiptPayload - The session receipt payload
  * @returns {string} Rendered view
@@ -251,6 +269,25 @@ function renderMorningAfter(entries, baseDir = '.') {
   }
   lines.push('');
 
+  // Egress events captured by the PostToolUse hook. These are live
+  // attestations, not transcript reconstructions, but they are still
+  // NOT wire-level (see KNOWN-LIMITS item 2).
+  const egressEvents = countEgressEvents(entries);
+  lines.push('─'.repeat(60));
+  lines.push('EGRESS EVENTS');
+  lines.push('─'.repeat(60));
+  lines.push(`  Total:               ${egressEvents.total}`);
+  if (egressEvents.total > 0) {
+    const ruleIds = Array.from(egressEvents.byRule.keys()).sort();
+    for (const ruleId of ruleIds) {
+      const n = egressEvents.byRule.get(ruleId);
+      if (n > 0) {
+        lines.push(`    ${ruleId.padEnd(20)} ${n}`);
+      }
+    }
+  }
+  lines.push('');
+
   // Chain integrity
   lines.push('─'.repeat(60));
   lines.push('CHAIN INTEGRITY');
@@ -291,6 +328,7 @@ export {
   findLatestSessionReceipt,
   countGatedActions,
   countPolicyWarnings,
+  countEgressEvents,
   renderSessionReceipt,
   renderMorningAfter
 };
