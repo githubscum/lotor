@@ -16,7 +16,8 @@
     "gate": "node bin/gate.js",
     "receipts": "node bin/view.js --all",
     "hook:session-end": "node bin/hook-session-end.js",
-    "hook:pre-tool-use": "node bin/hook-pre-tool-use.js"
+    "hook:pre-tool-use": "node bin/hook-pre-tool-use.js",
+    "hook:post-tool-use": "node bin/hook-post-tool-use.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
