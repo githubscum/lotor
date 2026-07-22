@@ -18,9 +18,15 @@ The chain is local-only. External anchoring (to a timestamp authority, blockchai
 
 Where the session transcript records per-turn token counts, receipts carry them. Dollar cost is not computed in v1: it requires an external, model-specific price table that is not bundled. Treat the cost column as token usage, not a billing figure.
 
-## 5. Session receipts are first-write-wins, not superseding
+## 5. Session receipts are cumulative subsessions, not a single record
 
-The `SessionEnd` hook dedupes by session id, so a session is receipted at most once. Claude Code can fire `SessionEnd` more than once for the same session (on clear, on resume, on exit), and the first firing is the one that lands. If a session is receipted and then resumes and does more work, that later work is not captured in a new receipt and does not amend the existing one. A superseding receipt is a later enhancement. Ingesting the transcript manually with `npm run ingest` has the same constraint, since the chain is append-only by design.
+Claude Code fires `SessionEnd` more than once for the same session (on clear, on resume, on exit). Each firing that carries new activity appends a new receipt for that session, indexed `subsession` 0, 1, and so on. Nothing is ever amended or superseded, because the chain is append-only by design.
+
+Two consequences worth knowing:
+
+Each subsession receipt carries the whole session up to that moment, not just the new part. Subsession 2 is a superset of subsession 1. No single receipt is "the" record of a session; the highest subsession is the most complete one. Counting receipts is not the same as counting sessions, which is why the morning-after view reports both totals separately.
+
+A firing that adds no new activity appends nothing, so repeated `SessionEnd` events cannot inflate the chain. Work done after the final firing is still never captured, since nothing runs after the last one.
 
 ## 6. Auto-capture is opt-in and hook-dependent
 
