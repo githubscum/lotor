@@ -82,6 +82,9 @@ function renderSessionReceipt(receiptPayload) {
   lines.push('SESSION RECEIPT');
   lines.push('═'.repeat(60));
   lines.push(`Session ID: ${session?.id || 'unknown'}`);
+  if (session?.subsession !== undefined) {
+    lines.push(`Subsession:  ${session.subsession}`);
+  }
   lines.push(`Model:      ${session?.model || 'unknown'}`);
   lines.push(`Version:    ${session?.version || 'unknown'}`);
   lines.push(`Started:    ${session?.startedAt || 'unknown'}`);
@@ -177,9 +180,15 @@ function renderMorningAfter(entries, baseDir = '.') {
   lines.push(`Total chain entries:   ${entries.length}`);
   lines.push('');
 
-  // Session count
-  const sessionCount = entries.filter(e => e.payload?.session).length;
-  lines.push(`Session receipts:      ${sessionCount}`);
+  // Session count: total receipts carrying a session payload, and the number
+  // of distinct session ids among them. With subsessions one session can
+  // produce several receipts, so a single number is misleading.
+  const sessionEntries = entries.filter(e => e.payload?.session);
+  const distinctSessionIds = new Set(
+    sessionEntries.map(e => e.payload?.session?.id)
+  );
+  lines.push(`Session receipts:      ${sessionEntries.length}`);
+  lines.push(`Distinct sessions:     ${distinctSessionIds.size}`);
   lines.push('');
 
   // Gated action summary

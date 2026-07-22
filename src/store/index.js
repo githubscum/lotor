@@ -168,6 +168,44 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
     },
 
     /**
+     * Atomic check-then-append under the chain lock.
+     *
+     * The subsession decision reads the chain (which subsessions already exist
+     * for a session id) and then appends. Doing that outside the lock is a
+     * TOCTOU race: two `SessionEnd` firings for the same session could both
+     * observe "no receipt yet" and both append `subsession 0`. The whole
+     * read-decide-append sequence runs under withLock so the view buildPayload
+     * sees is the same view the append lands on.
+     *
+     * @param {Function} buildPayload - Called inside the lock with the current
+     *   chain entries. Return the receipt payload to append, or null/undefined
+     *   to skip.
+     * @returns {Object|null} The created chain entry, or null if nothing was
+     *   appended.
+     */
+    appendReceiptGuarded(buildPayload) {
+      return withLock(baseDir, () => {
+        const current = loadChain(baseDir);
+
+        const payload = buildPayload(current);
+        if (payload == null) {
+          return null;
+        }
+
+        const freshChain = createChain(keyPair, current.length, current);
+        const entry = freshChain.append(payload);
+        appendEntry(entry, baseDir);
+
+        this.entries.length = 0;
+        for (const e of freshChain.entries) {
+          this.entries.push(e);
+        }
+
+        return entry;
+      });
+    },
+
+    /**
      * Reload the chain from disk.
      * @returns {Array} Current chain entries
      */

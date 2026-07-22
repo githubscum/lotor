@@ -135,7 +135,10 @@ describe('E2E: full gated action flow', () => {
     ].join('\n');
 
     // === Step 2: Ingest the session ===
-    const entry1 = ingestSession(sessionJsonl);
+    const result1 = ingestSession(sessionJsonl);
+    const entry1 = result1.entry;
+    assert.strictEqual(result1.skipped, false, 'First ingest should not be skipped');
+    assert.strictEqual(result1.subsession, 0, 'First subsession should be 0');
     assert.strictEqual(entry1.seq, 0, 'First entry should have seq=0');
     assert.ok(entry1.hash, 'Entry should have a hash');
     assert.ok(entry1.sig, 'Entry should have a signature');

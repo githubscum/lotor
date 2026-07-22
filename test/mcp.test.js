@@ -140,7 +140,7 @@ describe('MCP tool handlers', () => {
         'receipt summary should not contain full paths');
 
       // Should only have summary fields
-      const allowedFields = ['seq', 'timestamp', 'sessionId', 'model', 'hash', 'touchedCount', 'toolCalls'];
+      const allowedFields = ['seq', 'timestamp', 'sessionId', 'model', 'subsession', 'hash', 'touchedCount', 'toolCalls'];
       const actualFields = Object.keys(receipt);
       for (const field of actualFields) {
         assert.ok(allowedFields.includes(field),

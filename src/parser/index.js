@@ -152,7 +152,7 @@ function parseSession(jsonlText) {
     failed,
     cost,
     sent,
-    counts: { turns, toolCalls, failures }
+    counts: { turns, toolCalls, failures, transcriptEntries: entries.length }
   };
 }
 
