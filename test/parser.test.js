@@ -254,6 +254,86 @@ describe('parseSession', () => {
     assert.strictEqual(result.counts.failures, 1);
   });
 
+  it('should read session timing from timestamp when createdAt is absent', () => {
+    // Real Claude Code transcripts carry `timestamp`, not `createdAt`, and can
+    // open and close with metadata lines that have no message.
+    const realShapeJsonl = [
+      JSON.stringify({
+        type: 'queue-operation',
+        sessionId: 'real-session-002',
+        version: '3.0.1',
+        cwd: '/repo',
+        timestamp: '2026-07-22T08:00:00.000Z'
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'real-session-002',
+        version: '3.0.1',
+        cwd: '/repo',
+        timestamp: '2026-07-22T08:00:05.000Z',
+        message: {
+          role: 'assistant',
+          model: 'real-model-v1',
+          content: [],
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      }),
+      JSON.stringify({
+        type: 'summary',
+        sessionId: 'real-session-002',
+        version: '3.0.1',
+        cwd: '/repo',
+        timestamp: '2026-07-22T08:09:00.000Z'
+      })
+    ].join('\n');
+
+    const result = parseSession(realShapeJsonl);
+
+    assert.strictEqual(result.session.id, 'real-session-002');
+    assert.strictEqual(result.session.version, '3.0.1');
+    assert.strictEqual(result.session.startedAt, '2026-07-22T08:00:00.000Z');
+    assert.strictEqual(result.session.endedAt, '2026-07-22T08:09:00.000Z');
+  });
+
+  it('should skip leading and trailing entries that carry no timestamp', () => {
+    const jsonl = [
+      JSON.stringify({ type: 'no-stamp-header', sessionId: 'mixed-003' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-07-22T09:00:00.000Z' }),
+      JSON.stringify({ type: 'user', timestamp: '2026-07-22T09:30:00.000Z' }),
+      JSON.stringify({ type: 'no-stamp-footer' })
+    ].join('\n');
+
+    const result = parseSession(jsonl);
+
+    assert.strictEqual(result.session.startedAt, '2026-07-22T09:00:00.000Z');
+    assert.strictEqual(result.session.endedAt, '2026-07-22T09:30:00.000Z');
+  });
+
+  it('should prefer createdAt over timestamp when both are present', () => {
+    const jsonl = [
+      JSON.stringify({
+        type: 'session-start',
+        sessionId: 'both-004',
+        createdAt: '2026-07-22T10:00:00.000Z',
+        timestamp: '2999-01-01T00:00:00.000Z'
+      })
+    ].join('\n');
+
+    const result = parseSession(jsonl);
+
+    assert.strictEqual(result.session.startedAt, '2026-07-22T10:00:00.000Z');
+    assert.strictEqual(result.session.endedAt, '2026-07-22T10:00:00.000Z');
+  });
+
+  it('should leave session timing null when no entry carries a timestamp', () => {
+    const jsonl = JSON.stringify({ type: 'meta', sessionId: 'nostamp-005' });
+
+    const result = parseSession(jsonl);
+
+    assert.strictEqual(result.session.startedAt, null);
+    assert.strictEqual(result.session.endedAt, null);
+  });
+
   it('should not include full file contents or params', () => {
     const result = parseSession(syntheticJsonl);
 

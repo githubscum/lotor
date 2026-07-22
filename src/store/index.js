@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createChain, verifyChain, generateKeyPair } from '../chain/index.js';
+import { withLock } from './lock.js';
 
 /**
  * src/store/index.js
@@ -38,6 +39,8 @@ function loadOrCreateKeyPair(baseDir = DEFAULT_BASE_DIR) {
 
   ensureDir(keysDir);
 
+  // Fast path: keys already on disk. Skip the lock; this is the common case
+  // and must stay cheap.
   if (fs.existsSync(pubKeyFile) && fs.existsSync(privKeyFile)) {
     const publicKeyPem = fs.readFileSync(pubKeyFile, 'utf-8');
     const privateKeyPem = fs.readFileSync(privKeyFile, 'utf-8');
@@ -47,14 +50,30 @@ function loadOrCreateKeyPair(baseDir = DEFAULT_BASE_DIR) {
     };
   }
 
-  // Generate new keypair
-  const keyPair = generateKeyPair();
+  // Slow path: keys missing. Take the chain lock so two processes starting
+  // against a fresh home cannot each generate a different keypair (the last
+  // writer would win and orphan every receipt signed by the earlier process).
+  return withLock(baseDir, () => {
+    // Double-checked re-read: another process may have created the keys
+    // while we were waiting on the lock. If so, use those.
+    if (fs.existsSync(pubKeyFile) && fs.existsSync(privKeyFile)) {
+      const publicKeyPem = fs.readFileSync(pubKeyFile, 'utf-8');
+      const privateKeyPem = fs.readFileSync(privKeyFile, 'utf-8');
+      return {
+        publicKey: publicKeyPem,
+        privateKey: privateKeyPem
+      };
+    }
 
-  // Write keys (PEM format)
-  fs.writeFileSync(pubKeyFile, keyPair.publicKey, { mode: 0o644 });
-  fs.writeFileSync(privKeyFile, keyPair.privateKey, { mode: 0o600 });
+    // Generate new keypair
+    const keyPair = generateKeyPair();
 
-  return keyPair;
+    // Write keys (PEM format)
+    fs.writeFileSync(pubKeyFile, keyPair.publicKey, { mode: 0o644 });
+    fs.writeFileSync(privKeyFile, keyPair.privateKey, { mode: 0o600 });
+
+    return keyPair;
+  });
 }
 
 /**
@@ -119,13 +138,33 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
 
     /**
      * Append a receipt payload to the chain.
+     *
+     * Concurrency-safe: the chain tail is re-read from disk INSIDE the lock,
+     * so two processes appending at the same time cannot compute the same seq
+     * or the same prevHash. Locking only the write would not be enough.
+     *
      * @param {Object} payload - The receipt payload (e.g., ReceiptSummary)
      * @returns {Object} The created chain entry
      */
     appendReceipt(payload) {
-      const entry = chain.append(payload);
-      appendEntry(entry, baseDir);
-      return entry;
+      return withLock(baseDir, () => {
+        // Re-read the tail under the lock: another process may have appended
+        // since this store was constructed (or since the last append).
+        const current = loadChain(baseDir);
+        const freshChain = createChain(keyPair, current.length, current);
+
+        const entry = freshChain.append(payload);
+        appendEntry(entry, baseDir);
+
+        // Keep the in-memory view consistent with disk, preserving the array
+        // identity the way reload() does.
+        this.entries.length = 0;
+        for (const e of freshChain.entries) {
+          this.entries.push(e);
+        }
+
+        return entry;
+      });
     },
 
     /**

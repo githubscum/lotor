@@ -39,7 +39,7 @@ Install the resulting `.mcpb` by opening Claude Desktop, going to the extensions
 
 The manual JSON method above remains the fallback for Claude Code and any client that does not support `.mcpb` bundles.
 
-**Receipts location note:** the server resolves its `receipts/` and `keys/` directories relative to its working directory at launch. Under the manual JSON method that is wherever the client starts the process; when packed as an extension it is the extension's install directory. The path is not currently an install-time setting.
+**Receipts location note:** the server and the CLIs share one canonical home for the `receipts/` and `keys/` directories, so they all read and write the same chain regardless of the client's launch directory. That home is `LOTOR_HOME` when the environment variable is set, otherwise `~/.lotor` (`%USERPROFILE%\.lotor` on Windows). Set `LOTOR_HOME` if you want the store somewhere other than the default.
 
 ## Tools Available
 

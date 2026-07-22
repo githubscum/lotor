@@ -135,10 +135,14 @@ function parseSession(jsonlText) {
     }
   }
 
-  // Session timing from first/last entries
-  if (entries.length > 0) {
-    session.startedAt = entries[0].createdAt || null;
-    session.endedAt = entries[entries.length - 1].createdAt || null;
+  // Session timing: first and last entries that actually carry a usable
+  // timestamp. Real Claude Code transcripts use `timestamp` on every line and
+  // may open or close with metadata lines, so scanning only the first/last
+  // entry is not enough. `createdAt` wins when both are present.
+  const stamps = entries.map(entryTimestamp).filter(Boolean);
+  if (stamps.length > 0) {
+    session.startedAt = stamps[0];
+    session.endedAt = stamps[stamps.length - 1];
   }
 
   return {
@@ -150,6 +154,18 @@ function parseSession(jsonlText) {
     sent,
     counts: { turns, toolCalls, failures }
   };
+}
+
+/**
+ * Extract a usable timestamp from a single JSONL entry.
+ * Accepts `createdAt` (fixture / legacy shape) or `timestamp` (real transcripts).
+ * @param {Object} entry
+ * @returns {string|null} The timestamp string, or null if the entry has none.
+ */
+function entryTimestamp(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const value = entry.createdAt || entry.timestamp;
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
 /**

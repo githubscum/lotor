@@ -92,12 +92,18 @@ describe('E2E: full gated action flow', () => {
   let tempDir;
   let testKeypair;
   let originalCwd;
+  let originalHome;
 
   beforeEach(() => {
     // Create isolated temp directory
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-e2e-'));
     originalCwd = process.cwd();
     process.chdir(tempDir);
+
+    // Point the shared home at the temp dir so entry points (ingestSession)
+    // resolve to this isolated dir and never touch the real ~/.lotor.
+    originalHome = process.env.LOTOR_HOME;
+    process.env.LOTOR_HOME = tempDir;
 
     // Generate test keypair
     testKeypair = generateTestKeypair();
@@ -106,6 +112,11 @@ describe('E2E: full gated action flow', () => {
 
   afterEach(() => {
     process.chdir(originalCwd);
+    if (originalHome === undefined) {
+      delete process.env.LOTOR_HOME;
+    } else {
+      process.env.LOTOR_HOME = originalHome;
+    }
     // Clean up temp directory
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });

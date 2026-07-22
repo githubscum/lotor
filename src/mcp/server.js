@@ -15,12 +15,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
+import path from 'node:path';
 import { createStore } from '../store/index.js';
-import { gatedAction } from '../gate/index.js';
+import { gatedAction, isApprovalKeyInitialized } from '../gate/index.js';
+import { resolveHome } from '../home.js';
 import * as crypto from 'node:crypto';
 
-// Initialize store
-const store = createStore();
+// Initialize store under the canonical Lotor home
+const store = createStore(resolveHome());
 
 /**
  * Tool handler: query_receipts
@@ -77,6 +79,35 @@ function handleVerifyChain() {
 }
 
 /**
+ * Tool handler: lotor_status
+ * First-run visibility: reports the runtime home, chain state, and whether the
+ * human-signature gate is set up. Meant to be called at session start.
+ */
+function handleStatus() {
+  const home = resolveHome();
+
+  store.reload();
+  const verifyResult = store.verify();
+  const receiptCount = store.entries.length;
+  const gateInitialized = isApprovalKeyInitialized(home);
+
+  let message;
+  if (!gateInitialized) {
+    message = `The receipt log is active at ${home}, but the human-signature gate is not set up yet. Run \`npm run setup\` in a terminal to set your signing passphrase and enable signed approvals.`;
+  } else {
+    message = `Lotor is fully active. Receipts live at ${path.join(home, 'receipts', 'chain.jsonl')} and the human-signature gate is enabled.`;
+  }
+
+  return {
+    home,
+    receiptCount,
+    chainIntact: verifyResult.ok,
+    gateInitialized,
+    message
+  };
+}
+
+/**
  * Tool handler: gated_action
  * WO-B4: fail-closed gate. Requires approval token for action execution.
  * Returns structured denial on failure (not prose the model can argue with).
@@ -98,7 +129,14 @@ function handleGatedAction(args) {
   // We use the store's chain via the internal chain instance
   const result = gatedAction(actionRequest, approvalToken, {
     append: (receipt) => store.appendReceipt(receipt)
-  });
+  }, resolveHome());
+
+  // First-run hint: if the approval gate is not initialized, tell the caller
+  // how to enable signed approvals. Only added when uninitialized; existing
+  // fields (decision/reason/receiptSeq) are untouched.
+  if (!isApprovalKeyInitialized(resolveHome())) {
+    result.hint = 'Approval gate not initialized. Run `npm run setup` in a terminal to enable human-signed approvals.';
+  }
 
   return result;
 }
@@ -149,6 +187,14 @@ function createMcpServer() {
           }
         },
         {
+          name: 'lotor_status',
+          description: 'Report Lotor runtime status: home path, receipt count, chain integrity, and whether the human-signature gate is set up. Call this at the start of a session or whenever the user asks about Lotor. If gateInitialized is false, walk the user through running `npm run setup` in a terminal to set their signing passphrase (this needs a real terminal; you cannot do it for them). Always tell the user the home path so they can see where the runtime lives.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
           name: 'gated_action',
           description: 'Execute a gated action with approval token. FAILS CLOSED: without a valid approval token, returns decision:denied.',
           inputSchema: {
@@ -182,6 +228,8 @@ function createMcpServer() {
         return { content: [{ type: 'text', text: JSON.stringify(handleQueryReceipts(args), null, 2) }] };
       case 'verify_chain':
         return { content: [{ type: 'text', text: JSON.stringify(handleVerifyChain(), null, 2) }] };
+      case 'lotor_status':
+        return { content: [{ type: 'text', text: JSON.stringify(handleStatus(), null, 2) }] };
       case 'gated_action':
         return { content: [{ type: 'text', text: JSON.stringify(handleGatedAction(args), null, 2) }] };
       default:
@@ -196,6 +244,7 @@ function createMcpServer() {
 export {
   handleQueryReceipts,
   handleVerifyChain,
+  handleStatus,
   handleGatedAction
 };
 

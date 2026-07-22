@@ -15,6 +15,7 @@ import {
   renderSessionReceipt,
   renderMorningAfter
 } from '../src/views/index.js';
+import { resolveHome } from '../src/home.js';
 
 function main() {
   const args = process.argv.slice(2);
@@ -23,12 +24,13 @@ function main() {
   const showMorning = !showSession || showAll;
   const showSessionOnly = showSession || showAll;
 
-  // Load chain
-  const entries = loadReceiptChain();
+  // Load chain from the canonical Lotor home
+  const home = resolveHome();
+  const entries = loadReceiptChain(home);
 
   // Morning-after summary
   if (showMorning) {
-    console.log(renderMorningAfter(entries));
+    console.log(renderMorningAfter(entries, home));
   }
 
   // Session receipt

@@ -146,9 +146,11 @@ function loadApprovalPubkey(baseDir = DEFAULT_BASE_DIR) {
 /**
  * Create approval token for an action request.
  * Returns { request, nonce, timestamp, signature }.
+ * @param {Object} actionRequest - The action request { action, params? }
+ * @param {string} baseDir - Base directory (default: '.')
  */
-async function createApprovalToken(actionRequest) {
-  const pub = loadApprovalPubkey();
+async function createApprovalToken(actionRequest, baseDir = DEFAULT_BASE_DIR) {
+  const pub = loadApprovalPubkey(baseDir);
   const passphrase = await promptPassphrase(false);
   const seed = crypto.pbkdf2Sync(passphrase, SALT, PBKDF2_ITER, PBKDF2_KEYLEN, PBKDF2_DIGEST);
 
