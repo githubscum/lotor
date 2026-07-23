@@ -10,11 +10,11 @@ This tool writes a signed, tamper-evident log of what an agent did during a sess
 
 The argument getting loud right now is that you cannot have agentic systems that are reliable unless they can predict the consequences of their actions. That is true, and it is only the front half. Prediction is the front of reliability. The record is the back. A world model guesses what an action will do. A receipt states what it did. You need both, and only one of them is something you can hold in your hand today.
 
-Lotor is the back half. It does not give your agent a world model. It gives you the ground truth of what your agent actually did, signed, ordered, and tamper-evident, so that "reliable" stops being a claim and starts being a record you can check.
+Lotor is the back half. It does not give your agent a world model. It gives you a signed, ordered, tamper-evident record of what your agent's session reported doing, so that "reliable" stops being a claim and starts being a record you can check. Not ground truth. A record, kept by you, that cannot be quietly changed afterward.
 
 And it keeps that record where it belongs. The other warning in the same breath is about culture: if the world's information diet runs through a handful of proprietary engines, that is the end of local culture, and no system is ever truly unbiased. The same centralization is happening one layer down, quietly, to the record of what your agents do for you. Most accountability tools are cloud observability proxies. Your agent's activity flows through their servers, and your own history becomes inventory in someone else's books.
 
-Lotor is routed local first. The receipt is written to your machine before anything else happens to it. Nothing leaves unless you sign a scoped disclosure and choose to send it. That is the whole distinction, not a deployment checkbox and not an enterprise tier. The record of what your machines did for you lives with you, survives whichever vendor you were renting this quarter, and answers to your key, not their retention policy.
+Lotor is routed local first. The receipt is written to your machine and nowhere else. There is no upload path, no account, no server component: nothing leaves because nothing is built to send it. Scoped custodial integrations, the sanctioned way to hand a redacted slice of your record to an auditor, a client, or your own IT, are pending. Reach out for details. That is the whole distinction, not a deployment checkbox and not an enterprise tier. The record of what your machines did for you lives with you, survives whichever vendor you were renting this quarter, and answers to your key, not their retention policy.
 
 That is what a receipt means when the models centralize and the agents multiply. Your books. Local first. The floor that does not move when the vendor does.
 
@@ -37,7 +37,7 @@ Lotor is one primitive, a signed local receipt, applied wherever "what did my ag
 - **Tamper-evidence.** The chain detects after-the-fact alteration of the log. It does not prove the events were complete or truthful at capture time (see Known limits), but it proves the record has not been changed since.
 - **Feeding your own memory.** Receipts are durable, structured input to your own long-horizon agent memory, not telemetry for a vendor's dashboard.
 - **Vendor-churn survival.** Switch models or providers whenever you want. The record stays on your machine and stays readable. Your history does not belong to whichever engine you were renting.
-- **Scoped disclosure.** When you do need to share a record (an audit, a client hand-off, a bug report), you sign a scoped, redacted view and send only that. The default is that nothing leaves.
+- **Scoped custodial integrations (pending, reach out for details).** The sanctioned path for sharing a record with an auditor, a client, or your own IT: a scoped, redacted view, signed, sent only where you send it. Not built in v1. Today the default is absolute rather than chosen, because there is no export path at all. Anything you share, you share by hand.
 
 ## Claim discipline
 
@@ -47,9 +47,22 @@ Measurement, not indictment. A receipt records what the session self-reports; it
 
 Self-attested capture. The log begins at signing time. What happened before that moment is not covered by the tamper-evidence chain.
 
+Nothing described in the present tense here is unbuilt. Anything not built is in the list below or in [KNOWN-LIMITS.md](./KNOWN-LIMITS.md), and it is marked pending in the same breath as it is named.
+
+## Not built yet
+
+Named here so no sentence above has to carry a promise it cannot keep.
+
+- **Scoped custodial integrations.** Pending. Reach out for details. The sanctioned path for a redacted slice of your record to reach an auditor, a client, or your own IT, without handing over the whole chain and without a vendor in the middle. There is no export path in v1, so today the only way anything leaves is you moving it by hand.
+- **External anchoring.** Pending. Without a timestamp authority or an outside notary, the chain proves alteration but not erasure: truncating the tail leaves a shorter chain that still verifies. See KNOWN-LIMITS 3.
+- **Hardware-backed key custody.** Pending. The chain key sits on disk in plaintext today. See KNOWN-LIMITS 8.
+- **Per-model cost attribution.** Pending. A mixed-model session reports one blended total. See KNOWN-LIMITS 13.
+
 ## Install
 
-Installing Lotor means opting into two invariants: the receipt is written to your machine first, and nothing leaves it without your signature. Everything below is a choice about *where* those two things happen, not *whether*.
+Installing Lotor means opting into two invariants: the record is written to your machine and to nowhere else, and the actions you have put behind the gate fail closed until you sign them. Everything below is a choice about *where* those two things happen, not *whether*.
+
+Read the second one precisely, because the difference matters. The gate covers the rules you have set to `gate` in your policy, matched on tool name and parameters. It is not a claim that nothing can leave your machine. See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 11 for what the matcher does and does not catch, and check `lotor_status` for which rules are gated versus merely warned on your install.
 
 Lotor is an MCP server. You wire it into your client once, and from then on it can receipt the sessions of whatever it is wired into. There are two decisions.
 
@@ -91,9 +104,47 @@ From a terminal in the repo:
 npm run setup
 ```
 
-Setup creates your log-integrity key automatically, then walks you through setting a passphrase for your approval key. The approval key is the human in "nothing leaves without a human signature." Its private half is never written to disk. It is derived from your passphrase at the moment you approve a release, and nowhere else. Once the passphrase is set, the gate is live and Lotor says so.
+Setup creates your log-integrity key automatically, then walks you through setting a passphrase for your approval key. The approval key is the human in "gated actions wait for a human signature." Its private half is never written to disk. It is derived from your passphrase at the moment you approve an action, and nowhere else.
 
-### 5. Confirm it is live
+**Setting the key does not arm the gate.** The key is what a signature is made of; the hooks are what stops an action and asks for one. A Lotor install with a passphrase set and no hooks registered records nothing and blocks nothing. Do step 5.
+
+### 5. Register the hooks
+
+This is the step that turns Lotor from a library into a gate. Add these to your Claude Code settings (`~/.claude/settings.json`), substituting your own absolute path:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "node /absolute/path/to/lotor/bin/hook-session-start.js" } ] }
+    ],
+    "PreToolUse": [
+      { "hooks": [ { "type": "command", "command": "node /absolute/path/to/lotor/bin/hook-pre-tool-use.js" } ] }
+    ],
+    "PostToolUse": [
+      { "hooks": [ { "type": "command", "command": "node /absolute/path/to/lotor/bin/hook-post-tool-use.js" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "node /absolute/path/to/lotor/bin/hook-session-end.js" } ] }
+    ]
+  }
+}
+```
+
+What each one buys you:
+
+| Hook | What it does | What is missing without it |
+|---|---|---|
+| `SessionStart` | opens the record: session id, policy in force, chain head, hook registration | a session that dies badly leaves no trace at all, and the log looks clean |
+| `PreToolUse` | the gate: gated rules fail closed until you sign | nothing is ever blocked, whatever your policy says |
+| `PostToolUse` | captures egress-shaped calls at the moment they complete | outbound activity is only ever reconstructed later, from the transcript |
+| `SessionEnd` | closes the record: what ran, what it touched, what it cost | no session receipt is written |
+
+Restart your session after editing. Hooks are read at session start, so the edit takes effect on the next one, not this one.
+
+Two consequences worth being clear-eyed about. Hook registration lives in a file you can edit, so it is part of your threat model, not outside it; `SessionStart` snapshots which hooks were present into the open receipt so a between-session edit shows up in the log at the next start. And the gate only covers tool calls made after its hook is loading, which is the argument for the receipt layer being the first thing a session spins up rather than the last.
+
+### 6. Confirm it is live
 
 Inside Claude, the `lotor_status` tool reports your home path, how many receipts exist, whether the chain is intact, and whether the gate is active. From a terminal, `npm run receipts` prints the same. If you ever wonder whether Lotor is watching, ask it.
 

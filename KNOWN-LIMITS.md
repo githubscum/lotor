@@ -100,24 +100,37 @@ model this session's cost was incurred on," produces a number with no coherent m
 Per-model, per-harness cost attribution is not built. Treat any total from a mixed-model
 session as directional at best, never as a cross-service comparison.
 
-## 14. A session is only recorded if it ends cleanly
+## 14. A session that dies badly leaves an open, not a full record
 
-Capture is driven by `SessionEnd`. If a session is force-killed, crashes, hits
-an OOM, or the machine loses power, that hook never fires and **no receipt is
-written at all**. Not a partial one. None.
+**Partly fixed.** Capture used to be driven entirely by `SessionEnd`: a session
+that was force-killed, crashed, hit an OOM, or lost power wrote no receipt at
+all, so the chain showed an unbroken run of well-behaved sessions and no trace
+that any others existed. The sessions most worth a record were exactly the ones
+the design dropped.
 
-The failure mode is the wrong way round. The sessions most worth having a
-record of are the ones that ended badly, and those are exactly the ones this
-design drops. An operator reading the chain sees an unbroken sequence of
-well-behaved sessions and has no way to tell that others existed.
+`SessionStart` now opens the record at the moment a session begins, anchoring
+the session id, the source, the policy in force and its digest, the chain head,
+a verify result, and which Lotor hooks were registered. An abnormal exit now
+leaves an opened-but-never-closed entry, and `npm run receipts` reports the
+unclosed count under SESSION OPENS. Silence has become evidence.
 
-The fix is to open the record at `SessionStart` rather than write it at the
-end: anchor the session id, the policy in force, and the current chain head the
-moment the session begins. An abnormal exit then leaves an opened-but-never-
-closed entry, which is itself evidence rather than silence. Until that ships,
-read the absence of a receipt as "unknown", never as "nothing happened".
+What is still true after the fix:
 
-Related: the gate only protects tool calls that occur after its `PreToolUse`
-hook is registered and loading. Anything the harness runs before the gate is
-live is ungated by construction, which is a second argument for the receipt
-layer being the first thing spun up in a session rather than the last.
+An open is not a record of the work. It says a session started, under which
+policy, from which chain head. Everything between the last captured tool call
+and the crash is still unknown. The unclosed marker tells you where to stop
+trusting the log, not what happened past that point.
+
+It only works if the hook is registered. A Lotor install with `SessionEnd`
+wired up and `SessionStart` missing has exactly the old failure mode, silently.
+`npm run receipts` says so explicitly when it finds zero opens, and each open
+receipt carries a snapshot of which hooks it could see in your settings, but a
+snapshot taken at start cannot catch an edit made after it.
+
+Read the absence of a receipt as "unknown", never as "nothing happened". That
+instruction survives the fix. It now applies to a narrower window.
+
+Related, and unchanged: the gate only protects tool calls that occur after its
+`PreToolUse` hook is registered and loading. Anything the harness runs before
+the gate is live is ungated by construction, which is the argument for the
+receipt layer being the first thing a session spins up rather than the last.

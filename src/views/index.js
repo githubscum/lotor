@@ -102,6 +102,49 @@ function countEgressEvents(entries) {
 }
 
 /**
+ * Find sessions that were opened and never closed.
+ *
+ * A `session-open` receipt is written by the SessionStart hook; a session
+ * receipt (payload carrying `session`) is written by SessionEnd. A session id
+ * with the former and not the latter did not end cleanly: force-kill, crash,
+ * OOM, power loss. That gap is the evidence KNOWN-LIMITS 14 was written about,
+ * and it only means anything if something reads it, which is this.
+ *
+ * @param {Array} entries - Chain entries
+ * @returns {Object} { opened, closed, unclosed: Array<{sessionId, source, timestamp}> }
+ */
+function findUnclosedSessions(entries) {
+  const opens = new Map();
+  const closed = new Set();
+
+  for (const entry of entries) {
+    const payload = entry.payload;
+    if (payload?.type === 'session-open') {
+      const id = payload.sessionId || null;
+      // Keep the earliest open for an id; later ones are resume/clear/compact.
+      if (!opens.has(id)) {
+        opens.set(id, {
+          sessionId: id,
+          source: payload.source,
+          cwd: payload.cwd,
+          timestamp: payload.timestamp,
+          seq: entry.seq
+        });
+      }
+    } else if (payload?.session?.id) {
+      closed.add(payload.session.id);
+    }
+  }
+
+  const unclosed = [];
+  for (const [id, info] of opens) {
+    if (!closed.has(id)) unclosed.push(info);
+  }
+
+  return { opened: opens.size, closed: closed.size, unclosed };
+}
+
+/**
  * Render a session receipt in human-readable form.
  * @param {Object} receiptPayload - The session receipt payload
  * @returns {string} Rendered view
@@ -227,6 +270,31 @@ function renderMorningAfter(entries, baseDir = '.') {
   lines.push(`Distinct sessions:     ${distinctSessionIds.size}`);
   lines.push('');
 
+  // Sessions opened at SessionStart and never closed at SessionEnd. Loud on
+  // purpose: this is the one number that says "the log is not the whole story".
+  const openness = findUnclosedSessions(entries);
+  lines.push('─'.repeat(60));
+  lines.push('SESSION OPENS');
+  lines.push('─'.repeat(60));
+  lines.push(`  Opened:              ${openness.opened}`);
+  lines.push(`  Closed cleanly:      ${openness.closed}`);
+  if (openness.unclosed.length > 0) {
+    lines.push(`  *** UNCLOSED:        ${openness.unclosed.length} ***`);
+    for (const s of openness.unclosed.slice(-5)) {
+      const ts = s.timestamp ? new Date(s.timestamp).toISOString() : 'unknown time';
+      lines.push(`    ! ${s.sessionId || 'unknown id'} opened ${ts} (${s.source || 'unknown source'})`);
+    }
+    lines.push('    A session opened and never closed did not end cleanly.');
+    lines.push('    Its activity after the last captured tool call is unknown.');
+  } else {
+    lines.push('  Unclosed:            0');
+  }
+  if (openness.opened === 0) {
+    lines.push('  Note: no session-open receipts. If the SessionStart hook is not');
+    lines.push('        registered, absence of a receipt means UNKNOWN, not nothing.');
+  }
+  lines.push('');
+
   // Gated action summary
   const gated = countGatedActions(entries);
   lines.push('─'.repeat(60));
@@ -326,6 +394,7 @@ function renderMorningAfter(entries, baseDir = '.') {
 export {
   loadReceiptChain,
   findLatestSessionReceipt,
+  findUnclosedSessions,
   countGatedActions,
   countPolicyWarnings,
   countEgressEvents,
