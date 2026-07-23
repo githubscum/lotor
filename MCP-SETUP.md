@@ -2,6 +2,12 @@
 
 One-line hookup to connect this MCP server to your Claude client.
 
+> **This page is half the install.** Connecting the MCP server gives you the tools to query, verify, and approve. It does not record anything and it does not block anything. Recording and the gate both run as **Claude Code hooks**, which live in a different file (`~/.claude/settings.json`, or `%USERPROFILE%\.claude\settings.json` on Windows) and are not touched by anything on this page.
+>
+> Finish with **step 5 of the [README install](./README.md#5-register-the-hooks-required)**. Skip it and you have a query tool pointed at an empty log. `npm run receipts` will tell you: `Opened: 0` under SESSION OPENS means the hooks never ran.
+>
+> Hooks are a Claude Code feature. On a client that does not support them, Lotor records only the transcripts you ingest by hand (`npm run ingest -- /path/to/session.jsonl`) and the gate does not run at all.
+
 ## Claude Desktop / Claude Code
 
 Add this to your Claude client's MCP config:

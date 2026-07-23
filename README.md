@@ -64,7 +64,23 @@ Installing Lotor means opting into two invariants: the record is written to your
 
 Read the second one precisely, because the difference matters. The gate covers the rules you have set to `gate` in your policy, matched on tool name and parameters. It is not a claim that nothing can leave your machine. See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 11 for what the matcher does and does not catch, and check `lotor_status` for which rules are gated versus merely warned on your install.
 
-Lotor is an MCP server. You wire it into your client once, and from then on it can receipt the sessions of whatever it is wired into. There are two decisions.
+Lotor is two pieces that install separately. An **MCP server**, which gives you the tools to query, verify and approve. And four **Claude Code hooks**, which are what actually record and what actually gate. Installing one without the other is the most common way to end up thinking Lotor is running when it is not.
+
+### Prerequisites
+
+- **Node 18 or later**, and a working `claude` CLI if you are installing into Claude Code.
+- **A text editor, and willingness to hand-edit a JSON file.** This is the one that surprises people, so it is stated here rather than discovered at step 5.
+
+Lotor's recording and its gate both run as **Claude Code hooks**, and hooks are configured in Claude Code's own settings file. Adding the MCP server does not add them. You edit `settings.json` yourself:
+
+| Platform | File |
+|---|---|
+| macOS / Linux | `~/.claude/settings.json` |
+| Windows | `%USERPROFILE%\.claude\settings.json` |
+
+Step 5 has the exact block to paste. If you would rather not edit JSON by hand, the interactive `claude` CLI has a `/hooks` command that writes the same file through a menu.
+
+**Why Lotor does not install its own hooks.** It could. It deliberately does not. A tool that can silently register its own enforcement into your settings is a tool that can silently unregister it, and a gate you did not knowingly install is a gate you have no reason to trust. The settings file is inside your threat model, not outside it (see [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 11), so the act of arming this thing is yours. The cost is one paste. The benefit is that you know exactly what is running and can see it in a file you own.
 
 ### 1. Where it runs
 
@@ -108,9 +124,13 @@ Setup creates your log-integrity key automatically, then walks you through setti
 
 **Setting the key does not arm the gate.** The key is what a signature is made of; the hooks are what stops an action and asks for one. A Lotor install with a passphrase set and no hooks registered records nothing and blocks nothing. Do step 5.
 
-### 5. Register the hooks
+### 5. Register the hooks (required)
 
-This is the step that turns Lotor from a library into a gate. Add these to your Claude Code settings (`~/.claude/settings.json`), substituting your own absolute path:
+This is the step that turns Lotor from a library into a gate. Skip it and you have installed a query tool against an empty log.
+
+Open your Claude Code settings file (`~/.claude/settings.json`, or `%USERPROFILE%\.claude\settings.json` on Windows) and merge in the `hooks` block below, substituting your own absolute path to this repo. If the file already has a `hooks` key, add these four events inside it rather than replacing it. If the file does not exist yet, create it with exactly this content.
+
+Forward slashes work in the command path on every platform, including Windows.
 
 ```json
 {
@@ -140,40 +160,25 @@ What each one buys you:
 | `PostToolUse` | captures egress-shaped calls at the moment they complete | outbound activity is only ever reconstructed later, from the transcript |
 | `SessionEnd` | closes the record: what ran, what it touched, what it cost | no session receipt is written |
 
+With no `matcher`, each fires on every occurrence of its event.
+
 Restart your session after editing. Hooks are read at session start, so the edit takes effect on the next one, not this one.
+
+Every one of these hooks is deliberately unable to break your session. None exits non-zero except the gate, and the gate only when it is blocking on purpose. None writes to stdout. Every other failure (missing transcript, malformed payload, unreadable chain, a Lotor bug) is swallowed with a one-line note to stderr. A receipt layer that can wedge your editor is worse than no receipt layer.
 
 Two consequences worth being clear-eyed about. Hook registration lives in a file you can edit, so it is part of your threat model, not outside it; `SessionStart` snapshots which hooks were present into the open receipt so a between-session edit shows up in the log at the next start. And the gate only covers tool calls made after its hook is loading, which is the argument for the receipt layer being the first thing a session spins up rather than the last.
 
 ### 6. Confirm it is live
 
-Inside Claude, the `lotor_status` tool reports your home path, how many receipts exist, whether the chain is intact, and whether the gate is active. From a terminal, `npm run receipts` prints the same. If you ever wonder whether Lotor is watching, ask it.
+Inside Claude, the `lotor_status` tool reports your home path, how many receipts exist, whether the chain is intact, and whether the gate is active. From a terminal:
 
-### 6. Turn on automatic session receipts
-
-Installing the server gives you the tools. It does not yet record anything. To get a receipt written automatically every time a session ends, register the `SessionEnd` hook in your Claude Code settings (`~/.claude/settings.json`, or `%USERPROFILE%\.claude\settings.json` on Windows):
-
-```json
-{
-  "hooks": {
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/lotor/bin/hook-session-end.js"
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+npm run receipts
 ```
 
-Merge that `hooks` key into your existing settings rather than replacing the file. With no `matcher`, it fires on every session end.
+Look at the `SESSION OPENS` block. During a live session you should see one more opened than closed: that is your current session, open and not yet finished. If it reads `Opened: 0`, the `SessionStart` hook is not registered and step 5 did not take.
 
-The hook is deliberately unable to break your session. It never exits non-zero, never writes to stdout, and swallows every failure (missing transcript, malformed payload, unreadable chain) with a one-line note to stderr. A receipt layer that can wedge your editor is worse than no receipt layer.
-
-Without the hook, nothing is recorded until you ingest a transcript by hand:
+If you skip step 5 entirely, nothing is recorded automatically and you are back to ingesting a transcript by hand:
 
 ```bash
 npm run ingest -- /path/to/session.jsonl
@@ -191,7 +196,9 @@ npm test
 
 ### Connect the MCP server to a Claude client
 
-Point your client at `src/mcp/server.js` over stdio. See [MCP-SETUP.md](./MCP-SETUP.md) for the exact config block and the three tools it exposes (`query_receipts`, `verify_chain`, `gated_action`).
+Point your client at `src/mcp/server.js` over stdio. See [MCP-SETUP.md](./MCP-SETUP.md) for the exact config block and the tools it exposes (`query_receipts`, `verify_chain`, `lotor_status`, `gated_action`).
+
+That connects the tools. It does not start recording and it does not arm the gate: both are hooks, registered separately in Claude Code's `settings.json`. See [step 5](#5-register-the-hooks-required).
 
 ### The gated-action loop at a glance
 
