@@ -29,6 +29,7 @@ const DEFAULT_POLICY = {
     'push-protected': 'warn',
     'publish': 'warn',
     'egress-other': 'warn',
+    'opaque-exec': 'warn',
     'destructive': 'warn',
     'scope-escalation': 'warn',
     'spend': 'off'
@@ -340,6 +341,65 @@ export function isScopeEscalation(toolInput) {
     || /\bcrontab\b/.test(cmd);
 }
 
+// ---------- opaque-exec matcher ----------
+
+/**
+ * True when a command hands control to a local script the engine cannot read.
+ *
+ * This is the second half of the 2026-07-22 deploy incident. Widening the
+ * tool-name guard made PowerShell visible, but the command that actually
+ * shipped 1.3 MB off the machine was `.\deploy\deploy.ps1 -PiHost pi@...`.
+ * There is no `ssh` or `scp` token in that string. The egress lives inside
+ * the script, one indirection away, where no regex over the command line can
+ * reach it.
+ *
+ * Pattern matching cannot solve this: knowing what a script does means
+ * reading the script, and by then it has already been handed the machine. So
+ * the honest posture for a gate is that an unreadable action is an
+ * unverified action. "I cannot tell what this does" must not silently mean
+ * "allow" on a tool whose entire promise is that nothing leaves unsigned.
+ *
+ * Deliberately narrow: only shell and batch scripts, only when invoked as
+ * the command. It fires on the class of thing that wraps arbitrary egress,
+ * not on every binary.
+ */
+const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?=\s|$|['\"])/i;
+
+// A command that only READS a script is not handing over control. The word
+// boundaries here are load-bearing: without them `ls` matches inside "tools"
+// and `type` inside "prototype", which silently disables the whole rule.
+const READ_ONLY_VERB = /\b(cat|less|more|head|tail|grep|rg|ls|dir|stat|wc|type|Get-Content|Select-String)\b/i;
+
+export function isOpaqueExec(toolInput) {
+  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  if (cmd === '') return false;
+  if (!SCRIPT_EXT.test(cmd)) return false;
+  if (READ_ONLY_VERB.test(cmd)) return false;
+  return true;
+}
+
+// ---------- command-tool detection ----------
+
+/**
+ * True when a tool call carries a shell command this engine should inspect.
+ *
+ * This deliberately keys on the SHAPE of the input, not on an allowlist of
+ * tool names. The previous version hardcoded `toolName === 'Bash'`, which
+ * meant every command rule below was blind to every other shell the harness
+ * exposes. On a Windows host, where the primary shell is PowerShell, that is
+ * the shell most work actually runs through: a deploy could ship megabytes
+ * off the machine, or `rm -rf` a served directory, and no rule would look at
+ * it. Naming the next shell explicitly would only move the hole.
+ *
+ * Inspecting anything with a command string trades a small false-positive
+ * risk for closing a whole class of false negative. For a gate that is the
+ * correct direction: warning about something harmless costs a keystroke,
+ * missing real egress costs the guarantee the product is sold on.
+ */
+function isCommandTool(toolName, toolInput) {
+  return typeof toolInput?.command === 'string' && toolInput.command.trim() !== '';
+}
+
 // ---------- top-level evaluate ----------
 
 /**
@@ -364,27 +424,32 @@ function evaluate(toolName, toolInput, policy, baseDir) {
     return { ruleId: 'self-mod', mode: modeOf('self-mod') };
   }
   // Rule 2: push-force
-  if (modeOf('push-force') !== 'off' && toolName === 'Bash' && isPushForce(toolInput)) {
+  if (modeOf('push-force') !== 'off' && isCommandTool(toolName, toolInput) && isPushForce(toolInput)) {
     return { ruleId: 'push-force', mode: modeOf('push-force') };
   }
   // Rule 3: push-protected
-  if (modeOf('push-protected') !== 'off' && toolName === 'Bash' && isPushProtected(toolInput)) {
+  if (modeOf('push-protected') !== 'off' && isCommandTool(toolName, toolInput) && isPushProtected(toolInput)) {
     return { ruleId: 'push-protected', mode: modeOf('push-protected') };
   }
   // Rule 4: publish
-  if (modeOf('publish') !== 'off' && toolName === 'Bash' && isPublish(toolInput)) {
+  if (modeOf('publish') !== 'off' && isCommandTool(toolName, toolInput) && isPublish(toolInput)) {
     return { ruleId: 'publish', mode: modeOf('publish') };
   }
   // Rule 5: egress-other
-  if (modeOf('egress-other') !== 'off' && toolName === 'Bash' && isEgressOther(toolInput)) {
+  if (modeOf('egress-other') !== 'off' && isCommandTool(toolName, toolInput) && isEgressOther(toolInput)) {
     return { ruleId: 'egress-other', mode: modeOf('egress-other') };
   }
+  // Rule 5b: opaque-exec. Runs after egress-other so a command with a
+  // readable egress verb reports that more specific reason first.
+  if (modeOf('opaque-exec') !== 'off' && isCommandTool(toolName, toolInput) && isOpaqueExec(toolInput)) {
+    return { ruleId: 'opaque-exec', mode: modeOf('opaque-exec') };
+  }
   // Rule 6: destructive
-  if (modeOf('destructive') !== 'off' && toolName === 'Bash' && isDestructive(toolInput)) {
+  if (modeOf('destructive') !== 'off' && isCommandTool(toolName, toolInput) && isDestructive(toolInput)) {
     return { ruleId: 'destructive', mode: modeOf('destructive') };
   }
   // Rule 7: scope-escalation
-  if (modeOf('scope-escalation') !== 'off' && toolName === 'Bash' && isScopeEscalation(toolInput)) {
+  if (modeOf('scope-escalation') !== 'off' && isCommandTool(toolName, toolInput) && isScopeEscalation(toolInput)) {
     return { ruleId: 'scope-escalation', mode: modeOf('scope-escalation') };
   }
   // Rule 8: spend is "off" in v1; no matcher defined.

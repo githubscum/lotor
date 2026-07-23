@@ -31,7 +31,10 @@ function makeTempDir() {
 }
 
 describe('policy: DEFAULT_POLICY shape', () => {
-  it('locks the eight rule ids and the expected default modes', () => {
+  // opaque-exec added 2026-07-22 after a deploy shipped 1.3 MB off the machine
+  // through a .ps1 that no matcher could read. Default is 'warn' so adopters
+  // are not surprised by a new hard block; a local policy.json can raise it.
+  it('locks the nine rule ids and the expected default modes', () => {
     assert.strictEqual(DEFAULT_POLICY.version, 1);
     assert.deepStrictEqual(DEFAULT_POLICY.modes, {
       'self-mod': 'gate',
@@ -39,6 +42,7 @@ describe('policy: DEFAULT_POLICY shape', () => {
       'push-protected': 'warn',
       'publish': 'warn',
       'egress-other': 'warn',
+      'opaque-exec': 'warn',
       'destructive': 'warn',
       'scope-escalation': 'warn',
       'spend': 'off'
