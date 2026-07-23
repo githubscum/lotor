@@ -127,21 +127,25 @@ describe('bin/hook-pre-tool-use.js', () => {
     const wHome = path.join(tempDir, 'home-warn');
     fs.mkdirSync(wHome, { recursive: true });
 
+    // destructive, not push-force: as of the 2026-07-23 herding-modes default
+    // (Grazing), push-force gates rather than warns. destructive stays warn
+    // under Grazing (it's a local-only action), so it's the one that still
+    // exercises this path under the shipped default.
     const res = await runHook({
       home: wHome,
       stdin: JSON.stringify({
         tool_name: 'Bash',
-        tool_input: { command: 'git push --force origin feat/x', secret: 'do-not-leak' }
+        tool_input: { command: 'rm -rf /var/www/example.com', secret: 'do-not-leak' }
       })
     });
     assert.strictEqual(res.code, 0, 'warn must exit 0');
-    assert.match(res.stderr, /warn: push-force/);
+    assert.match(res.stderr, /warn: destructive/);
 
     const entries = loadChain(wHome);
     const policyWarns = entries.filter(e => e.payload?.type === 'policy-warn');
     assert.strictEqual(policyWarns.length, 1, 'exactly one policy-warn receipt');
     const w = policyWarns[0].payload;
-    assert.strictEqual(w.ruleId, 'push-force');
+    assert.strictEqual(w.ruleId, 'destructive');
     assert.strictEqual(w.tool, 'Bash');
     assert.ok(w.paramsDigest && /^[a-f0-9]{16}$/.test(w.paramsDigest), 'digest is 16-hex');
     assert.strictEqual(w.secret, undefined, 'no raw params in the receipt');

@@ -14,7 +14,9 @@
     "approve:init": "node bin/approve.js init",
     "approve": "node bin/approve.js approve",
     "gate": "node bin/gate.js",
+    "mode": "node bin/mode.js",
     "receipts": "node bin/view.js --all",
+    "hook:session-start": "node bin/hook-session-start.js",
     "hook:session-end": "node bin/hook-session-end.js",
     "hook:pre-tool-use": "node bin/hook-pre-tool-use.js",
     "hook:post-tool-use": "node bin/hook-post-tool-use.js"

@@ -23,6 +23,17 @@
  *      stderr is shown back to the model with the rule id and the exact
  *      canonicalized request the owner must sign.
  *
+ * DENIAL MESSAGE (2026-07-23)
+ *   Every deny path prints the same fixed-shape message via
+ *   buildDenialMessage(): WHAT matched, WHY it matters, how RISKy it is,
+ *   what the signature actually SCOPEs, and one runnable command. The
+ *   request is staged to <LOTOR_HOME>/pending-approvals/requests/<id>.json
+ *   so the printed command (`npm run approve -- --request <id>`) has
+ *   nothing left to substitute. This exists so the experience of hitting
+ *   the gate is identical regardless of which model is driving the
+ *   session — see CLAUDE.md at the repo root, which asks an agent to relay
+ *   this message rather than compose its own warning.
+ *
  * FAIL-OPEN ON ENGINE ERROR
  *   A Lotor bug must not brick every tool call. If policy loading, evaluation,
  *   or chain I/O throws unexpectedly, we log to stderr, append a best-effort
@@ -36,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy, evaluate } from '../src/policy/index.js';
+import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
 
@@ -149,58 +160,190 @@ function deleteTokenFile(tokenPath) {
 }
 
 /**
- * Try every token in pending-approvals/; the first one that validates
- * (and whose nonce is not already used) wins. Returns:
- *   - { token, tokenFile } on success
- *   - { rejected: { reason } } if a token was found but failed verification
- *     (e.g. nonce reuse, signature failure). The caller must treat this
- *     as a deny with the specific reason — fail-closed at the token layer.
- *   - null if no token files were present at all
+ * Try every token in pending-approvals/; the first one that VALIDATES wins.
+ * A token that fails to validate against THIS action is not treated as a
+ * verdict on the action — it just means that token was signed for something
+ * else, which is the normal case when more than one approval is pending at
+ * once. Only a genuine security failure (nonce replay, bad signature) short-
+ * circuits the scan, since continuing past a replay attempt in search of a
+ * token that happens to validate would defeat the point of failing closed.
+ *
+ * BUG FIXED 2026-07-23: the previous version returned on the FIRST token
+ * examined that did not match the current action, via a plain "invalid ->
+ * rejected" branch with no distinction between "wrong token" and "bad
+ * token". With two or more tokens signed in the same sitting (exactly what
+ * happens when several files are approved in one batch), whichever token
+ * happened to sort first in the directory listing would reject the call
+ * outright, even when a later file in the same directory was the correct,
+ * validly-signed approval. Found by using the gate for exactly this: three
+ * files signed in one sitting, and the second write failed with "approval
+ * token request mismatch" despite a valid token for it sitting right next
+ * to the wrong one.
+ *
+ * Returns:
+ *   - { token, tokenFile } on the first token that validates for this exact
+ *     action request
+ *   - { rejected: { reason, tokenFile } } only for a token that matched this
+ *     action's request but then failed on nonce replay or signature — a
+ *     verdict on THIS action, not on the token file's mere presence
+ *   - null if no token file validates and none was a security failure
+ *     either (i.e. every present token was simply for a different action)
  * Never writes a nonce — the caller hands the winning token to gatedAction,
  * which records the nonce exactly once.
+ *
+ * NOTE: loadTokenFiles() lists the flat pending-approvals/ directory, not
+ * its requests/ subdirectory, so staged (not-yet-signed) requests are never
+ * mistaken for tokens here.
  */
 function findValidToken(actionRequest, home) {
   const candidates = loadTokenFiles(home);
   if (candidates.length === 0) return null;
+
+  const canonicalActual = canonicalizeRequest(actionRequest);
+  let sawSecurityFailure = null;
+
   for (const cand of candidates) {
     const token = readTokenFile(cand.path);
     if (token == null) continue;
+
+    // Cheap, local check first: does this token's own signed request even
+    // match the action being attempted? If not, this file is simply not the
+    // approval for this call — keep scanning rather than treating it as a
+    // verdict on THIS action.
+    if (!token.request || token.request !== canonicalActual) {
+      continue;
+    }
+
     let result;
     try {
       result = verifyApproval(actionRequest, token, home);
     } catch (e) {
-      // Treat exception as a verification failure; move on to the next file.
+      // Treat an exception as a verification failure for THIS token only;
+      // keep scanning in case another file is the real approval.
       continue;
     }
+
     if (result && result.valid) {
       return { token, tokenFile: cand.path };
     }
-    // Token was present but invalid. Return the first rejection with its
-    // specific reason so the caller can fail closed with the right receipt.
-    if (result && !result.valid) {
-      return { rejected: { reason: result.reason || 'token invalid', tokenFile: cand.path } };
+
+    // The request matched but the token itself failed (replay, bad
+    // signature, missing key). This IS a verdict on this action: remember
+    // the first such failure, but keep scanning in case a different,
+    // still-valid token for the same action also exists.
+    if (result && !result.valid && !sawSecurityFailure) {
+      sawSecurityFailure = { reason: result.reason || 'token invalid', tokenFile: cand.path };
     }
+  }
+
+  if (sawSecurityFailure) {
+    return { rejected: sawSecurityFailure };
   }
   return null;
 }
 
-function buildDenialMessage(ruleId, actionRequest, home) {
-  const canonical = canonicalizeRequest(actionRequest);
-  const outDir = path.join(home, 'pending-approvals');
+/**
+ * Stage a canonicalized action request for the owner to sign, at
+ * <home>/pending-approvals/requests/<id>.json. This is what makes the
+ * printed approve command runnable exactly as printed — nothing left for
+ * a model to fill in, and nothing composed by whichever model hit the gate.
+ *
+ * Best-effort: staging failure (unwritable home, full disk) must not break
+ * the deny path. Returns null on failure; buildDenialMessage() falls back
+ * to the older file-based instructions when requestId is null.
+ *
+ * @returns {string|null} a short hex id, or null if staging failed
+ */
+function stageRequest(home, actionRequest) {
+  try {
+    const dir = path.join(home, 'pending-approvals', 'requests');
+    ensureDir(dir);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const id = crypto.randomBytes(4).toString('hex');
+      const file = path.join(dir, `${id}.json`);
+      if (fs.existsSync(file)) continue; // vanishingly unlikely; retry
+      fs.writeFileSync(file, JSON.stringify(actionRequest, null, 2) + '\n', { mode: 0o600 });
+      return id;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * A short human-readable description of the action for the denial
+ * message's WHAT line: the tool name plus whichever signed parameter
+ * carries the actual target.
+ */
+function describeAction(actionRequest) {
+  const action = actionRequest?.action || 'unknown';
+  const params = actionRequest?.params || {};
+  const detail = params.command || params.file_path || params.url || params.path;
+  return detail ? `${action}: ${detail}` : action;
+}
+
+/**
+ * Build the fixed-shape denial message every deny path prints. Five parts,
+ * always in this order: WHAT matched, WHY it matters, how RISKy it is, what
+ * the signature actually SCOPEs (only the listed params — never file
+ * content — and single-use, bound to this exact request), and one runnable
+ * approve command.
+ *
+ * Designed to stand on its own: a model that has read no rules about this
+ * repo should still be able to relay this message completely and a human
+ * should be able to decide from it alone. CLAUDE.md at the repo root asks
+ * an agent to relay this verbatim rather than compose its own warning —
+ * this message, not agent judgment, is what is meant to carry the weight.
+ */
+function buildDenialMessage(ruleId, actionRequest, home, requestId) {
+  const info = RULE_INFO[ruleId] || {
+    why: 'this matched a gated rule',
+    risk: 'UNKNOWN — no risk description is defined for this rule'
+  };
+  const what = describeAction(actionRequest);
+  const signedKeys = Object.keys(actionRequest?.params || {});
+  const scopeNote = signedKeys.length > 0
+    ? `signs ${signedKeys.join(', ')} only. Nothing else about this call is covered by the signature.`
+    : 'signs the action itself; no parameters were included.';
+
   const lines = [
-    `Lotor: rule "${ruleId}" requires owner approval.`,
-    `Sign the exact canonicalized request below, then write the resulting`,
-    `token JSON to <LOTOR_HOME>/pending-approvals/<name>.json.`,
+    `LOTOR GATE — rule "${ruleId}" (${actionRequest?.action || 'unknown'})`,
     ``,
-    `Action request (canonicalized):`,
-    canonical,
-    ``,
-    `To approve, the owner runs (in a real terminal, with the same LOTOR_HOME):`,
-    `  npm run approve -- --action-file <f> --out ${path.join(outDir, '<name>.json')}`,
-    ``,
-    `Substitute <f> with a file containing the action request above (any JSON`,
-    `form that canonicalizes to the same string works).`
+    `  WHAT    ${what}`,
+    `  WHY     ${info.why}`,
+    `  RISK    ${info.risk}`,
+    `  SCOPE   ${scopeNote}`,
+    `          Single use. Bound to this exact request. Review before you sign.`
   ];
+
+  if (requestId) {
+    lines.push(
+      ``,
+      `  Approve, in a real terminal:`,
+      `    npm run approve -- --request ${requestId}`,
+      ``,
+      `  (staged at ${path.join(home, 'pending-approvals', 'requests', requestId + '.json')})`
+    );
+  } else {
+    // Staging failed (best-effort). Fall back to the older file-based flow
+    // so the owner still has a path to approve, just a more manual one.
+    const canonical = canonicalizeRequest(actionRequest);
+    const outDir = path.join(home, 'pending-approvals');
+    lines.push(
+      ``,
+      `  Could not stage the request for --request. Approve it by hand instead:`,
+      `  Sign the exact canonicalized request below, then write the resulting`,
+      `  token JSON to <LOTOR_HOME>/pending-approvals/<name>.json.`,
+      ``,
+      `  Action request (canonicalized):`,
+      `  ${canonical}`,
+      ``,
+      `    npm run approve -- --action-file <f> --out ${path.join(outDir, '<name>.json')}`
+    );
+  }
+
+  lines.push(``, `  Doing nothing denies. The denial is already receipted.`);
   return lines.join('\n');
 }
 
@@ -327,8 +470,25 @@ async function main() {
   }
 
   if (mode === 'gate') {
-    const actionRequest = { action: toolName, params: toolInput };
+    // Sign only the parameters that carry security meaning. `description`
+    // and `timeout` are authored by the agent and mean nothing to the gate,
+    // but including them made every token brittle: the owner had to know the
+    // agent's exact prose in advance, and the agent could void an approval by
+    // rewording. Both push toward signing without reading, which is worse
+    // than not signing at all. Everything is still recorded in the receipt;
+    // this narrows only what the signature is bound to.
+    const SIGNED_PARAMS = ['command', 'file_path', 'url', 'path'];
+    const signedInput = {};
+    for (const k of SIGNED_PARAMS) {
+      if (toolInput && toolInput[k] !== undefined) signedInput[k] = toolInput[k];
+    }
+    const actionRequest = { action: toolName, params: signedInput };
     const tokenResult = findValidToken(actionRequest, home);
+
+    // Staged once per hook invocation and reused across whichever deny path
+    // below actually fires, so the owner sees one consistent --request id
+    // for this exact call regardless of why it was denied.
+    const requestId = stageRequest(home, actionRequest);
 
     if (tokenResult == null) {
       // No token at all -> deny.
@@ -343,7 +503,7 @@ async function main() {
         note(`denial receipt failed (${e.message}); still denying`);
       }
       note(`BLOCKED: ${ruleId} (${toolName}) — no valid token`);
-      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home) + '\n');
+      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }
 
@@ -368,7 +528,7 @@ async function main() {
       // subsequent tool call.
       try { fs.unlinkSync(tokenResult.rejected.tokenFile); } catch (_) { /* best-effort */ }
       note(`BLOCKED: ${ruleId} (${toolName}) — ${tokenResult.rejected.reason}`);
-      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home) + '\n');
+      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }
 
@@ -385,7 +545,7 @@ async function main() {
       result = gatedAction(actionRequest, tokenResult.token, chain, home);
     } catch (e) {
       note(`gate check crashed (${e.message}); denying`);
-      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home) + '\n');
+      process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }
     if (result.decision === 'approved') {
@@ -395,7 +555,7 @@ async function main() {
     }
     // Token was presented but rejected (e.g. nonce race). Deny.
     note(`BLOCKED: ${ruleId} (${toolName}) — ${result.reason || 'token invalid'}`);
-    process.stderr.write(buildDenialMessage(ruleId, actionRequest, home) + '\n');
+    process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
     process.exit(2);
   }
 

@@ -31,14 +31,25 @@ function makeTempDir() {
 }
 
 describe('policy: DEFAULT_POLICY shape', () => {
-  it('locks the eight rule ids and the expected default modes', () => {
-    assert.strictEqual(DEFAULT_POLICY.version, 1);
+  // Superseded 2026-07-23 by the herding-modes design (Herded/Grazing/Loose,
+  // see test/policy-modes.test.js). DEFAULT_POLICY is now the Grazing
+  // preset's expansion, plus a tenth rule id (mode-change) that protects the
+  // mode switch itself. A fresh install now gates egress by default, which
+  // the old all-warn v1 defaults did not — this is the change that makes
+  // "gated actions" true out of the box rather than aspirational. An
+  // existing pre-2026-07-23 policy.json is not silently upgraded: see
+  // policy-modes.test.js's legacy-fallback and drift-to-custom coverage.
+  it('locks the ten rule ids and the Grazing default modes', () => {
+    assert.strictEqual(DEFAULT_POLICY.version, 2);
+    assert.strictEqual(DEFAULT_POLICY.mode, 'grazing');
     assert.deepStrictEqual(DEFAULT_POLICY.modes, {
       'self-mod': 'gate',
-      'push-force': 'warn',
-      'push-protected': 'warn',
-      'publish': 'warn',
-      'egress-other': 'warn',
+      'mode-change': 'gate',
+      'push-force': 'gate',
+      'push-protected': 'gate',
+      'publish': 'gate',
+      'egress-other': 'gate',
+      'opaque-exec': 'gate',
       'destructive': 'warn',
       'scope-escalation': 'warn',
       'spend': 'off'
@@ -397,7 +408,10 @@ describe('policy: evaluate (first-match-wins, off mode)', () => {
       policy,
       baseDir
     );
-    assert.strictEqual(m, null);
+    // push-force is off, so it must not fire. The command is still a push, and
+    // since 2026-07-23 egress-other legitimately catches that: switching one
+    // rule off must not make content leaving the machine invisible.
+    assert.notStrictEqual(m?.ruleId, 'push-force');
   });
 
   it('mode field reflects the policy mode (gate vs warn)', () => {
@@ -423,7 +437,7 @@ describe('policy: evaluate (first-match-wins, off mode)', () => {
       policy,
       baseDir
     );
-    assert.strictEqual(m, null, 'unknown mode should not match');
+    assert.notStrictEqual(m?.ruleId, 'push-force', 'unknown mode should not match');
   });
 });
 
