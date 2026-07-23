@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-23 (later) — herding modes, and a denial message that never varies by model
+
+Two changes, one motivation: the experience of hitting the gate should be
+identical no matter which model is driving the session, and there should be
+one command to change the gate's overall posture instead of nine independent
+switches nobody can hold in their head.
+
+**Three named modes replace the nine-rule matrix.** `npm run mode` prints the
+current mode; `npm run mode -- herded|grazing|loose` switches it, gated behind
+the same approval passphrase that signs any other gated action. Grazing (gate
+on anything leaving the machine, warn on local-only actions) is now the
+default for a fresh install — previously a fresh install only warned on push,
+publish, and other egress, which contradicted the product's own claim.
+`self-mod` and a new `mode-change` rule gate in every mode without exception,
+including Loose: free to act on the world is not the same as free to rewrite
+what stops you. Loose warns rather than turns rules off, because an unmatched
+rule takes a no-receipt fast path — the most dangerous mode must not also be
+the one that leaves the least evidence. An existing pre-herding-modes
+`policy.json` is untouched and loads as mode `custom`; nothing is silently
+upgraded. See the README's new "Herding modes" section and
+`test/policy-modes.test.js`.
+
+**The gate's denial message is now fixed-shape and complete on its own.** It
+used to end with two placeholders (`<f>`, `<name>.json`) that whichever model
+hit the gate had to improvise around, which is exactly why the ceremony
+varied by model. The `PreToolUse` hook now stages the denied request to disk
+and prints one runnable command (`npm run approve -- --request <id>`), plus
+what matched, why it matters, how risky it is, and exactly what the signature
+does and does not cover (params only, never file content). `CLAUDE.md`, new
+at the repo root, asks any agent working here to relay that message verbatim
+and wait rather than compose its own warning. `lotor_status` now also reports
+the current mode and whether the hooks are actually registered, rather than
+calling the gate "fully active" the moment an approval key exists — the same
+distinction the last entry's README fix already drew.
+
 ## 2026-07-23 — the record now opens when a session starts, and the docs stopped overclaiming
 
 Lotor used to write its record only when a session ended. A session that was

@@ -19,8 +19,9 @@
  *
  * WHAT IT ANCHORS
  *   - session id, source (startup | resume | clear | compact), cwd
- *   - the policy in force, plus a digest so a between-session policy edit
- *     is visible as a changed digest rather than having to be diffed
+ *   - the herding-mode policy in force (herded | grazing | loose | custom),
+ *     plus a digest so a between-session policy edit is visible as a
+ *     changed digest rather than having to be diffed
  *   - the chain head at open (seq + hash), so the log's own starting point
  *     for this session is recorded inside the log
  *   - a verify result at open
@@ -58,13 +59,13 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
 import { loadPolicy } from '../src/policy/index.js';
 import { verifyChain } from '../src/chain/index.js';
+import { snapshotHookRegistration } from '../src/registration.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -118,47 +119,6 @@ function digestPolicy(policy) {
   for (const k of Object.keys(modes).sort()) sorted[k] = modes[k];
   const text = JSON.stringify({ version: policy?.version ?? null, modes: sorted });
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-}
-
-/**
- * Which Lotor hooks are registered in the user's Claude Code settings.
- *
- * Read-only and best-effort: an unreadable or absent settings file yields
- * `{ readable: false }` rather than throwing. A false here means "not found
- * in the files we looked at", not "provably absent everywhere" — project and
- * enterprise settings can also register hooks and are not read.
- */
-function snapshotHookRegistration() {
-  const candidates = [
-    path.join(os.homedir(), '.claude', 'settings.json'),
-    path.join(os.homedir(), '.claude', 'settings.local.json')
-  ];
-
-  let readable = false;
-  let blob = '';
-  const sourcesRead = [];
-  for (const file of candidates) {
-    try {
-      if (!fs.existsSync(file)) continue;
-      blob += fs.readFileSync(file, 'utf8');
-      sourcesRead.push(file);
-      readable = true;
-    } catch (e) {
-      // best-effort; a settings file we cannot read is simply not counted
-    }
-  }
-
-  if (!readable) return { readable: false };
-
-  const has = needle => blob.includes(needle);
-  return {
-    readable: true,
-    sessionStart: has('hook-session-start.js'),
-    preToolUse: has('hook-pre-tool-use.js'),
-    postToolUse: has('hook-post-tool-use.js'),
-    sessionEnd: has('hook-session-end.js'),
-    sourcesRead
-  };
 }
 
 /**
@@ -222,6 +182,10 @@ async function main() {
     note(`could not load policy (${e.message}); recording the open without it`);
   }
 
+  if (policy && policy.mode === 'loose') {
+    note('WARNING: herding mode is LOOSE — nothing is blocked this session, only recorded');
+  }
+
   const hooks = snapshotHookRegistration();
   if (hooks.readable && !hooks.preToolUse) {
     note('WARNING: the PreToolUse gate is NOT registered in your settings; actions are ungated');
@@ -256,7 +220,7 @@ async function main() {
         chainLengthAtOpen: current.length,
         verifiedAtOpen: verified,
         policy: policy
-          ? { version: policy.version, modes: policy.modes, digest: digestPolicy(policy) }
+          ? { version: policy.version, mode: policy.mode, modes: policy.modes, digest: digestPolicy(policy) }
           : null,
         hooks,
         lotorVersion: 1,
@@ -265,7 +229,7 @@ async function main() {
     });
 
     if (entry) {
-      note(`opened session ${sessionId || 'unknown'} (${source}) at seq ${entry.seq}`);
+      note(`opened session ${sessionId || 'unknown'} (${source}, mode ${policy?.mode || 'unknown'}) at seq ${entry.seq}`);
     } else {
       note('nothing appended');
     }

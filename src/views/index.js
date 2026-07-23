@@ -128,7 +128,8 @@ function findUnclosedSessions(entries) {
           source: payload.source,
           cwd: payload.cwd,
           timestamp: payload.timestamp,
-          seq: entry.seq
+          seq: entry.seq,
+          mode: payload.policy?.mode || null
         });
       }
     } else if (payload?.session?.id) {
@@ -142,6 +143,23 @@ function findUnclosedSessions(entries) {
   }
 
   return { opened: opens.size, closed: closed.size, unclosed };
+}
+
+/**
+ * The herding mode recorded by the most recent session-open receipt, i.e.
+ * the posture the machine is running under right now (or most recently ran
+ * under). Returns null if no session-open receipt exists yet.
+ * @param {Array} entries - Chain entries
+ * @returns {string|null}
+ */
+function findCurrentMode(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const payload = entries[i].payload;
+    if (payload?.type === 'session-open') {
+      return payload.policy?.mode || null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -273,16 +291,21 @@ function renderMorningAfter(entries, baseDir = '.') {
   // Sessions opened at SessionStart and never closed at SessionEnd. Loud on
   // purpose: this is the one number that says "the log is not the whole story".
   const openness = findUnclosedSessions(entries);
+  const currentMode = findCurrentMode(entries);
   lines.push('─'.repeat(60));
   lines.push('SESSION OPENS');
   lines.push('─'.repeat(60));
+  if (currentMode) {
+    lines.push(`  Mode (most recent):  ${currentMode}`);
+  }
   lines.push(`  Opened:              ${openness.opened}`);
   lines.push(`  Closed cleanly:      ${openness.closed}`);
   if (openness.unclosed.length > 0) {
     lines.push(`  *** UNCLOSED:        ${openness.unclosed.length} ***`);
     for (const s of openness.unclosed.slice(-5)) {
       const ts = s.timestamp ? new Date(s.timestamp).toISOString() : 'unknown time';
-      lines.push(`    ! ${s.sessionId || 'unknown id'} opened ${ts} (${s.source || 'unknown source'})`);
+      const modeNote = s.mode ? `, mode ${s.mode}` : '';
+      lines.push(`    ! ${s.sessionId || 'unknown id'} opened ${ts} (${s.source || 'unknown source'}${modeNote})`);
     }
     lines.push('    A session opened and never closed did not end cleanly.');
     lines.push('    Its activity after the last captured tool call is unknown.');
@@ -395,6 +418,7 @@ export {
   loadReceiptChain,
   findLatestSessionReceipt,
   findUnclosedSessions,
+  findCurrentMode,
   countGatedActions,
   countPolicyWarnings,
   countEgressEvents,

@@ -4,8 +4,9 @@
  * PreToolUse policy engine for Lotor's gated-runs hook (v1).
  *
  * The rule TABLE is locked (see gated-runs-policy-2026-07-22.md). The user's
- * policy.json only sets the mode (gate | warn | off) per rule id. There is
- * no user-defined regex in v1.
+ * policy.json only sets the mode (gate | warn | off) per rule id, either
+ * directly or via one of the three herding-mode presets below. There is no
+ * user-defined regex in v1.
  *
  * Security model (locked):
  *   - No rule match: allow, no chain I/O, fast path.
@@ -21,22 +22,131 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_POLICY = {
-  version: 1,
-  modes: {
-    'self-mod': 'gate',
-    'push-force': 'warn',
-    'push-protected': 'warn',
-    'publish': 'warn',
-    'egress-other': 'warn',
-    'opaque-exec': 'warn',
-    'destructive': 'warn',
-    'scope-escalation': 'warn',
-    'spend': 'off'
+/**
+ * Herding modes (2026-07-23): three named presets over the same matchers,
+ * plus a tenth rule — mode-change — that protects the mode switch itself.
+ * A preset is a full expansion, not a diff: switching modes replaces
+ * policy.json wholesale (see bin/mode.js) rather than layering onto
+ * whatever was there before.
+ *
+ * Herded:  the pen. Every matched rule gates.
+ * Grazing: the fence. Anything leaving the machine gates; local-only
+ *          actions (destructive, scope-escalation) warn. Ships as the
+ *          default for a fresh install.
+ * Loose:   the open field. Nothing blocks. Still 'warn', never 'off' —
+ *          evaluate() takes a no-chain-I/O fast path on a null match (see
+ *          the top of evaluate() below), so an all-off Loose would make
+ *          the most dangerous mode the one that leaves the least evidence.
+ *          self-mod and mode-change stay gated in every mode: Loose means
+ *          free to act on the world, not free to rewrite what stops you,
+ *          and changing modes always costs a signature.
+ */
+const RULE_TABLE = {
+  'self-mod':         { herded: 'gate', grazing: 'gate', loose: 'gate' },
+  'mode-change':      { herded: 'gate', grazing: 'gate', loose: 'gate' },
+  'push-force':       { herded: 'gate', grazing: 'gate', loose: 'warn' },
+  'push-protected':   { herded: 'gate', grazing: 'gate', loose: 'warn' },
+  'publish':          { herded: 'gate', grazing: 'gate', loose: 'warn' },
+  'egress-other':     { herded: 'gate', grazing: 'gate', loose: 'warn' },
+  'opaque-exec':      { herded: 'gate', grazing: 'gate', loose: 'warn' },
+  'destructive':      { herded: 'gate', grazing: 'warn', loose: 'warn' },
+  'scope-escalation': { herded: 'gate', grazing: 'warn', loose: 'warn' },
+  'spend':            { herded: 'off',  grazing: 'off',  loose: 'off' }
+};
+
+const MODE_NAMES = ['herded', 'grazing', 'loose'];
+const RULE_IDS = Object.keys(RULE_TABLE);
+
+/**
+ * Full mode -> modes expansion for a named preset.
+ * @param {string} modeName - one of MODE_NAMES
+ * @returns {Object} modes map, one entry per RULE_IDS
+ */
+function expandMode(modeName) {
+  const modes = {};
+  for (const ruleId of RULE_IDS) {
+    modes[ruleId] = RULE_TABLE[ruleId][modeName];
+  }
+  return modes;
+}
+
+/**
+ * The pre-herding-modes (v1, 2026-07-22) per-rule defaults. Kept as the
+ * merge fallback for a policy.json with no recognized `mode` field, so an
+ * existing hand-tuned install is never silently upgraded to a preset it did
+ * not ask for. A file that resolves here loads with mode "custom".
+ */
+const LEGACY_V1_DEFAULTS = {
+  'self-mod': 'gate',
+  'push-force': 'warn',
+  'push-protected': 'warn',
+  'publish': 'warn',
+  'egress-other': 'warn',
+  'opaque-exec': 'warn',
+  'destructive': 'warn',
+  'scope-escalation': 'warn',
+  'spend': 'off',
+  'mode-change': 'gate'
+};
+
+/**
+ * Per-rule risk description, shown in the gate's denial message so the
+ * warning is proportional to what was actually matched. See
+ * bin/hook-pre-tool-use.js buildDenialMessage().
+ */
+const RULE_INFO = {
+  'self-mod': {
+    why: 'this path can change the gate, its policy, its hooks, or the log',
+    risk: 'HIGH — approving this lets the agent alter what stops it'
+  },
+  'mode-change': {
+    why: 'this replaces the gate posture for every rule at once',
+    risk: 'HIGH — approving this changes what every future action requires'
+  },
+  'push-force': {
+    why: 'a force push can overwrite history on a remote you do not control from here',
+    risk: 'HIGH — overwritten history is not easy to get back'
+  },
+  'push-protected': {
+    why: 'this pushes directly to a protected branch ref (main/master)',
+    risk: 'MEDIUM — bypasses whatever review that branch normally requires'
+  },
+  'publish': {
+    why: 'this ships a package, release, or merge to somewhere other people see it',
+    risk: 'MEDIUM — hard to unpublish once someone else has pulled it'
+  },
+  'egress-other': {
+    why: 'this sends data off this machine to a remote host',
+    risk: 'HIGH — once sent, it is out of your custody'
+  },
+  'opaque-exec': {
+    why: 'this hands control to a local script the gate cannot read the contents of',
+    risk: 'HIGH — what it actually does is unverified by construction'
+  },
+  'destructive': {
+    why: 'this recursively force-deletes a path',
+    risk: 'HIGH — deleted this way does not go to a trash you can recover from'
+  },
+  'scope-escalation': {
+    why: 'this registers a scheduled task or service that runs beyond this session',
+    risk: 'MEDIUM — it keeps running after you stop watching'
+  },
+  'spend': {
+    why: 'this rule is reserved for financial actions and has no matcher yet',
+    risk: 'N/A — off in v1'
   }
 };
 
-const RULE_IDS = Object.keys(DEFAULT_POLICY.modes);
+const DEFAULT_POLICY = {
+  version: 2,
+  mode: 'grazing',
+  modes: expandMode('grazing')
+};
+
+/** Shallow, structurally-independent copy of DEFAULT_POLICY. */
+function defaultPolicyCopy() {
+  return { version: DEFAULT_POLICY.version, mode: DEFAULT_POLICY.mode, modes: { ...DEFAULT_POLICY.modes } };
+}
 
 // ---------- path normalization ----------
 
@@ -142,6 +252,23 @@ function isSelfModBash(toolInput, baseDir) {
 export function isSelfMod(toolName, toolInput, baseDir) {
   if (toolName === 'Bash') return isSelfModBash(toolInput, baseDir);
   return isSelfModEdit(toolName, toolInput, baseDir);
+}
+
+// ---------- mode-change matcher ----------
+
+/**
+ * Detects an invocation of the mode-switch CLI (bin/mode.js), however it's
+ * spelled: `npm run mode -- <name>` or a direct `node bin/mode.js`. Hard-
+ * wired to gate in every preset (RULE_TABLE above) because a mode switch
+ * changes what every OTHER rule requires; letting an agent flip it
+ * unsupervised would make the whole preset system decorative.
+ */
+export function isModeChange(toolInput) {
+  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  if (cmd === '') return false;
+  if (/\bnpm\s+run\s+mode\b/.test(cmd)) return true;
+  if (/\bbin[\\/]mode\.js\b/.test(cmd)) return true;
+  return false;
 }
 
 /**
@@ -458,6 +585,11 @@ function evaluate(toolName, toolInput, policy, baseDir) {
   if (modeOf('self-mod') !== 'off' && isSelfMod(toolName, toolInput, baseDir)) {
     return { ruleId: 'self-mod', mode: modeOf('self-mod') };
   }
+  // Rule 1b: mode-change — protects the mode switch itself, so a preset
+  // cannot be flipped unsupervised regardless of what else is set to off.
+  if (modeOf('mode-change') !== 'off' && isCommandTool(toolName, toolInput) && isModeChange(toolInput)) {
+    return { ruleId: 'mode-change', mode: modeOf('mode-change') };
+  }
   // Rule 2: push-force
   if (modeOf('push-force') !== 'off' && isCommandTool(toolName, toolInput) && isPushForce(toolInput)) {
     return { ruleId: 'push-force', mode: modeOf('push-force') };
@@ -505,6 +637,19 @@ function isReadableFile(p) {
   }
 }
 
+/**
+ * Load policy.json, resolving a herding-mode name to its full expansion.
+ *
+ * `mode` is the source of truth when present and recognized; `modes` is the
+ * derived, human-readable expansion, kept in the file for diffability. A
+ * file with no `mode` field, or one that doesn't name a known preset, falls
+ * back to LEGACY_V1_DEFAULTS for anything it doesn't itself specify — an
+ * existing hand-tuned install behaves exactly as it did before herding
+ * modes existed, and loads with mode "custom". A file that DOES name a
+ * preset but has been hand-edited away from that preset's exact expansion
+ * also resolves to "custom": the name should never claim a shape the file
+ * no longer has.
+ */
 function loadPolicy(baseDir) {
   const policyPath = path.join(baseDir, 'policy.json');
 
@@ -516,7 +661,7 @@ function loadPolicy(baseDir) {
     } catch (e) {
       // Could not write — fall through to returning defaults in memory.
     }
-    return { ...DEFAULT_POLICY, modes: { ...DEFAULT_POLICY.modes } };
+    return defaultPolicyCopy();
   }
 
   let parsed;
@@ -525,33 +670,45 @@ function loadPolicy(baseDir) {
     parsed = JSON.parse(text);
   } catch (e) {
     // Malformed: return defaults without overwriting the file.
-    return { ...DEFAULT_POLICY, modes: { ...DEFAULT_POLICY.modes } };
+    return defaultPolicyCopy();
   }
 
   if (!parsed || typeof parsed !== 'object' || !parsed.modes || typeof parsed.modes !== 'object') {
-    return { ...DEFAULT_POLICY, modes: { ...DEFAULT_POLICY.modes } };
+    return defaultPolicyCopy();
   }
 
-  // Merge: known rule ids take from parsed, missing ones default. Unknown
-  // modes are ignored (treated as "off" for that rule? No — we just leave
-  // them and let evaluate() fall back to default). For v1, the contract is:
-  // user sets per-rule mode strings; any unknown value is treated as a
-  // non-match by evaluate's truthy check, but to keep this clean we coerce
-  // to the set { 'gate', 'warn', 'off' } and let others fall through.
-  const merged = { ...DEFAULT_POLICY.modes };
-  for (const k of Object.keys(DEFAULT_POLICY.modes)) {
+  const presetModes = (typeof parsed.mode === 'string' && MODE_NAMES.includes(parsed.mode))
+    ? expandMode(parsed.mode)
+    : null;
+  const fallback = presetModes || LEGACY_V1_DEFAULTS;
+
+  // Merge: known rule ids take from parsed (if a valid mode string), missing
+  // or invalid ones fall back. Unknown rule ids in the file are ignored.
+  const merged = { ...fallback };
+  for (const k of RULE_IDS) {
     const v = parsed.modes[k];
     if (v === 'gate' || v === 'warn' || v === 'off') {
       merged[k] = v;
     }
-    // else leave as default
   }
-  return { version: parsed.version || 1, modes: merged };
+
+  let resolvedMode;
+  if (presetModes) {
+    const matchesPreset = RULE_IDS.every(k => merged[k] === presetModes[k]);
+    resolvedMode = matchesPreset ? parsed.mode : 'custom';
+  } else {
+    resolvedMode = 'custom';
+  }
+
+  return { version: parsed.version || 1, mode: resolvedMode, modes: merged };
 }
 
 export {
   DEFAULT_POLICY,
   RULE_IDS,
+  MODE_NAMES,
+  RULE_INFO,
+  expandMode,
   loadPolicy,
   evaluate,
   normalizePath,

@@ -31,18 +31,25 @@ function makeTempDir() {
 }
 
 describe('policy: DEFAULT_POLICY shape', () => {
-  // opaque-exec added 2026-07-22 after a deploy shipped 1.3 MB off the machine
-  // through a .ps1 that no matcher could read. Default is 'warn' so adopters
-  // are not surprised by a new hard block; a local policy.json can raise it.
-  it('locks the nine rule ids and the expected default modes', () => {
-    assert.strictEqual(DEFAULT_POLICY.version, 1);
+  // Superseded 2026-07-23 by the herding-modes design (Herded/Grazing/Loose,
+  // see test/policy-modes.test.js). DEFAULT_POLICY is now the Grazing
+  // preset's expansion, plus a tenth rule id (mode-change) that protects the
+  // mode switch itself. A fresh install now gates egress by default, which
+  // the old all-warn v1 defaults did not — this is the change that makes
+  // "gated actions" true out of the box rather than aspirational. An
+  // existing pre-2026-07-23 policy.json is not silently upgraded: see
+  // policy-modes.test.js's legacy-fallback and drift-to-custom coverage.
+  it('locks the ten rule ids and the Grazing default modes', () => {
+    assert.strictEqual(DEFAULT_POLICY.version, 2);
+    assert.strictEqual(DEFAULT_POLICY.mode, 'grazing');
     assert.deepStrictEqual(DEFAULT_POLICY.modes, {
       'self-mod': 'gate',
-      'push-force': 'warn',
-      'push-protected': 'warn',
-      'publish': 'warn',
-      'egress-other': 'warn',
-      'opaque-exec': 'warn',
+      'mode-change': 'gate',
+      'push-force': 'gate',
+      'push-protected': 'gate',
+      'publish': 'gate',
+      'egress-other': 'gate',
+      'opaque-exec': 'gate',
       'destructive': 'warn',
       'scope-escalation': 'warn',
       'spend': 'off'

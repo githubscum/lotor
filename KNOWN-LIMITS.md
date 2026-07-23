@@ -134,3 +134,32 @@ Related, and unchanged: the gate only protects tool calls that occur after its
 `PreToolUse` hook is registered and loading. Anything the harness runs before
 the gate is live is ungated by construction, which is the argument for the
 receipt layer being the first thing a session spins up rather than the last.
+
+## 15. Lotor's mode and your harness's permission mode are independent
+
+Herding modes (Herded / Grazing / Loose, 2026-07-23) govern what Lotor's own
+gate requires. They know nothing about, and cannot see, whatever permission
+mode the harness running the agent is in. If the harness itself has a mode
+that bypasses its own confirmation prompts, that mode operates on a completely
+different layer: Lotor's gate still fires and still blocks, because it is a
+hook the harness invokes regardless of the harness's own prompt settings.
+
+The genuinely dangerous combination is the other direction: Lotor in Loose
+mode plus a harness-level setting that skips tool-call review entirely. Loose
+already warns rather than blocks on every rule except `self-mod` and
+`mode-change`; a harness that also isn't pausing to show the human anything
+means nothing stands between the agent and the action on either layer. Neither
+layer is aware the other exists, so neither can compensate for the other being
+permissive. Choosing Loose is a deliberate choice about Lotor's layer only;
+it says nothing about what your harness is configured to do on its own.
+
+## 16. An approval token has no expiry
+
+`verifyApproval()` (`src/gate/index.js`) checks the token's structure, that its
+request matches the action being attempted, that its nonce has not been used
+before, and its signature. It never checks the token's `timestamp` against the
+current time. A signed token is valid until its nonce is spent, however much
+time has passed since it was signed — an approval from a week ago for an
+action that is only now being attempted still verifies cleanly. Nonce-based
+replay protection is real (a used token cannot be reused), but there is no
+freshness window: staleness alone is not a rejection reason in v1.

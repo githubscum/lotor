@@ -19,6 +19,8 @@ import path from 'node:path';
 import { createStore } from '../store/index.js';
 import { gatedAction, isApprovalKeyInitialized } from '../gate/index.js';
 import { resolveHome } from '../home.js';
+import { loadPolicy } from '../policy/index.js';
+import { snapshotHookRegistration } from '../registration.js';
 import * as crypto from 'node:crypto';
 
 // Initialize store under the canonical Lotor home
@@ -92,11 +94,29 @@ function handleStatus() {
   const receiptCount = store.entries.length;
   const gateInitialized = isApprovalKeyInitialized(home);
 
+  let mode = 'unknown';
+  try {
+    mode = loadPolicy(home).mode;
+  } catch (e) {
+    // best-effort; status must never throw
+  }
+
+  const hooks = snapshotHookRegistration();
+
+  // "The approval key exists" used to be reported as "fully active", which
+  // is the exact belief that let content leave this machine unsigned on
+  // 2026-07-22: the key is what a signature is made of, the hooks are what
+  // stops an action and asks for one. Distinguish the three states rather
+  // than collapsing them.
   let message;
   if (!gateInitialized) {
     message = `The receipt log is active at ${home}, but the human-signature gate is not set up yet. Run \`npm run setup\` in a terminal to set your signing passphrase and enable signed approvals.`;
+  } else if (hooks.readable && !hooks.preToolUse) {
+    message = `The approval key is set, but the PreToolUse hook is not registered in your Claude Code settings, so nothing is actually gated yet. See the README install steps to register it.`;
+  } else if (!hooks.readable) {
+    message = `The approval key is set, but Lotor could not read your Claude Code settings to confirm the hooks are registered. If nothing seems to be gating, check the README install steps.`;
   } else {
-    message = `Lotor is fully active. Receipts live at ${path.join(home, 'receipts', 'chain.jsonl')} and the human-signature gate is enabled.`;
+    message = `Lotor is active in ${mode} mode. Receipts live at ${path.join(home, 'receipts', 'chain.jsonl')}.`;
   }
 
   return {
@@ -104,6 +124,8 @@ function handleStatus() {
     receiptCount,
     chainIntact: verifyResult.ok,
     gateInitialized,
+    mode,
+    hooksRegistered: hooks,
     message
   };
 }
@@ -189,7 +211,7 @@ function createMcpServer() {
         },
         {
           name: 'lotor_status',
-          description: 'Report Lotor runtime status: home path, receipt count, chain integrity, and whether the human-signature gate is set up. Call this at the start of a session or whenever the user asks about Lotor. If gateInitialized is false, walk the user through running `npm run setup` in a terminal to set their signing passphrase (this needs a real terminal; you cannot do it for them). Always tell the user the home path so they can see where the runtime lives.',
+          description: 'Report Lotor runtime status: home path, receipt count, chain integrity, current herding mode (herded | grazing | loose | custom), whether the human-signature gate is set up, and whether the hooks that actually record and gate are registered in Claude Code settings. Call this at the start of a session or whenever the user asks about Lotor. If gateInitialized is false, walk the user through running `npm run setup` in a terminal to set their signing passphrase (this needs a real terminal; you cannot do it for them). If hooksRegistered.preToolUse is false, nothing is gated regardless of gateInitialized: point the user at the README install steps. Always tell the user the home path so they can see where the runtime lives.',
           inputSchema: {
             type: 'object',
             properties: {}

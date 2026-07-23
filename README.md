@@ -49,6 +49,31 @@ Self-attested capture. The log begins at signing time. What happened before that
 
 Nothing described in the present tense here is unbuilt. Anything not built is in the list below or in [KNOWN-LIMITS.md](./KNOWN-LIMITS.md), and it is marked pending in the same breath as it is named.
 
+## Herding modes
+
+Nine gated-or-warned matchers is not a posture anyone can hold in their head. Three named presets replace the nine-switch matrix with a single choice:
+
+| Mode | Posture | Egress rules (push, publish, egress-other, opaque-exec) | Local-only rules (destructive, scope-escalation) |
+|---|---|---|---|
+| **Herded** | the pen | gate | gate |
+| **Grazing** | the fence — the default on a fresh install | gate | warn |
+| **Loose** | the open field | warn | warn |
+
+`self-mod` and `mode-change` gate in every mode, with no exception. Loose means free to act on the world, not free to rewrite what stops you: an agent in Loose still cannot edit the gate, its policy, its hooks, or switch modes without your signature. Loose also never turns a rule fully `off` — it warns, which still appends a receipt. The alternative (`off`) would make the most dangerous mode the one that leaves the least evidence, since an unmatched rule takes a fast path with no chain write at all.
+
+Check or switch the mode:
+
+```bash
+npm run mode              # print the current mode and its rule-by-rule expansion
+npm run mode -- herded    # switch (requires your approval passphrase at a real terminal)
+```
+
+Switching requires the same passphrase that signs a gated action, for the same reason: changing what everything else requires should cost at least as much as approving one thing. The mode in force is stamped into every session's opening receipt (see `npm run receipts`), so a switch is never invisible after the fact.
+
+An existing `policy.json` from before this feature shipped is not silently upgraded. It keeps its hand-tuned rules and loads with mode `custom`; naming a preset only happens when you ask for one.
+
+**Honest limit.** Lotor's mode is independent of your harness's own permission mode. Loose plus a harness set to bypass its own permission checks is genuinely nothing stopping anything — neither layer knows the other exists. See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 15.
+
 ## Not built yet
 
 Named here so no sentence above has to carry a promise it cannot keep.
@@ -165,6 +190,27 @@ With no `matcher`, each fires on every occurrence of its event.
 Restart your session after editing. Hooks are read at session start, so the edit takes effect on the next one, not this one.
 
 Every one of these hooks is deliberately unable to break your session. None exits non-zero except the gate, and the gate only when it is blocking on purpose. None writes to stdout. Every other failure (missing transcript, malformed payload, unreadable chain, a Lotor bug) is swallowed with a one-line note to stderr. A receipt layer that can wedge your editor is worse than no receipt layer.
+
+**What it looks like when the gate fires.** Every denial prints the same fixed shape, regardless of which model triggered it:
+
+```
+LOTOR GATE — rule "self-mod" (Write)
+
+  WHAT    Write: C:\Users\you\lotor\bin\hook-session-start.js
+  WHY     this path can change the gate, its policy, its hooks, or the log
+  RISK    HIGH — approving this lets the agent alter what stops it
+  SCOPE   signs file_path only. Nothing else about this call is covered by the signature.
+          Single use. Bound to this exact request. Review before you sign.
+
+  Approve, in a real terminal:
+    npm run approve -- --request a1b2c3d4
+
+  (staged at <LOTOR_HOME>/pending-approvals/requests/a1b2c3d4.json)
+
+  Doing nothing denies. The denial is already receipted.
+```
+
+The command is complete as printed: nothing to substitute, nowhere left for a model to improvise. `CLAUDE.md` at the repo root asks any agent working here to relay this verbatim and wait, rather than compose its own warning — the point of the fixed shape is that the experience of hitting the gate does not depend on which model is driving.
 
 Two consequences worth being clear-eyed about. Hook registration lives in a file you can edit, so it is part of your threat model, not outside it; `SessionStart` snapshots which hooks were present into the open receipt so a between-session edit shows up in the log at the next start. And the gate only covers tool calls made after its hook is loading, which is the argument for the receipt layer being the first thing a session spins up rather than the last.
 
