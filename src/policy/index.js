@@ -86,6 +86,7 @@ function selfModFragmentsForBase(baseDir) {
     'src/gate/',
     'src/policy/',
     normalizePath(path.join(baseDir, 'keys')) + '/',
+    normalizePath(path.join(baseDir, 'receipts')) + '/',
     normalizePath(path.join(baseDir, 'policy.json'))
   ];
 }
@@ -181,7 +182,8 @@ export function isPushProtected(toolInput) {
 // ---------- publish matcher ----------
 
 export function isPublish(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = stripMessageArgs(raw);
   if (cmd === '') return false;
   return /\bgh\s+pr\s+merge\b/.test(cmd)
     || /\bnpm\s+publish\b/.test(cmd)
@@ -220,6 +222,24 @@ function hasDataFlag(cmd) {
   // PowerShell: -Body
   if (/(^|\s)-Body\b/.test(cmd)) return true;
   return false;
+}
+
+/**
+ * Blank out the argument of -m / --message before matching.
+ *
+ * A commit message is prose the agent wrote, not a command the shell will
+ * run, but the matchers see one flat string and cannot tell the difference.
+ * Without this, committing a fix whose message explains the fix trips the
+ * rule the fix added, which happened within a minute of shipping it.
+ *
+ * Only the message argument is blanked. Stripping all quoted text would be
+ * simpler and would hide `bash -c "git push origin main"` from the matcher,
+ * trading a harmless false positive for a real miss.
+ */
+function stripMessageArgs(cmd) {
+  return cmd
+    .replace(/(-m|--message)(\s+|=)"(?:[^"\\]|\\.)*"/g, '$1 ""')
+    .replace(/(-m|--message)(\s+|=)'[^']*'/g, "$1 ''");
 }
 
 function usesEgressTool(cmd) {
@@ -263,7 +283,8 @@ function isRemoteCopyTarget(cmd) {
 }
 
 export function isEgressOther(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = stripMessageArgs(raw);
   if (cmd === '') return false;
   if (usesRemoteCopyTool(cmd) && isRemoteCopyTarget(cmd)) return true;
   if (usesRemotePublishTool(cmd)) return true;
