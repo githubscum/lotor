@@ -327,7 +327,19 @@ async function main() {
   }
 
   if (mode === 'gate') {
-    const actionRequest = { action: toolName, params: toolInput };
+    // Sign only the parameters that carry security meaning. `description`
+    // and `timeout` are authored by the agent and mean nothing to the gate,
+    // but including them made every token brittle: the owner had to know the
+    // agent's exact prose in advance, and the agent could void an approval by
+    // rewording. Both push toward signing without reading, which is worse
+    // than not signing at all. Everything is still recorded in the receipt;
+    // this narrows only what the signature is bound to.
+    const SIGNED_PARAMS = ['command', 'file_path', 'url', 'path'];
+    const signedInput = {};
+    for (const k of SIGNED_PARAMS) {
+      if (toolInput && toolInput[k] !== undefined) signedInput[k] = toolInput[k];
+    }
+    const actionRequest = { action: toolName, params: signedInput };
     const tokenResult = findValidToken(actionRequest, home);
 
     if (tokenResult == null) {

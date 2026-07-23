@@ -237,6 +237,19 @@ function usesRemoteCopyTool(cmd) {
   return false;
 }
 
+/**
+ * Publishing to a remote host is egress, whatever the transport. push-force
+ * and push-protected cover the dangerous SHAPES of a push; this catches the
+ * ordinary one, which still ships the working tree off the machine. The
+ * specific rules evaluate first, so a force push still reports as push-force.
+ */
+function usesRemotePublishTool(cmd) {
+  if (/\bgit\s+push\b/.test(cmd)) return true;
+  if (/\bgit\s+remote\s+add\b/.test(cmd)) return true;
+  if (/\bgh\s+(pr|release|gist|repo)\s+create\b/.test(cmd)) return true;
+  return false;
+}
+
 function isRemoteCopyTarget(cmd) {
   // ssh/scp/rsync with a `host:` or `user@host` remote form.
   // The `user@host` form is sufficient on its own (no trailing colon required),
@@ -253,6 +266,7 @@ export function isEgressOther(toolInput) {
   const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
   if (cmd === '') return false;
   if (usesRemoteCopyTool(cmd) && isRemoteCopyTarget(cmd)) return true;
+  if (usesRemotePublishTool(cmd)) return true;
   if (usesEgressTool(cmd) && (hasHttpMethodFlag(cmd) || hasDataFlag(cmd)) && !isLocalhostTarget(cmd)) {
     return true;
   }

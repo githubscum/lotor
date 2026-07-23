@@ -99,3 +99,25 @@ tokens for comparable work. Summing across services, or reading `session.model` 
 model this session's cost was incurred on," produces a number with no coherent meaning.
 Per-model, per-harness cost attribution is not built. Treat any total from a mixed-model
 session as directional at best, never as a cross-service comparison.
+
+## 14. A session is only recorded if it ends cleanly
+
+Capture is driven by `SessionEnd`. If a session is force-killed, crashes, hits
+an OOM, or the machine loses power, that hook never fires and **no receipt is
+written at all**. Not a partial one. None.
+
+The failure mode is the wrong way round. The sessions most worth having a
+record of are the ones that ended badly, and those are exactly the ones this
+design drops. An operator reading the chain sees an unbroken sequence of
+well-behaved sessions and has no way to tell that others existed.
+
+The fix is to open the record at `SessionStart` rather than write it at the
+end: anchor the session id, the policy in force, and the current chain head the
+moment the session begins. An abnormal exit then leaves an opened-but-never-
+closed entry, which is itself evidence rather than silence. Until that ships,
+read the absence of a receipt as "unknown", never as "nothing happened".
+
+Related: the gate only protects tool calls that occur after its `PreToolUse`
+hook is registered and loading. Anything the harness runs before the gate is
+live is ungated by construction, which is a second argument for the receipt
+layer being the first thing spun up in a session rather than the last.

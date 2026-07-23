@@ -401,7 +401,10 @@ describe('policy: evaluate (first-match-wins, off mode)', () => {
       policy,
       baseDir
     );
-    assert.strictEqual(m, null);
+    // push-force is off, so it must not fire. The command is still a push, and
+    // since 2026-07-23 egress-other legitimately catches that: switching one
+    // rule off must not make content leaving the machine invisible.
+    assert.notStrictEqual(m?.ruleId, 'push-force');
   });
 
   it('mode field reflects the policy mode (gate vs warn)', () => {
@@ -427,7 +430,7 @@ describe('policy: evaluate (first-match-wins, off mode)', () => {
       policy,
       baseDir
     );
-    assert.strictEqual(m, null, 'unknown mode should not match');
+    assert.notStrictEqual(m?.ruleId, 'push-force', 'unknown mode should not match');
   });
 });
 
