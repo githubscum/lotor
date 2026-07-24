@@ -14,6 +14,7 @@
     "approve:init": "node bin/approve.js init",
     "approve": "node bin/approve.js approve",
     "gate": "node bin/gate.js",
+    "grant": "node src/grant/issue.js",
     "mode": "node bin/mode.js",
     "receipts": "node bin/view.js --all",
     "hook:session-start": "node bin/hook-session-start.js",

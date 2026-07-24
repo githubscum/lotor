@@ -50,6 +50,7 @@ import { resolveHome } from '../src/home.js';
 import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
+import { resolveGrant } from '../src/grant/check.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -99,7 +100,21 @@ function parsePayload(raw) {
   if (toolInput !== undefined && (typeof toolInput !== 'object' || toolInput === null || Array.isArray(toolInput))) {
     return { ok: false, reason: 'payload tool_input is not an object' };
   }
-  return { ok: true, toolName, toolInput: toolInput || {} };
+  // session_id is a common field on every Claude Code hook event. It was
+  // being parsed and discarded. Grants are session-bound, so without it no
+  // grant can ever apply: absence yields null and resolveGrant refuses on
+  // null rather than treating a missing binding as a wildcard.
+  const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
+    ? payload.session_id
+    : null;
+  // permission_mode is also a common field on every hook event. KNOWN-LIMITS
+  // 15 asserted the two layers "cannot see" each other; that was an
+  // assumption nobody checked, and it is false. The harness's own posture
+  // has been arriving on every gated call and being discarded here.
+  const permissionMode = typeof payload.permission_mode === 'string' && payload.permission_mode.trim() !== ''
+    ? payload.permission_mode
+    : null;
+  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode };
 }
 
 function digestParams(toolInput) {
@@ -433,6 +448,59 @@ async function main() {
     process.exit(0);
   }
 
+  // KNOWN-LIMITS 15, corrected 2026-07-24.
+  //
+  // That entry claimed Lotor and the harness "cannot see" each other. False:
+  // permission_mode arrives on every hook event and was simply discarded.
+  // The combination the entry warns about — Lotor in Loose, plus a harness
+  // that also skips tool-call review — means nothing stands between the
+  // agent and the action on either layer, and it was invisible while being
+  // detectable all along.
+  //
+  // A WARNING, NOT A BLOCK. Loose is an explicit operator choice and
+  // escalating it to a denial would override a setting made on purpose.
+  // What changes is that the combination stops being silent.
+  //
+  // Only the modes that broadly skip review are listed. `acceptEdits` is a
+  // partial case (edits auto-accept, commands still prompt) and is left out
+  // deliberately: warning on a posture that is usually reasonable is how a
+  // warning gets ignored, and alarm fatigue is the same failure as approval
+  // fatigue one layer up.
+  const PERMISSIVE_HARNESS_MODES = ['bypassPermissions', 'dontAsk', 'auto'];
+  if (policy && policy.mode === 'loose'
+      && parsed.permissionMode && PERMISSIVE_HARNESS_MODES.includes(parsed.permissionMode)) {
+    note(`WARNING: Lotor is in LOOSE mode and the harness reports "${parsed.permissionMode}". `
+       + `Neither layer is stopping anything; both are only recording.`);
+    // Record once per session rather than on every call. The chain read is
+    // paid for only in this configuration, never on the fast path, which is
+    // the trade this hook makes everywhere else: no chain I/O unless
+    // something actually needs recording.
+    try {
+      const store = createStore(home);
+      const already = store.entries.some(e =>
+        e.payload
+        && e.payload.type === 'policy-warn'
+        && e.payload.ruleId === 'both-layers-permissive'
+        && e.payload.sessionId === parsed.sessionId);
+      if (!already) {
+        store.appendReceipt({
+          type: 'policy-warn',
+          ruleId: 'both-layers-permissive',
+          sessionId: parsed.sessionId,
+          tool: toolName,
+          lotorMode: policy.mode,
+          harnessMode: parsed.permissionMode,
+          timestamp: Date.now()
+        });
+      }
+    } catch (e) {
+      // Recording this is best-effort. It is an observation about posture,
+      // not an authorisation decision, so a failure to write it must not
+      // change what happens to the tool call.
+      note(`could not record the permissive-posture warning (${e.message}); continuing`);
+    }
+  }
+
   // Evaluate. evaluate() itself shouldn't throw, but wrap for fail-open.
   let match;
   try {
@@ -491,18 +559,63 @@ async function main() {
     const requestId = stageRequest(home, actionRequest);
 
     if (tokenResult == null) {
-      // No token at all -> deny.
       const store = createStore(home);
       const chain = {
         entries: store.entries,
         append: store.appendReceipt.bind(store)
       };
+
+      // No single-use token. Before denying, see whether a signed
+      // delegation grant covers this exact request.
+      //
+      // resolveGrant never throws: every failure inside it is a refusal,
+      // because an exception escaping here would reach this file's outer
+      // handler, be read as an engine error, and silently ALLOW. The hook
+      // fails open on engine error and closed on token failure; a grant
+      // check belongs on the closed side of that line.
+      //
+      // Additive by construction: this can only turn a DENY into an ALLOW
+      // when a signed grant covers the action, never an ALLOW into a DENY,
+      // so a bug here cannot lock the owner out of their own machine.
+      const grantDecision = resolveGrant({
+        actionRequest,
+        sessionId: parsed.sessionId,
+        home,
+        chainEntries: store.entries,
+        now: Date.now()
+      });
+
+      if (grantDecision.allow) {
+        try {
+          store.appendReceipt({
+            type: 'grant-use',
+            grantId: grantDecision.grantId,
+            useIndex: grantDecision.useIndex,
+            ruleId,
+            tool: toolName,
+            paramsDigest,
+            timestamp: Date.now()
+          });
+        } catch (e) {
+          // A use that cannot be recorded must not be allowed. The action
+          // ceiling is enforced by COUNTING these entries, so an unrecorded
+          // use is an uncounted one, and a grant whose uses go uncounted is
+          // a grant with no ceiling at all.
+          note(`grant-use receipt failed (${e.message}); denying`);
+          process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
+          process.exit(2);
+        }
+        note(`approved by grant ${grantDecision.grantId} (use ${grantDecision.useIndex}): ${ruleId} (${toolName})`);
+        process.exit(0);
+      }
+
+      // No token and no grant. Deny exactly as before.
       try {
         gatedAction(actionRequest, null, chain, home);
       } catch (e) {
         note(`denial receipt failed (${e.message}); still denying`);
       }
-      note(`BLOCKED: ${ruleId} (${toolName}) — no valid token`);
+      note(`BLOCKED: ${ruleId} (${toolName}) — no valid token; ${grantDecision.reason}`);
       process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }

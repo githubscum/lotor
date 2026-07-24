@@ -153,6 +153,31 @@ layer is aware the other exists, so neither can compensate for the other being
 permissive. Choosing Loose is a deliberate choice about Lotor's layer only;
 it says nothing about what your harness is configured to do on its own.
 
+**Correction, 2026-07-24.** The claim above that the two layers "cannot see"
+each other was wrong in one direction. Claude Code sends `permission_mode` on
+every hook event, including `PreToolUse`, so Lotor receives the harness's mode
+on every gated call and was discarding it in `parsePayload()`. "Cannot see"
+was an assumption that was never checked, and it was false.
+
+**Now detected.** `bin/hook-pre-tool-use.js` warns when Lotor is in Loose and
+the harness reports `bypassPermissions`, `dontAsk` or `auto`, and records the
+posture on the chain once per session with both modes named. What that buys
+is visibility, not protection:
+
+- It warns, it does not block. Loose is a deliberate choice about Lotor's
+  layer and escalating it to a denial would override a setting made on
+  purpose.
+- `acceptEdits` is excluded on purpose. It is partial, since edits
+  auto-accept while commands still prompt, and warning on a posture that is
+  usually reasonable is how a warning gets ignored.
+- The detection depends on the harness reporting its mode honestly. It is a
+  field in a payload, not an attestation, so it tells you what the harness
+  says about itself.
+
+Everything else in this entry stands. The layers still do not compensate for
+one another, and Loose plus a permissive harness is still the combination to
+avoid; it is simply no longer silent.
+
 ## 16. An approval token has no expiry
 
 `verifyApproval()` (`src/gate/index.js`) checks the token's structure, that its
@@ -163,3 +188,92 @@ time has passed since it was signed — an approval from a week ago for an
 action that is only now being attempted still verifies cleanly. Nonce-based
 replay protection is real (a used token cannot be reused), but there is no
 freshness window: staleness alone is not a rejection reason in v1.
+
+## 17. A grant lets one signature cover many executions
+
+Delegation grants (2026-07-24) exist because a single-use token covers one
+exact request and is spent once, so a session that hits the gate forty times
+means forty signatures, and in practice that means the gate gets turned off. A
+grant is one signature over N enumerated requests, bound to one session, with
+an expiry and a shared action ceiling.
+
+The comparison is byte equality over `canonicalizeRequest()`, the same
+function and the same canonical form the token layer already uses. So a grant
+inherits nothing from limit 11: there is no pattern to evade, because nothing
+here pattern-matches.
+
+**What a grant genuinely gives up, relative to a token.** A token is reviewed
+once and spent once. A grant is reviewed once and spendable up to
+`maxActions` times inside its window. A command you read and approved can
+therefore run repeatedly with no further review. That is the trade, made
+deliberately, and it is the one respect in which a grant is weaker than the
+primitive it extends. Size `maxActions` accordingly, and remember that
+approving a command is approving every effect of running it that many times.
+
+What a command does once it runs is still not knowable from its text. A grant
+changes only how many times an already-reviewed string may run. It does not
+make the string safer, and nothing in the grant path inspects behaviour.
+
+## 18. The chain now records authorised command strings in plaintext
+
+Recording a grant on the chain (2026-07-24) means the enumerated requests are
+written to `chain.jsonl` in full, including exact command strings and file
+paths. This is deliberate: a digest would let you verify a grant file you
+still hold, but not reconstruct what was authorised once that file is gone,
+and reconstruction is the point of recording it.
+
+It does change what the log contains. Elsewhere the chain stores a
+`paramsDigest` rather than parameters, so before this change most tool
+arguments were present only as hashes. Authorised commands are now readable in
+the log. The log is local and operator-held, which is the premise of the whole
+system, but if you were relying on the chain being mostly hashes, it no longer
+is for this entry type.
+
+## 19. A grant can be revoked by deleting a file, and only by that
+
+There is no revoke command. A grant stops applying when it expires, when its
+ceiling is spent, or when its file is deleted from `<LOTOR_HOME>/grants/`.
+
+Deleting requires no signature. That direction fails safe, since removing a
+grant only ever reduces capability, and since 2026-07-24 the authorisation
+itself is recorded on the chain, so deleting the file destroys the capability
+without destroying the record of what was granted. But it does mean anything
+with write access to your Lotor home can disable your own approvals, and the
+first sign of it is work being denied that you expected to go through.
+
+## 20. Grant expiry depends on the system clock
+
+`expiresAt` is compared against `Date.now()`. Moving the machine clock
+backwards extends every unexpired grant. Nothing here consults an external
+time source, and limit 3 (no external anchoring) applies to grants exactly as
+it applies to receipts.
+
+This is why grants carry two independent ceilings. `maxActions` is counted
+from `grant-use` entries on the append-only chain and does not depend on the
+clock at all, so a grant with a clock-proof ceiling of 5 is bounded at 5 uses
+regardless of what the clock says.
+
+## 21. The self-mod rule matches strings in a command, not intent
+
+Observed directly on 2026-07-23 while working against the gate:
+
+- **It cannot tell reading from writing.** A `grep` or `cat` of a protected
+  file is denied exactly like an edit, because both are commands containing
+  the same path. Reading through a tool the rule does not cover is not denied,
+  so the cost is inconsistent rather than uniformly high.
+- **Prose counts.** A command that merely *names* a protected path, for
+  example a commit message or a heredoc writing documentation about the gate,
+  matches and is denied. Writing about the gate looks identical to modifying
+  it.
+- **Copying the repository is not matched, editing the copy is.** `git clone`
+  of the whole tree, gate source included, is permitted because the command
+  names no protected path. Editing a protected filename inside that copy is
+  then denied, since matching is on the path rather than the location. The
+  copy is therefore not a route around the rule, but the asymmetry is not
+  something the rule was designed for.
+
+None of this is evadable-by-accident in the limit 11 sense, and the failures
+lean toward denying too much rather than too little. It is recorded because
+the cost of the gate is not evenly distributed, and because anyone extending
+the rule set should know it reasons about text rather than about what a
+command will do.
