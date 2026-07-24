@@ -154,14 +154,29 @@ permissive. Choosing Loose is a deliberate choice about Lotor's layer only;
 it says nothing about what your harness is configured to do on its own.
 
 **Correction, 2026-07-24.** The claim above that the two layers "cannot see"
-each other is wrong in one direction. Claude Code sends `permission_mode` on
-every hook event, including `PreToolUse`, so Lotor *receives* the harness's
-mode on every gated call and currently discards it in `parsePayload()`. The
-dangerous combination described above is therefore detectable today and simply
-is not detected. Nothing else in this entry changes: the layers still do not
-compensate for one another, and Loose plus a permissive harness is still the
-combination to avoid. But "cannot see" was an assumption that was never
-checked, and it is false.
+each other was wrong in one direction. Claude Code sends `permission_mode` on
+every hook event, including `PreToolUse`, so Lotor receives the harness's mode
+on every gated call and was discarding it in `parsePayload()`. "Cannot see"
+was an assumption that was never checked, and it was false.
+
+**Now detected.** `bin/hook-pre-tool-use.js` warns when Lotor is in Loose and
+the harness reports `bypassPermissions`, `dontAsk` or `auto`, and records the
+posture on the chain once per session with both modes named. What that buys
+is visibility, not protection:
+
+- It warns, it does not block. Loose is a deliberate choice about Lotor's
+  layer and escalating it to a denial would override a setting made on
+  purpose.
+- `acceptEdits` is excluded on purpose. It is partial, since edits
+  auto-accept while commands still prompt, and warning on a posture that is
+  usually reasonable is how a warning gets ignored.
+- The detection depends on the harness reporting its mode honestly. It is a
+  field in a payload, not an attestation, so it tells you what the harness
+  says about itself.
+
+Everything else in this entry stands. The layers still do not compensate for
+one another, and Loose plus a permissive harness is still the combination to
+avoid; it is simply no longer silent.
 
 ## 16. An approval token has no expiry
 
