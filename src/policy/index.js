@@ -21,6 +21,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 /**
  * Herding modes (2026-07-23): three named presets over the same matchers,
@@ -259,18 +260,53 @@ function isSelfModEdit(toolName, toolInput, baseDir) {
  * live defect, not an obfuscation an adversary had to reach for: the default
  * configuration did not enforce. See KNOWN-LIMITS 21.
  */
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function isSelfModCommand(toolInput, baseDir) {
   const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
   if (cmd === '') return false;
   const cmdNorm = normalizePath(cmd);
+
+  // Lotor-specific artifact basenames are unambiguous. Gate them in any
+  // spelling, so `rm ~/.lotor/keys/chain.key` is caught even though the
+  // absolute-path fragments below only match the absolute spelling. A trailing
+  // '.' is a terminator too: Windows strips trailing dots from a path's last
+  // component, so `chain.key.` resolves to the real file (KNOWN-LIMITS 22).
+  if (/(^|[/\s'"=(])(chain\.jsonl|chain\.key|approval-nonces\.log)([\s'"),;.]|$)/.test(cmdNorm)) {
+    return true;
+  }
+
   const fragments = selfModFragmentsForBase(baseDir);
   for (const frag of fragments) {
-    if (frag.endsWith('/')) {
-      if (cmdNorm.includes(frag)) return true;
-    } else {
-      if (cmdNorm.includes(frag)) return true;
-    }
+    if (cmdNorm.includes(frag)) return true;
   }
+
+  // The keys/, receipts/ and policy.json under LOTOR_HOME were protected above
+  // only by their ABSOLUTE path (and even then only with a trailing slash, so
+  // `rm -rf <home>/receipts` on the dir itself missed). A tilde / $HOME /
+  // relative spelling, or deleting the home dir wholesale, slipped through and
+  // could destroy the chain unsigned (KNOWN-LIMITS 22). Any reference to the
+  // Lotor home is self-mod-relevant: it can delete the home (`rm -rf ~/.lotor`),
+  // a child (receipts/keys), or read a protected file. Gate the reference. The
+  // terminator classes include '.' because Windows strips trailing dots, so
+  // `Remove-Item -Recurse -Force ~/.lotor.` resolves to the real home.
+  const home = normalizePath(os.homedir());
+  const baseNorm = normalizePath(baseDir);
+  const lotorRel = baseNorm.startsWith(home + '/') ? baseNorm.slice(home.length + 1) : null;
+  const refsLotorHome =
+    cmdNorm.includes(baseNorm) ||
+    (lotorRel != null &&
+      new RegExp(`(^|[/\\s'"=(])${escapeRegExp(lotorRel)}([/\\s'"),;.]|$)`).test(cmdNorm)) ||
+    /(^|[/\s'"=(])\.lotor([/\s'"),;.]|$)/.test(cmdNorm) ||
+    // The LOTOR_HOME env var (honored by src/home.js) IS the home on a custom
+    // install; gate its spellings so a custom-home store is not deletable
+    // unsigned. Default installs leave it unset, so this never fires there.
+    // Includes the cmd.exe %LOTOR_HOME% spelling alongside the shell $-forms.
+    /(\$\{?(env:)?lotor_home\}?|%lotor_home%)/.test(cmdNorm);
+  if (refsLotorHome) return true;
+
   // bin/hook-*.js anywhere in the command
   if (cmdNorm.match(/bin\/hook-[^/\s'"]+\.js/)) return true;
   return false;
@@ -381,6 +417,7 @@ function hasDataFlag(cmd) {
   if (/(^|\s)--form\b/.test(cmd)) return true;
   if (/(^|\s)-F\b/.test(cmd)) return true; // curl form shorthand
   if (/(^|\s)-T\b/.test(cmd)) return true; // curl --upload-file shorthand
+  if (/(^|\s)--upload-file(=|\s|$)/.test(cmd)) return true; // curl upload, long form of -T
   // wget uploads (KNOWN-LIMITS 21: these were unrecognised)
   if (/(^|\s)--post-file(=|\s|$)/.test(cmd)) return true;
   if (/(^|\s)--post-data(=|\s|$)/.test(cmd)) return true;
@@ -487,9 +524,26 @@ export function isEgressOther(toolInput) {
 // not `temp`, so it gates. See KNOWN-LIMITS 21.
 const DESTRUCTIVE_ALLOW_SEGMENTS = new Set(['tmp', 'temp', 'scratchpad', 'mktemp']);
 
+// Lexically resolve '.' and '..' (no filesystem, no symlinks). A '..' that
+// escapes above the start simply drops, so `/tmp/../etc` resolves to `etc`.
+function normalizeSegments(target) {
+  const out = [];
+  for (const seg of target.split(/[/\\]+/).filter(Boolean)) {
+    if (seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  return out;
+}
+
+// Allowlisted when any resolved segment is scratch space. Normalizing '.' and
+// '..' first is the fix: `rm -rf /tmp/../etc` resolves to `etc` (no scratch
+// segment) and gates, where the pre-fix any-segment check saw `tmp` and exempted
+// it. A legitimately nested scratch dir (`/home/me/scratchpad/run-1`) still has a
+// scratch segment after normalization and stays exempt. See KNOWN-LIMITS 21.
 function destructiveAllowlisted(target) {
-  const segments = target.toLowerCase().split(/[/\\]+/).filter(Boolean);
-  return segments.some(seg => DESTRUCTIVE_ALLOW_SEGMENTS.has(seg));
+  const segs = normalizeSegments(target.toLowerCase());
+  return segs.some(seg => DESTRUCTIVE_ALLOW_SEGMENTS.has(seg));
 }
 
 /**
@@ -587,7 +641,12 @@ export function isScopeEscalation(toolInput) {
  * the command. It fires on the class of thing that wraps arbitrary egress,
  * not on every binary.
  */
-const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?=\s|$|['\"])/i;
+// A negative continuation assertion, NOT an allowlist of terminators. Two prior
+// rounds closed one terminator at a time (`&`/`\r`, then `)`/backtick) and each
+// left the next one open: a no-space redirect (`./deploy.ps1>log`) still slipped.
+// "Extension not followed by another filename char" closes `>` `>>` `<` and every
+// future terminator at once. See KNOWN-LIMITS 21 (the enumeration-leak lesson).
+const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?![a-z0-9_-])/i;
 
 // A command that only READS a script is not handing over control. The verb
 // must LEAD its segment, not appear anywhere in it. The earlier version
@@ -603,7 +662,7 @@ const READ_ONLY_LEAD =
 // Shell separators that start a new command. A read verb only exempts the
 // segment it leads: `Get-Content a.ps1 && ./evil.ps1` executes evil.ps1 in a
 // later segment, and that segment is not led by a read verb, so it gates.
-const CMD_SEPARATORS = /(?:&&|\|\||[;|\n])/;
+const CMD_SEPARATORS = /(?:&&|\|\||[;&|\n\r])/;
 
 export function isOpaqueExec(toolInput) {
   const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
