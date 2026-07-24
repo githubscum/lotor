@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: |
+  If you use this software in your research, please cite it using the
+  metadata from the .zenodo.json file at the root of this repository.
+  A version-specific DOI is minted by Zenodo for each GitHub release;
+  the DOI for v1.0.0 will be added to README.md after the Zenodo deposit
+  is published.
+title: "Lotor v1.0.0 — A local-first, tamper-evident receipt and gate layer for AI agent sessions"
+type: software
+version: 1.0.0
+date-released: 2026-07-24
+license: Apache-2.0
+repository-code: https://github.com/githubscum/lotor
+url: https://ikeanalytics.com/articles/the-unarmed-gate
+keywords:
+  - AI agents
+  - audit log
+  - receipts
+  - tamper-evidence
+  - hash chain
+  - ed25519
+  - local-first
+  - provenance
+  - accountability
+  - tool-use gating
+  - Model Context Protocol
+  - sovereignty
+authors:
+  - family-names: Liem
+    given-names: Isaac
+    orcid: https://orcid.org/0009-0006-2476-1615

@@ -1,0 +1,47 @@
+{
+  "title": "Lotor v1.0.0: A local-first, tamper-evident receipt and gate layer for AI agent sessions",
+  "description": "Lotor writes a signed, hash-chained record of what an AI agent did during a session and gates chosen tool calls behind an Ed25519 signature the agent cannot forge. Local-first: the record is written to the user's machine and nowhere else, with no account, server component, or upload path. v1.0.0.",
+  "creators": [
+    {
+      "name": "Isaac Liem",
+      "orcid": "0009-0006-2476-1615"
+    }
+  ],
+  "keywords": [
+    "AI agents",
+    "audit log",
+    "receipts",
+    "tamper-evidence",
+    "hash chain",
+    "ed25519",
+    "local-first",
+    "provenance",
+    "accountability",
+    "tool-use gating",
+    "Model Context Protocol",
+    "sovereignty"
+  ],
+  "license": "Apache-2.0",
+  "upload_type": "software",
+  "publication_date": "2026-07-24",
+  "version": "1.0.0",
+  "language": "eng",
+  "access_right": "open",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/githubscum/lotor",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://github.com/githubscum/lotor/tree/v1.0.0",
+      "relation": "isIdenticalTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://ikeanalytics.com/articles/the-unarmed-gate",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    }
+  ]
+}
