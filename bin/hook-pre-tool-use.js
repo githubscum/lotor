@@ -107,7 +107,14 @@ function parsePayload(raw) {
   const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
     ? payload.session_id
     : null;
-  return { ok: true, toolName, toolInput: toolInput || {}, sessionId };
+  // permission_mode is also a common field on every hook event. KNOWN-LIMITS
+  // 15 asserted the two layers "cannot see" each other; that was an
+  // assumption nobody checked, and it is false. The harness's own posture
+  // has been arriving on every gated call and being discarded here.
+  const permissionMode = typeof payload.permission_mode === 'string' && payload.permission_mode.trim() !== ''
+    ? payload.permission_mode
+    : null;
+  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode };
 }
 
 function digestParams(toolInput) {
@@ -439,6 +446,59 @@ async function main() {
       timestamp: Date.now()
     });
     process.exit(0);
+  }
+
+  // KNOWN-LIMITS 15, corrected 2026-07-24.
+  //
+  // That entry claimed Lotor and the harness "cannot see" each other. False:
+  // permission_mode arrives on every hook event and was simply discarded.
+  // The combination the entry warns about — Lotor in Loose, plus a harness
+  // that also skips tool-call review — means nothing stands between the
+  // agent and the action on either layer, and it was invisible while being
+  // detectable all along.
+  //
+  // A WARNING, NOT A BLOCK. Loose is an explicit operator choice and
+  // escalating it to a denial would override a setting made on purpose.
+  // What changes is that the combination stops being silent.
+  //
+  // Only the modes that broadly skip review are listed. `acceptEdits` is a
+  // partial case (edits auto-accept, commands still prompt) and is left out
+  // deliberately: warning on a posture that is usually reasonable is how a
+  // warning gets ignored, and alarm fatigue is the same failure as approval
+  // fatigue one layer up.
+  const PERMISSIVE_HARNESS_MODES = ['bypassPermissions', 'dontAsk', 'auto'];
+  if (policy && policy.mode === 'loose'
+      && parsed.permissionMode && PERMISSIVE_HARNESS_MODES.includes(parsed.permissionMode)) {
+    note(`WARNING: Lotor is in LOOSE mode and the harness reports "${parsed.permissionMode}". `
+       + `Neither layer is stopping anything; both are only recording.`);
+    // Record once per session rather than on every call. The chain read is
+    // paid for only in this configuration, never on the fast path, which is
+    // the trade this hook makes everywhere else: no chain I/O unless
+    // something actually needs recording.
+    try {
+      const store = createStore(home);
+      const already = store.entries.some(e =>
+        e.payload
+        && e.payload.type === 'policy-warn'
+        && e.payload.ruleId === 'both-layers-permissive'
+        && e.payload.sessionId === parsed.sessionId);
+      if (!already) {
+        store.appendReceipt({
+          type: 'policy-warn',
+          ruleId: 'both-layers-permissive',
+          sessionId: parsed.sessionId,
+          tool: toolName,
+          lotorMode: policy.mode,
+          harnessMode: parsed.permissionMode,
+          timestamp: Date.now()
+        });
+      }
+    } catch (e) {
+      // Recording this is best-effort. It is an observation about posture,
+      // not an authorisation decision, so a failure to write it must not
+      // change what happens to the tool call.
+      note(`could not record the permissive-posture warning (${e.message}); continuing`);
+    }
   }
 
   // Evaluate. evaluate() itself shouldn't throw, but wrap for fail-open.
