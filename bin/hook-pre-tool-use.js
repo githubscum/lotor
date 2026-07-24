@@ -50,6 +50,7 @@ import { resolveHome } from '../src/home.js';
 import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
+import { resolveGrant } from '../src/grant/check.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -99,7 +100,14 @@ function parsePayload(raw) {
   if (toolInput !== undefined && (typeof toolInput !== 'object' || toolInput === null || Array.isArray(toolInput))) {
     return { ok: false, reason: 'payload tool_input is not an object' };
   }
-  return { ok: true, toolName, toolInput: toolInput || {} };
+  // session_id is a common field on every Claude Code hook event. It was
+  // being parsed and discarded. Grants are session-bound, so without it no
+  // grant can ever apply: absence yields null and resolveGrant refuses on
+  // null rather than treating a missing binding as a wildcard.
+  const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
+    ? payload.session_id
+    : null;
+  return { ok: true, toolName, toolInput: toolInput || {}, sessionId };
 }
 
 function digestParams(toolInput) {
@@ -491,18 +499,63 @@ async function main() {
     const requestId = stageRequest(home, actionRequest);
 
     if (tokenResult == null) {
-      // No token at all -> deny.
       const store = createStore(home);
       const chain = {
         entries: store.entries,
         append: store.appendReceipt.bind(store)
       };
+
+      // No single-use token. Before denying, see whether a signed
+      // delegation grant covers this exact request.
+      //
+      // resolveGrant never throws: every failure inside it is a refusal,
+      // because an exception escaping here would reach this file's outer
+      // handler, be read as an engine error, and silently ALLOW. The hook
+      // fails open on engine error and closed on token failure; a grant
+      // check belongs on the closed side of that line.
+      //
+      // Additive by construction: this can only turn a DENY into an ALLOW
+      // when a signed grant covers the action, never an ALLOW into a DENY,
+      // so a bug here cannot lock the owner out of their own machine.
+      const grantDecision = resolveGrant({
+        actionRequest,
+        sessionId: parsed.sessionId,
+        home,
+        chainEntries: store.entries,
+        now: Date.now()
+      });
+
+      if (grantDecision.allow) {
+        try {
+          store.appendReceipt({
+            type: 'grant-use',
+            grantId: grantDecision.grantId,
+            useIndex: grantDecision.useIndex,
+            ruleId,
+            tool: toolName,
+            paramsDigest,
+            timestamp: Date.now()
+          });
+        } catch (e) {
+          // A use that cannot be recorded must not be allowed. The action
+          // ceiling is enforced by COUNTING these entries, so an unrecorded
+          // use is an uncounted one, and a grant whose uses go uncounted is
+          // a grant with no ceiling at all.
+          note(`grant-use receipt failed (${e.message}); denying`);
+          process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
+          process.exit(2);
+        }
+        note(`approved by grant ${grantDecision.grantId} (use ${grantDecision.useIndex}): ${ruleId} (${toolName})`);
+        process.exit(0);
+      }
+
+      // No token and no grant. Deny exactly as before.
       try {
         gatedAction(actionRequest, null, chain, home);
       } catch (e) {
         note(`denial receipt failed (${e.message}); still denying`);
       }
-      note(`BLOCKED: ${ruleId} (${toolName}) — no valid token`);
+      note(`BLOCKED: ${ruleId} (${toolName}) — no valid token; ${grantDecision.reason}`);
       process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }
