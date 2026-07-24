@@ -324,11 +324,22 @@ describe('policy: isDestructive', () => {
       false
     );
   });
-  it('excludes rm -rf of a path containing "mktemp"', () => {
+  it('excludes rm -rf where a whole path segment is "mktemp"', () => {
     assert.strictEqual(
-      isDestructive({ command: 'rm -rf /home/me/mktemp-xyz' }),
+      isDestructive({ command: 'rm -rf /tmp/mktemp/run-1' }),
       false
     );
+  });
+  // The allowlist matches whole path SEGMENTS, not substrings. These are the
+  // false negatives the substring version had (KNOWN-LIMITS 21): a real
+  // directory whose name merely contains an allow-word must still gate. The
+  // previous test asserted `rm -rf /home/me/mktemp-xyz` was exempt, which was
+  // the bug, not the contract.
+  it('still gates a directory that only CONTAINS an allow-word', () => {
+    assert.strictEqual(isDestructive({ command: 'rm -rf /home/me/mktemp-xyz' }), true, 'mktemp-xyz');
+    assert.strictEqual(isDestructive({ command: 'rm -rf C:/site/templates' }), true, 'templates');
+    assert.strictEqual(isDestructive({ command: 'rm -rf ./my-attempts' }), true, 'attempts');
+    assert.strictEqual(isDestructive({ command: 'rm -rf /srv/contemplation' }), true, 'contemplation');
   });
   it('matches Remove-Item -Recurse -Force', () => {
     assert.strictEqual(
