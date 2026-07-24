@@ -193,8 +193,27 @@ const SELF_MOD_PATH_FRAGMENTS = [
 function selfModFragmentsForBase(baseDir) {
   return [
     '.claude/settings.json',
+    // Repo source that decides what the gate permits. This set must stay in
+    // step with core-paths.js CORE_DIRS/CORE_FILES (the list a grant may never
+    // cover). They drifted: core-paths protected chain, store and grant while
+    // this list did not, so the grant verifier, the hash chain and the store
+    // could be rewritten with no signature — through any tool, in any mode.
+    // Found 2026-07-24 when an edit to src/store landed unsigned. A drift-guard
+    // test now asserts these two lists agree. See KNOWN-LIMITS 21.
     'src/gate/',
     'src/policy/',
+    'src/chain/',
+    'src/store/',
+    'src/grant/',
+    'src/home.js',
+    'src/registration.js',
+    // Core bin scripts by exact name, so `/usr/bin/...` and `node_modules/.bin`
+    // are not swept in. Hook binaries are additionally matched by regex below.
+    'bin/approve.js',
+    'bin/setup.js',
+    'bin/mode.js',
+    'bin/gate.js',
+    'bin/view.js',
     normalizePath(path.join(baseDir, 'keys')) + '/',
     normalizePath(path.join(baseDir, 'receipts')) + '/',
     normalizePath(path.join(baseDir, 'policy.json'))
@@ -229,10 +248,18 @@ function isSelfModEdit(toolName, toolInput, baseDir) {
 }
 
 /**
- * Check whether a Bash tool_input's command string hits the self-mod rule.
- * Any of the self-mod path fragments appearing as a substring in the command.
+ * Check whether a command string hits the self-mod rule: any of the self-mod
+ * path fragments appearing as a substring in the command.
+ *
+ * Named `Command` rather than `Bash` since 2026-07-24. This matcher only ever
+ * looked at `toolInput.command` and never at the tool name, so gating it
+ * behind `toolName === 'Bash'` in the dispatcher below meant a second shell
+ * (PowerShell on Windows, where it is the primary shell) could rewrite the
+ * gate, the policy, the hooks, and delete the chain, all unsigned. That was a
+ * live defect, not an obfuscation an adversary had to reach for: the default
+ * configuration did not enforce. See KNOWN-LIMITS 21.
  */
-function isSelfModBash(toolInput, baseDir) {
+function isSelfModCommand(toolInput, baseDir) {
   const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
   if (cmd === '') return false;
   const cmdNorm = normalizePath(cmd);
@@ -250,7 +277,14 @@ function isSelfModBash(toolInput, baseDir) {
 }
 
 export function isSelfMod(toolName, toolInput, baseDir) {
-  if (toolName === 'Bash') return isSelfModBash(toolInput, baseDir);
+  // A command-carrying tool is checked by its command string regardless of
+  // the tool's name. This mirrors isCommandTool() used by every other command
+  // rule: the guarantee has to hold for whatever shell the harness exposes,
+  // not for a hardcoded allowlist of one. An edit tool is checked by its
+  // file_path. A tool can in principle be both; check the command first.
+  if (typeof toolInput?.command === 'string' && toolInput.command.trim() !== '') {
+    return isSelfModCommand(toolInput, baseDir);
+  }
   return isSelfModEdit(toolName, toolInput, baseDir);
 }
 
@@ -346,8 +380,13 @@ function hasDataFlag(cmd) {
   if (/(^|\s)(-d|--data|--data-raw|--data-binary|--data-urlencode)\b/.test(cmd)) return true;
   if (/(^|\s)--form\b/.test(cmd)) return true;
   if (/(^|\s)-F\b/.test(cmd)) return true; // curl form shorthand
-  // PowerShell: -Body
+  if (/(^|\s)-T\b/.test(cmd)) return true; // curl --upload-file shorthand
+  // wget uploads (KNOWN-LIMITS 21: these were unrecognised)
+  if (/(^|\s)--post-file(=|\s|$)/.test(cmd)) return true;
+  if (/(^|\s)--post-data(=|\s|$)/.test(cmd)) return true;
+  // PowerShell: -Body, -InFile
   if (/(^|\s)-Body\b/.test(cmd)) return true;
+  if (/(^|\s)-InFile\b/i.test(cmd)) return true;
   return false;
 }
 
@@ -364,6 +403,16 @@ function hasDataFlag(cmd) {
  * trading a harmless false positive for a real miss.
  */
 function stripMessageArgs(cmd) {
+  // A command substitution inside the message is not prose. `$(...)`,
+  // backticks and `${...}` are evaluated by the shell before the commit
+  // message is ever formed, so `git commit -m "$(curl -d @secrets ...)"`
+  // runs the curl. Blanking the message would hide exactly the executable
+  // part from the egress and publish matchers. If any such syntax is
+  // present, leave the command intact so the matchers see what the shell
+  // will run. A message that merely contains the literal characters in
+  // single quotes is over-matched as a result, which costs a signature, not
+  // a miss. See KNOWN-LIMITS 21.
+  if (/\$\(|\$\{|`/.test(cmd)) return cmd;
   return cmd
     .replace(/(-m|--message)(\s+|=)"(?:[^"\\]|\\.)*"/g, '$1 ""')
     .replace(/(-m|--message)(\s+|=)'[^']*'/g, "$1 ''");
@@ -374,6 +423,13 @@ function usesEgressTool(cmd) {
   if (/\bwget\b/.test(cmd)) return true;
   if (/\bInvoke-WebRequest\b/i.test(cmd)) return true;
   if (/\biwr\b/.test(cmd)) return true;
+  // Invoke-RestMethod / irm: the standard PowerShell call for JSON APIs, and
+  // the sibling of Invoke-WebRequest. Its absence here was an oversight, not
+  // a decision (KNOWN-LIMITS 21). curl.exe / wget.exe on Windows fall out of
+  // the \bcurl\b / \bwget\b boundaries already since the boundary is before
+  // the dot.
+  if (/\bInvoke-RestMethod\b/i.test(cmd)) return true;
+  if (/\birm\b/.test(cmd)) return true;
   return false;
 }
 
@@ -423,11 +479,17 @@ export function isEgressOther(toolInput) {
 
 // ---------- destructive matcher ----------
 
-const DESTRUCTIVE_ALLOWLIST = ['/tmp', 'temp', 'scratchpad', 'mktemp'];
+// Path SEGMENTS that mark scratch space, matched as whole segments and never
+// as substrings. The earlier version tested `t.includes(frag)`, so `temp`
+// matched inside `templates`, `attempts` and `contemplation`, and a recursive
+// force delete of any of those was exempted with no warning and no receipt.
+// Segment equality means `templates` splits to a segment `templates`, which is
+// not `temp`, so it gates. See KNOWN-LIMITS 21.
+const DESTRUCTIVE_ALLOW_SEGMENTS = new Set(['tmp', 'temp', 'scratchpad', 'mktemp']);
 
 function destructiveAllowlisted(target) {
-  const t = target.toLowerCase();
-  return DESTRUCTIVE_ALLOWLIST.some(frag => t.includes(frag));
+  const segments = target.toLowerCase().split(/[/\\]+/).filter(Boolean);
+  return segments.some(seg => DESTRUCTIVE_ALLOW_SEGMENTS.has(seg));
 }
 
 /**
@@ -527,17 +589,31 @@ export function isScopeEscalation(toolInput) {
  */
 const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?=\s|$|['\"])/i;
 
-// A command that only READS a script is not handing over control. The word
-// boundaries here are load-bearing: without them `ls` matches inside "tools"
-// and `type` inside "prototype", which silently disables the whole rule.
-const READ_ONLY_VERB = /\b(cat|less|more|head|tail|grep|rg|ls|dir|stat|wc|type|Get-Content|Select-String)\b/i;
+// A command that only READS a script is not handing over control. The verb
+// must LEAD its segment, not appear anywhere in it. The earlier version
+// tested the whole command for `\btype\b`, `\bls\b` etc., and a hyphenated
+// parameter supplies its own word boundary: `.\deploy.ps1 -Type full` was
+// read as containing the verb `type` and exempted, so the rule created for
+// the deploy incident was defeated by an ordinary parameter name. Anchoring
+// to the start of the segment means the verb has to be the command, not an
+// argument. See KNOWN-LIMITS 21.
+const READ_ONLY_LEAD =
+  /^\s*(?:cat|less|more|head|tail|grep|rg|ls|dir|stat|wc|type|Get-Content|gc|Select-String|sls)\b/i;
+
+// Shell separators that start a new command. A read verb only exempts the
+// segment it leads: `Get-Content a.ps1 && ./evil.ps1` executes evil.ps1 in a
+// later segment, and that segment is not led by a read verb, so it gates.
+const CMD_SEPARATORS = /(?:&&|\|\||[;|\n])/;
 
 export function isOpaqueExec(toolInput) {
   const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
   if (cmd === '') return false;
-  if (!SCRIPT_EXT.test(cmd)) return false;
-  if (READ_ONLY_VERB.test(cmd)) return false;
-  return true;
+  for (const segment of cmd.split(CMD_SEPARATORS)) {
+    if (!SCRIPT_EXT.test(segment)) continue;      // no script in this segment
+    if (READ_ONLY_LEAD.test(segment)) continue;   // this segment only reads one
+    return true;                                   // a script is being executed
+  }
+  return false;
 }
 
 // ---------- command-tool detection ----------

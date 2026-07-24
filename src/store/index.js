@@ -116,6 +116,16 @@ function appendEntry(entry, baseDir = DEFAULT_BASE_DIR) {
   ensureDir(receiptsDir);
 
   const line = JSON.stringify(entry);
+  // Create the chain with owner-only permissions. Since 2026-07-24 the chain
+  // records authorised command strings in plaintext (KNOWN-LIMITS 18); the
+  // grant file those are copied from is already 0600 (src/grant/issue.js), and
+  // the chain holding the same plaintext must not be looser. `mode` applies
+  // only when the file is created, so create it explicitly if absent, then
+  // append. A chain that predates this fix keeps its old permissions until a
+  // one-time `chmod 600`. See KNOWN-LIMITS 21.
+  if (!fs.existsSync(chainFile)) {
+    fs.writeFileSync(chainFile, '', { mode: 0o600 });
+  }
   fs.appendFileSync(chainFile, line + '\n');
 }
 

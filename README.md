@@ -30,6 +30,9 @@ Lotor separates the two roles by construction. The receipt is written local firs
 
 Lotor is one primitive, a signed local receipt, applied wherever "what did my agent actually do" is a question you need answered honestly.
 
+- **Replacing your harness's permission prompts.** Run the agent with its own confirmations off and let Lotor be the thing that stops it. A harness prompt is per-call, ephemeral, and dismissed with a click, which is the shape of a control people learn to click through. A Lotor gate is bound to one exact command, signed with a key the agent cannot produce, single use, and recorded whether you approve or deny. You trade a prompt you stop reading for a signature you have to mean.
+- **Long-horizon and delegated work.** A gate that costs one trip to a terminal per action is a gate that gets turned off during exactly the sessions worth gating. Delegation grants make one signature cover an enumerated set of requests, so a long build or an overnight run stays gated instead of becoming a choice between friction and no floor at all.
+- **Answering "what actually ran" without spending context.** Reconstructing what happened costs tokens: re-reading files, re-deriving history, holding it all in the window. Querying a receipt costs almost nothing and is not subject to the agent's account of itself. In practice the record is often faster than the reasoning, and it is right more often. A worker in this project once reported which model it was running on, in the section of its report reserved for admitting uncertainty, and was wrong. The receipt was not.
 - **Session accountability.** End every interactive session with a signed receipt: what ran, what it touched, what it sent, what it cost, what failed. Failures are surfaced, not buried.
 - **Overnight and unattended runs.** Wake up to a morning-after record of what an agent did while you were not watching, instead of a pile of transcripts you will never read.
 - **Gated high-stakes actions.** Make destructive or irreversible actions (delete, deploy, send, spend) fail closed until you sign an approval bound to that exact action and its exact parameters. The denial and the approval are both receipted.
@@ -72,7 +75,36 @@ Switching requires the same passphrase that signs a gated action, for the same r
 
 An existing `policy.json` from before this feature shipped is not silently upgraded. It keeps its hand-tuned rules and loads with mode `custom`; naming a preset only happens when you ask for one.
 
-**Honest limit.** Lotor's mode is independent of your harness's own permission mode. Loose plus a harness set to bypass its own permission checks is genuinely nothing stopping anything — neither layer knows the other exists. See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 15.
+**Honest limit.** Lotor's mode is independent of your harness's own permission mode, and the two do not compensate for one another. Loose plus a harness set to bypass its own checks is genuinely nothing stopping anything on either layer. Lotor now warns when it sees that combination and records the posture once per session, because your harness reports its own mode on every call and Lotor was throwing that away. Detection is not protection: it tells you the floor is gone, it does not put one back. See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md) item 15.
+
+## Delegation grants
+
+A single-use approval covers one exact command and is spent once. That is right for a deploy and wrong for a working session. Forty gated actions means forty trips to a terminal, and a gate that expensive gets switched off, which is the failure it existed to prevent.
+
+A grant is one signature over N enumerated requests, bound to one session, with an expiry and a shared action ceiling.
+
+The requests come from files the gate already writes. Every denial stages the exact request it blocked, which is what makes the printed approve command runnable with nothing left to fill in. Work until the gate has stopped you a few times, then sign them together using the ids from those denials:
+
+```bash
+npm run grant -- --session <id> --requests a1b2c3d4,e5f6a7b8 --max-actions 10 --expires-in-ms 3600000
+npm run grant -- --session <id> --all-pending --max-actions 20 --expires-in-ms 3600000
+```
+
+Before the passphrase prompt it prints every request in full, untruncated, with the session, the ceiling and the window. Reading that list is the security of the mechanism. Nothing else in the design substitutes for it.
+
+Comparison is byte equality over the same canonical form the single-use path already uses. A grant is that identical check run against N pre-approved requests instead of one, so nothing here pattern-matches and nothing here inherits the evadability of the rule matcher.
+
+Three independent ceilings, so no single failure lifts the lid:
+
+- the **session** it is bound to, useless in any other
+- the **wall-clock expiry**, which depends on the machine clock
+- the **use count**, computed by counting signed entries on the append-only chain rather than from a counter file that could be reset by deleting it
+
+**The non-delegable core.** A hard-coded set of paths no grant may ever cover, because a grant able to edit the verifier could widen every future grant. That is one hop and it is fatal. The gate, the policy, the hooks, the key handling, and the grant machinery itself. Work on those costs one signature per action, forever. Building on the core stays expensive on purpose, and the core is small so the expense is bounded.
+
+Both halves reach the chain: the signed grant is recorded when it is issued, and every use is recorded as it is spent. So the log answers what was authorised and what was done with it, separately, and the two can be compared. Deleting a grant file removes the capability and leaves the authorisation on the record.
+
+**Honest limit.** A single-use approval is reviewed once and spent once. A grant is reviewed once and spendable up to its ceiling, so a command you approved can run repeatedly without further review. That is the trade, made deliberately, and it is the one respect in which a grant is weaker than the primitive it extends. See KNOWN-LIMITS 17.
 
 ## Not built yet
 

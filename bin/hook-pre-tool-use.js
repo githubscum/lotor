@@ -560,34 +560,36 @@ async function main() {
 
     if (tokenResult == null) {
       const store = createStore(home);
-      const chain = {
-        entries: store.entries,
-        append: store.appendReceipt.bind(store)
-      };
 
-      // No single-use token. Before denying, see whether a signed
-      // delegation grant covers this exact request.
+      // No single-use token. Before denying, see whether a signed delegation
+      // grant covers this exact request.
       //
-      // resolveGrant never throws: every failure inside it is a refusal,
-      // because an exception escaping here would reach this file's outer
-      // handler, be read as an engine error, and silently ALLOW. The hook
-      // fails open on engine error and closed on token failure; a grant
-      // check belongs on the closed side of that line.
+      // The grant check and the grant-use append MUST be atomic. resolveGrant
+      // counts prior uses from the chain; if that count is read before the
+      // lock and the append lands after (as an earlier version did, counting
+      // from a pre-lock store.entries snapshot and then calling appendReceipt),
+      // two overlapping calls under one grant both observe the same count and
+      // both proceed, exceeding maxActions. That contradicted the ceiling's own
+      // guarantee. See KNOWN-LIMITS 20 / 21, finding 6.
       //
-      // Additive by construction: this can only turn a DENY into an ALLOW
-      // when a signed grant covers the action, never an ALLOW into a DENY,
-      // so a bug here cannot lock the owner out of their own machine.
-      const grantDecision = resolveGrant({
-        actionRequest,
-        sessionId: parsed.sessionId,
-        home,
-        chainEntries: store.entries,
-        now: Date.now()
-      });
-
-      if (grantDecision.allow) {
-        try {
-          store.appendReceipt({
+      // appendReceiptGuarded runs this callback INSIDE the chain lock with the
+      // freshly re-read chain, so the count the decision uses is the same view
+      // the grant-use entry lands on. resolveGrant never throws (every failure
+      // is a refusal), so a null return here is an honest deny, never an
+      // exception escaping to the outer fail-open handler.
+      let grantDecision = { allow: false, reason: 'no grant evaluated' };
+      let grantEntry = null;
+      try {
+        grantEntry = store.appendReceiptGuarded((current) => {
+          grantDecision = resolveGrant({
+            actionRequest,
+            sessionId: parsed.sessionId,
+            home,
+            chainEntries: current,   // fresh, under the lock
+            now: Date.now()
+          });
+          if (!grantDecision.allow) return null;   // no append; fall through to deny
+          return {
             type: 'grant-use',
             grantId: grantDecision.grantId,
             useIndex: grantDecision.useIndex,
@@ -595,21 +597,27 @@ async function main() {
             tool: toolName,
             paramsDigest,
             timestamp: Date.now()
-          });
-        } catch (e) {
-          // A use that cannot be recorded must not be allowed. The action
-          // ceiling is enforced by COUNTING these entries, so an unrecorded
-          // use is an uncounted one, and a grant whose uses go uncounted is
-          // a grant with no ceiling at all.
-          note(`grant-use receipt failed (${e.message}); denying`);
-          process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
-          process.exit(2);
-        }
+          };
+        });
+      } catch (e) {
+        // A use that cannot be recorded must not be allowed. The ceiling is
+        // enforced by COUNTING grant-use entries, so an unrecorded use is an
+        // uncounted one, and a grant whose uses go uncounted has no ceiling.
+        note(`grant-use append failed (${e.message}); denying`);
+        grantEntry = null;
+      }
+
+      if (grantEntry) {
         note(`approved by grant ${grantDecision.grantId} (use ${grantDecision.useIndex}): ${ruleId} (${toolName})`);
         process.exit(0);
       }
 
-      // No token and no grant. Deny exactly as before.
+      // No token and no grant (or the ceiling was reached under the lock).
+      // Deny, recording the denial exactly as before.
+      const chain = {
+        entries: store.entries,
+        append: store.appendReceipt.bind(store)
+      };
       try {
         gatedAction(actionRequest, null, chain, home);
       } catch (e) {
