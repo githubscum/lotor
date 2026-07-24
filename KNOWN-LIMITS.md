@@ -253,9 +253,12 @@ from `grant-use` entries on the append-only chain and does not depend on the
 clock at all, so a grant with a clock-proof ceiling of 5 is bounded at 5 uses
 regardless of what the clock says.
 
-## 21. The self-mod rule matches strings in a command, not intent
+## 21. The command rules match strings, not intent
 
-Observed directly on 2026-07-23 while working against the gate:
+Observed directly on 2026-07-23 and 2026-07-24 while working against the
+gate. The examples below are `self-mod` unless noted, but the root cause is
+shared by every rule that reads a command line, and `opaque-exec` is
+confirmed to have it too:
 
 - **It cannot tell reading from writing.** A `grep` or `cat` of a protected
   file is denied exactly like an edit, because both are commands containing
@@ -271,9 +274,30 @@ Observed directly on 2026-07-23 while working against the gate:
   then denied, since matching is on the path rather than the location. The
   copy is therefore not a route around the rule, but the asymmetry is not
   something the rule was designed for.
+- **`opaque-exec` has the same read/write blindness** (2026-07-24). Reading a
+  PowerShell script with `sed` was denied under `opaque-exec`, the rule whose
+  stated purpose is that handing control to a script the engine cannot read
+  is an unverified action. Nothing is being handed control when the script is
+  the argument to a pager. So the defect is not specific to `self-mod`: any
+  rule matching on command text inherits it, and a second rule has now been
+  confirmed to.
 
 None of this is evadable-by-accident in the limit 11 sense, and the failures
 lean toward denying too much rather than too little. It is recorded because
 the cost of the gate is not evenly distributed, and because anyone extending
 the rule set should know it reasons about text rather than about what a
 command will do.
+
+**Why this is harder to fix than it looks.** The obvious repair, exempting
+commands that begin with a read verb, was tried on 2026-07-23 and opened a
+hole within minutes: only the first token was checked, so a read verb
+followed by a redirect could overwrite the very file the rule protects. The
+test suite caught it and it was reverted whole. A correct fix has to classify
+on whether a command can *mutate*, across an arbitrary shell string, on a
+machine where the primary shell is PowerShell and the mutation can hide
+inside a script the matcher cannot read. That is the same wall `opaque-exec`
+exists to acknowledge, which is why the two rules share the defect.
+
+The standing rule for this matcher, from the day the hole was opened: crying
+wolf is the cheap failure and silence is the expensive one. Any change that
+makes it quieter has to answer what it now misses.
