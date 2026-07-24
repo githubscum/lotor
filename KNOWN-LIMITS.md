@@ -382,3 +382,38 @@ no honest local-only fix.
 
 Read a clean `verify` as "what remains has not been altered", never as
 "nothing was removed."
+
+## 23. self-mod over-gates conventional source-dir names in unrelated repos
+
+The `self-mod` rule protects Lotor's own core directories by literal path
+segment: `src/gate/`, `src/policy/`, `src/chain/`, `src/store/`, `src/grant/`,
+and the rest. The matcher keys on the segment text, not on the Lotor install's
+actual repo location, which it does not know. So a command touching a directory
+of the same conventional name in an **unrelated** project run through the same
+Lotor install is gated as self-mod: `cat ./src/store/model.js` in your own app
+trips the gate and costs a signature, even though it has nothing to do with
+Lotor. This is the accepted over-gating direction (crying wolf is the cheap
+failure, limit 21), but the blast radius is wider than Lotor's own tree: any
+repo with a `src/store`, `src/chain`, or `src/grant` path. Scoping the match to
+the Lotor install's own directory would require the matcher to know that path,
+which is not wired in v1.
+
+A related asymmetry from the same rule: a command *ending* in the fragment with
+a trailing slash (`ls ./src/chain/`) slips, because `normalizePath` strips the
+command's trailing slash before matching, while the file form
+(`.../src/store/x.js`) gates. The over-gate is real for the file form; the
+trailing-slash directory form is an under-gate of the same rule.
+
+## 24. The destructive allowlist exempts real directories named tmp/temp/scratchpad/mktemp
+
+`destructiveAllowlisted` exempts an `rm -rf` / `Remove-Item` whose resolved path
+has **any** segment equal to `tmp`, `temp`, `scratchpad`, or `mktemp`. A real,
+non-scratch directory that happens to sit under such a name (`/var/tmp`,
+`/etc/tmp`, `/production/data/tmp`) is therefore exempted from the destructive
+gate. The 2026-07-24 `..`-normalization fix (limit 21) closed the traversal
+*escape* (`rm -rf /tmp/../etc` no longer launders to an exempt verdict, because
+`..` pops the scratch segment before the check runs), but the any-segment
+leniency itself is by design: the allowlist exists so routine scratch cleanup
+does not cost a signature, and tightening it to a leading-segment-only rule broke
+legitimate deletion of nested scratch dirs like `/home/me/scratchpad/run-1`.
+Exposure is limited to targets genuinely sitting under a scratch-named directory.

@@ -20,6 +20,7 @@ import {
   recordNonce,
   getPaths
 } from './sign.js';
+import { withLock } from '../store/lock.js';
 
 const DEFAULT_BASE_DIR = '.';
 
@@ -131,20 +132,47 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
     return { decision: 'denied', reason: verifyResult.reason, receiptSeq: entry.seq };
   }
 
-  // Valid token - record the nonce for replay protection
-  recordNonce(approvalToken.nonce, baseDir);
+  // Valid token. The nonce check-and-record must be atomic across PROCESSES:
+  // Claude Code spawns one PreToolUse process per tool call, so N concurrent
+  // uses of the SAME single-use token would each pass verifyApproval's nonce
+  // check and each record, double-spending one signature. This is KNOWN-LIMITS
+  // 20's race on the token path the grant fix missed. Re-check and record inside
+  // the chain lock so a second process sees the recorded nonce and is denied.
+  const nonce = approvalToken.nonce;
+  let replay = false;
+  withLock(baseDir, () => {
+    if (nonceUsed(nonce, baseDir)) { replay = true; return; }
+    recordNonce(nonce, baseDir);
+  });
 
-  // Append approval receipt
+  if (replay) {
+    const receipt = {
+      type: 'gated-action',
+      decision: 'denied',
+      action,
+      reason: 'approval token nonce already used (replay detected)',
+      timestamp
+    };
+    const entry = chain.append(receipt);
+    return {
+      decision: 'denied',
+      reason: 'approval token nonce already used (replay detected)',
+      receiptSeq: entry.seq
+    };
+  }
+
+  // Nonce is ours. Append the approval receipt. chain.append locks internally;
+  // it runs AFTER the nonce lock above is released, so the two never nest.
   const receipt = {
     type: 'gated-action',
     decision: 'approved',
     action,
-    approvalNonce: approvalToken.nonce,
+    approvalNonce: nonce,
     timestamp
   };
   const entry = chain.append(receipt);
 
-  return { decision: 'approved', approvalNonce: approvalToken.nonce, receiptSeq: entry.seq };
+  return { decision: 'approved', approvalNonce: nonce, receiptSeq: entry.seq };
 }
 
 /**
