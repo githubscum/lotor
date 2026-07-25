@@ -1,5 +1,5 @@
 {
-  "name": "lotor",
+  "name": "lotor-mcp",
   "version": "1.0.0",
   "type": "module",
   "description": "A local receipt and approval gate for AI agent sessions. The agent can act, but it cannot sign.",
@@ -10,7 +10,8 @@
   },
   "homepage": "https://ikeanalytics.com/lotor/",
   "bin": {
-    "lotor": "src/mcp/server.js"
+    "lotor": "src/mcp/server.js",
+    "lotor-mcp": "src/mcp/server.js"
   },
   "files": [
     "bin/",

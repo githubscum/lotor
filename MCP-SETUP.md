@@ -16,6 +16,22 @@ Add this to your Claude client's MCP config:
 {
   "mcpServers": {
     "lotor": {
+      "command": "npx",
+      "args": ["-y", "lotor-mcp"]
+    }
+  }
+}
+```
+
+The npm package is `lotor-mcp`. The bare name `lotor` is unavailable on npm,
+which rejects it as too similar to an existing package.
+
+### From a local clone instead
+
+```json
+{
+  "mcpServers": {
+    "lotor": {
       "command": "node",
       "args": ["/absolute/path/to/lotor/src/mcp/server.js"]
     }
