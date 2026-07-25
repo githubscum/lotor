@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "lotor",
   "display_name": "Lotor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A local receipt and approval gate for AI agent sessions. The agent can act, but it cannot sign.",
   "long_description": "A local-first, MCP-native receipt layer for AI agent sessions. It writes a signed, tamper-evident log of what an agent did during a session (actions performed, files touched, messages sent, costs incurred, failures encountered) and exposes tools to query those receipts, verify chain integrity, and run a fail-closed gated action that requires an owner-signed approval token.",
   "author": {

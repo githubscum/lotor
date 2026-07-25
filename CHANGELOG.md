@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.2 — 2026-07-25 — the version was hardcoded, and 1.0.1 fixed the wrong file
+
+1.0.1 corrected `manifest.json`, on the assumption that the server read its
+version from there. It does not. `src/mcp/server.js` carried a literal
+`version: '0.0.0'`, so 1.0.1 still reported 0.0.0 to every client. The manifest
+work in 1.0.1 was real and needed (it declared three tools where the server
+serves four), but it was not the fix for the version, and shipping it as though
+it were is the more instructive half of this.
+
+Identity is now read from `package.json` at startup, so there is one place to be
+wrong instead of three.
+
+Six regression tests added in `test/server-identity.test.js`, because nothing in
+465 tests asserted what the server calls itself. They check that no semver
+literal appears in the server source, that reported identity equals
+`package.json` exactly, that `manifest.json` and `server.json` versions agree
+with it, that the npm identifier matches the published package name, that
+`server.json` name matches `mcpName` (the registry rejects a mismatch), and that
+the manifest declares every tool the server serves. The first was proven to fail
+against the reverted source before being kept.
+
+Nothing about enforcement, signing, or the chain changed.
+
 ## 1.0.1 — 2026-07-25 — the manifest was lying about the server
 
 Found by smoke-testing the published npm package instead of the local
