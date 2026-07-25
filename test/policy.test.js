@@ -203,11 +203,15 @@ describe('policy: isPushProtected', () => {
   it('does NOT match a non-push command', () => {
     assert.strictEqual(isPushProtected({ command: 'git checkout main' }), false);
   });
-  it('does NOT match when `main` appears only in a non-ref position (documented limit)', () => {
-    // bare git push with main as commit message text, not ref — still allowed
-    // (we match if `main` appears anywhere after `git push`).
-    // Document the false-positive: git push --message "main" → matches.
-    assert.strictEqual(isPushProtected({ command: 'git push --message "main"' }), true);
+  it('does NOT match when `main` is only message prose (false positive removed 2026-07-24)', () => {
+    // The old matcher read the raw string, so message text saying "main"
+    // tripped the protected-branch rule; the previous version of this test
+    // documented that as a known false positive. Inert-prose stripping
+    // (matchableCommand) removes it. The command is still a push, so it
+    // still gates — as egress-other, the same rule a bare `git push` gets.
+    assert.strictEqual(isPushProtected({ command: 'git push --message "main"' }), false);
+    const r = evaluate('Bash', { command: 'git push --message "main"' }, DEFAULT_POLICY, makeTempDir());
+    assert.strictEqual(r && r.ruleId, 'egress-other');
   });
 });
 

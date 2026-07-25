@@ -14,8 +14,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createStore } from '../store/index.js';
 import { gatedAction, isApprovalKeyInitialized } from '../gate/index.js';
 import { resolveHome } from '../home.js';
@@ -165,14 +166,26 @@ function handleGatedAction(args) {
 }
 
 /**
+ * Identity reported to every client that connects.
+ *
+ * Read from package.json rather than hardcoded. A version literal here is a
+ * second source of truth that drifts silently: it sat at 0.0.0 through the
+ * 1.0.0 release and reported that to every client, while npm and the registry
+ * both said otherwise. Nothing tests what a server calls itself, so the only
+ * durable fix is having one place to be wrong.
+ */
+export function readIdentity() {
+  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  return { name: pkg.name, version: pkg.version };
+}
+
+/**
  * Create and configure the MCP server.
  */
 function createMcpServer() {
   const server = new Server(
-    {
-      name: 'lotor-mcp',
-      version: '0.0.0'
-    },
+    readIdentity(),
     {
       capabilities: {
         tools: {}

@@ -16,6 +16,22 @@ Add this to your Claude client's MCP config:
 {
   "mcpServers": {
     "lotor": {
+      "command": "npx",
+      "args": ["-y", "lotor-mcp"]
+    }
+  }
+}
+```
+
+The npm package is `lotor-mcp`. The bare name `lotor` is unavailable on npm,
+which rejects it as too similar to an existing package.
+
+### From a local clone instead
+
+```json
+{
+  "mcpServers": {
+    "lotor": {
       "command": "node",
       "args": ["/absolute/path/to/lotor/src/mcp/server.js"]
     }
@@ -51,6 +67,7 @@ The manual JSON method above remains the fallback for Claude Code and any client
 
 - `query_receipts`: Query receipt summaries from the chain (most recent first). Optional params: `limit`, `sessionId`.
 - `verify_chain`: Verify chain integrity. Returns `{ ok, brokenAt?, reason?, entryCount }`.
+- `lotor_status`: Report runtime status: store location, receipt count, chain integrity, herding mode, whether the signing gate is set up, and whether the recording and gating hooks are actually registered. Worth calling first: a key that is set up but a hook that is not registered means nothing is gated.
 - `gated_action`: Fail-closed gate. Denies an action unless a valid owner-signed approval token is presented for that exact action, and writes a receipt to the chain in both directions (denied and approved). Params: `action`, optional `params`, optional `approvalToken` (`{ request, nonce, timestamp, signature }`). Returns `{ decision, reason?, approvalNonce?, receiptSeq }`.
 
 ## Prerequisites

@@ -417,3 +417,90 @@ leniency itself is by design: the allowlist exists so routine scratch cleanup
 does not cost a signature, and tightening it to a leading-segment-only rule broke
 legitimate deletion of nested scratch dirs like `/home/me/scratchpad/run-1`.
 Exposure is limited to targets genuinely sitting under a scratch-named directory.
+
+## 25. The gate knew git's transports and not git's vendor CLI
+
+Until 2026-07-24, `gh` — the GitHub CLI, authenticated against the user's account
+from the system keyring — was almost entirely invisible to the rule set. Three
+specific shapes were matched (`gh pr merge`, `gh release create`, `gh * create`);
+everything else was not. Verified live, not hypothesized: `gh repo edit` changed a
+public repository's description with no gate, no warning, and no signature request,
+while a plain `git push` to the same repository would have gated. Ungated by the
+same omission: `gh repo edit --visibility public`, `gh api` with any mutating
+method, `gh secret set`, `gh release delete`, `gh workflow run`, `gh repo delete`.
+That was a live, credentialed write path to every repository the account owns, and
+the inconsistency was worse than the gap: the rules gated the low-level transport
+and allowed the high-level tool that wraps it.
+
+Fixed the same day, structurally rather than by extending the verb list. `gh` is
+treated as what it is, an authenticated remote API client, and every invocation
+gates as egress unless its subcommand is on a short read-only allowlist (`view`,
+`list`, `status`, `checks`, `diff`, `search`, `browse`, `clone`, `download`,
+`watch`, `help`, `version`, `completion`). Write verbs are not enumerated
+anywhere, because enumerating the bad list is the shape that leaked here and
+leaked one terminator per round in the gauntlet (limit 21): a subcommand this
+matcher has never heard of, including whatever `gh` ships next year, gates by
+default. `gh api` always gates regardless of method; it is the raw escape hatch,
+and a `-f` field silently turns its GET into a POST.
+
+What this does not fix, stated against interest: the matcher recognizes `gh` by
+name. Any other authenticated CLI on the machine — `aws`, `az`, `gcloud`,
+`vercel`, `flyctl`, an npm-installed deploy tool — is still invisible unless its
+traffic happens to go through a transport the rules already know. A
+network-capable binary cannot be recognized as such from its command string. This
+entry adds one row with the right polarity; it does not close the class. The class
+limit is limit 21's: the rules match strings, not intent.
+
+## 26. The matchers scanned prose as code, and the gate cried wolf on its own commit messages
+
+Until 2026-07-24, two command rules (`push-force`, `push-protected`) matched
+against the raw command string including commit-message text, and the two that did
+strip messages (`publish`, `egress-other`) un-stripped the entire command whenever
+a backtick or `$(` appeared anywhere in it, so one markdown code span in a message
+re-exposed all of it. Heredoc bodies were never stripped at all. Verified live,
+twice in a row: a plain `git add && git commit` into a repository with no remote
+configured was denied first by `push-protected`, because the commit message
+described a future `git push origin main`, and then, after rewording, by `publish`,
+because the new text mentioned releases and merges. No push was possible from that
+repository. The gate was blocking the description of an action, not the action.
+
+This is the corrosive failure, not the expensive one: every false denial teaches
+the operator to sign without reading, and approval fatigue is how a real denial
+eventually gets signed through.
+
+Fixed by stripping provably inert prose at one choke point (`matchableCommand`)
+used by every command matcher, so no rule can forget to strip; two rules forgetting
+was half of this defect. What the gate now deliberately does not see, stated
+plainly because it is the cost:
+
+- the argument of `-m` / `--message` when single-quoted (the shell performs no
+  expansion inside single quotes, ever), or double-quoted with no `$(`, `${`, or
+  backtick inside that region;
+- heredoc bodies fed to `git commit|tag|notes|merge`, `cat`, or `tee`, with no pipe
+  on the heredoc line, when the delimiter is quoted or the body contains no
+  expansion syntax.
+
+Why the trade is acceptable: every blanked region is one the shell delivers as
+literal data to a program that treats it as text. What stays visible, verified by
+regression tests run against the unfixed code first: `bash -c 'git push ...'` (an
+interpreter argument is not a message and is not stripped), `-m "$(...)"` and
+backticks inside double quotes (those execute), any heredoc feeding an interpreter
+or a pipeline (`bash <<EOF`, `cat <<EOF | bash`), `git apply` patches, and
+unquoted-delimiter bodies carrying substitutions. The consumer list is an allowlist
+on purpose: a consumer not on it keeps its body visible, so a gap in that list
+over-gates rather than misses. PowerShell here-strings (`@'...'@`) are not stripped
+at all and can still false-positive; that noise is kept for the shell the engine
+understands least.
+
+Residual, against interest, two items. First, quoting is parsed with regexes, not a
+real shell grammar; a construction that makes a regex see "single-quoted" where the
+shell sees code would be a silent miss. None is known, and any future change here
+carries limit 21's standing burden: a change that makes the gate quieter must state
+what it stops seeing. Second, a body written through `cat` or `tee` that stages
+command-looking text — a cron file, a shell profile — is no longer accidentally
+flagged at write time. The write itself executes nothing, and if a later tool call
+runs the file the rules see that execution; but an execution that happens outside
+the session (cron picking up the file) was never visible to the gate, and the
+accidental early warning the old false positive provided is gone. Staging
+persistence through a prose write is a candidate for a path-based scope-escalation
+rule, not a reason to scan prose again.

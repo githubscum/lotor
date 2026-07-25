@@ -8,3 +8,8 @@ receipts/
 my-token.json
 *.token.json
 *.mcpb
+
+# MCP registry publisher CLI (downloaded tool, not part of this package)
+mcp-publisher.exe
+mcp-publisher
+mcp-publisher_*.tar.gz

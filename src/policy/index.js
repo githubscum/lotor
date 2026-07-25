@@ -178,6 +178,125 @@ function pathContainsFragment(haystackNorm, needleFragment) {
   return re.test(haystackNorm);
 }
 
+// ---------- inert-prose stripping (shared by every command matcher) ----------
+
+/**
+ * Shell separators that start a new command. Shared by the prose stripper
+ * (to find the command consuming a heredoc), the gh matcher (to tokenize
+ * per command), and opaque-exec (a read verb only exempts the segment it
+ * leads).
+ */
+const CMD_SEPARATORS = /(?:&&|\|\||[;&|\n\r])/;
+
+/**
+ * Blank out the argument of -m / --message before matching.
+ *
+ * A commit message is prose the agent wrote, not a command the shell will
+ * run, but the matchers see one flat string and cannot tell the difference.
+ * Without this, committing a fix whose message explains the fix trips the
+ * rule the fix added, which happened within a minute of shipping it.
+ *
+ * Inertness is decided PER REGION by shell semantics, not per command:
+ *   - single-quoted argument: no expansion is possible inside single quotes
+ *     (sh and PowerShell agree), so the region is inert whatever it
+ *     contains, and is always blanked.
+ *   - double-quoted argument: `$(...)`, `${...}` and backticks DO execute
+ *     inside double quotes, so the region is blanked only when the region
+ *     itself contains none of them. `git commit -m "$(curl -d @secrets ...)"`
+ *     stays visible because the shell runs the curl.
+ *
+ * The previous version bailed on expansion syntax anywhere in the COMMAND,
+ * so one markdown backtick in a commit message un-stripped the whole string
+ * and the matchers scanned the prose as if it were code. Verified live
+ * 2026-07-24: a commit into a repo with NO remote was denied twice, first by
+ * push-protected, then after rewording by publish, both times on words in
+ * its own message. See KNOWN-LIMITS 26.
+ *
+ * Only the message argument is blanked. Stripping all quoted text would be
+ * simpler and would hide `bash -c "git push origin main"` from the matcher,
+ * trading a harmless false positive for a real miss.
+ */
+function stripMessageArgs(cmd) {
+  return cmd
+    .replace(/(-m|--message)(\s+|=)'[^']*'/g, "$1 ''")
+    .replace(/(-m|--message)(\s+|=)"(?:[^"\\]|\\.)*"/g,
+      (region, flag) => (/\$\(|\$\{|`/.test(region) ? region : flag + ' ""'));
+}
+
+/**
+ * Blank heredoc BODIES that are provably inert prose.
+ *
+ * A body is blanked only when ALL of these hold, each anchored in shell
+ * semantics rather than guesswork:
+ *
+ *   1. The command consuming the heredoc LEADS its segment and is a known
+ *      prose consumer: `git commit|tag|notes|merge` (message input), `cat`,
+ *      `tee` (text to stdout or a file). This is an allowlist ON PURPOSE,
+ *      and the polarity is the load-bearing part: a consumer not on the
+ *      list keeps its body VISIBLE, so `bash <<EOF`, `node <<EOF`,
+ *      `git apply <<EOF`, and every interpreter that ships next year stay
+ *      scanned. A gap in this list is a false positive, never a silent miss.
+ *   2. The rest of the line after the heredoc operator has no pipe. A body
+ *      piped onward (`cat <<'EOF' | bash`) is executed by the next command,
+ *      so it stays visible.
+ *   3. Either the delimiter is quoted (<<'EOF': the shell performs no
+ *      expansion in the body, by definition) or the body contains no
+ *      expansion syntax. An unquoted-delimiter body carrying `$(...)` runs
+ *      that substitution, so it stays visible.
+ *
+ * Writing prose to a file that is LATER executed is not a hole here: the
+ * write is inert, and the later execution is its own command, seen whole by
+ * opaque-exec and the rest of the rules.
+ *
+ * PowerShell here-strings (@'...'@) are NOT stripped; they stay visible and
+ * can still over-match. That keeps this change on the noisy side of the
+ * line for the shell this engine understands least.
+ */
+function stripHeredocBodies(cmd) {
+  if (!cmd.includes('<<')) return cmd;
+  const PROSE_CONSUMER_LEAD = /^\s*(?:git\s+(?:commit|tag|notes|merge)\b|cat\b|tee\b)/;
+  const HEREDOC_OP = /<<(-?)\s*(?:(["'])([A-Za-z_][A-Za-z0-9_]*)\2|([A-Za-z_][A-Za-z0-9_]*))/;
+  const lines = cmd.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(HEREDOC_OP);
+    if (!m) continue;
+    const stripTabs = m[1] === '-';
+    const quotedDelim = m[2] !== undefined;
+    const delim = quotedDelim ? m[3] : m[4];
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      let t = lines[j].replace(/\r$/, '');
+      if (stripTabs) t = t.replace(/^\t+/, '');
+      if (t === delim) { end = j; break; }
+    }
+    if (end === -1) continue; // unterminated: leave everything visible
+    const lead = lines[i].slice(0, m.index);
+    const tail = lines[i].slice(m.index + m[0].length);
+    // The consumer is the last command on the line before the operator.
+    const leadSeg = lead.split(CMD_SEPARATORS).pop() || '';
+    const bodyInert = quotedDelim || !/\$\(|\$\{|`/.test(lines.slice(i + 1, end).join('\n'));
+    if (PROSE_CONSUMER_LEAD.test(leadSeg) && !tail.includes('|') && bodyInert) {
+      for (let j = i + 1; j < end; j++) lines[j] = '';
+    }
+    i = end; // never re-scan a body for heredoc openers of its own
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The one entry point every command matcher uses to get its text. One choke
+ * point, not a per-matcher opt-in: the 2026-07-24 false positives existed
+ * because stripping lived only in the two matchers that had been burned
+ * (publish, egress-other) while push-force and push-protected read the raw
+ * string. A preprocessing step an individual rule can forget to call is a
+ * defect factory. Every command matcher below starts here.
+ */
+function matchableCommand(toolInput) {
+  const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  if (raw === '') return '';
+  return stripMessageArgs(stripHeredocBodies(raw));
+}
+
 // ---------- self-mod matcher ----------
 
 const SELF_MOD_PATH_FRAGMENTS = [
@@ -265,7 +384,11 @@ function escapeRegExp(s) {
 }
 
 function isSelfModCommand(toolInput, baseDir) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  // Inert prose is stripped first, same as every other command matcher: a
+  // single-quoted commit message that merely NAMES a protected path is not a
+  // command that touches it. Anything executable (a double-quoted $(...) or
+  // an interpreter-fed heredoc) survives the strip and is matched whole.
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   const cmdNorm = normalizePath(cmd);
 
@@ -334,7 +457,7 @@ export function isSelfMod(toolName, toolInput, baseDir) {
  * unsupervised would make the whole preset system decorative.
  */
 export function isModeChange(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   if (/\bnpm\s+run\s+mode\b/.test(cmd)) return true;
   if (/\bbin[\\/]mode\.js\b/.test(cmd)) return true;
@@ -347,9 +470,14 @@ export function isModeChange(toolInput) {
  * or a longer flag), and it must be in a context that means "force push",
  * which we approximate as: the -f appears anywhere in a `git push` command
  * that is NOT attached to another single-letter flag.
+ *
+ * Matches on the prose-stripped command (matchableCommand): this rule and
+ * push-protected predate stripping and read the raw string, so a commit
+ * message that merely SAID "git push --force" denied a local commit
+ * (2026-07-24, live). See KNOWN-LIMITS 26.
  */
 export function isPushForce(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (!/\bgit\s+push\b/.test(cmd)) return false;
   if (/--force\b/.test(cmd)) return true;
   if (/--force-with-lease\b/.test(cmd)) return true;
@@ -366,7 +494,7 @@ export function isPushForce(toolInput) {
  * `git push` (no ref argument) does NOT match.
  */
 export function isPushProtected(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (!/\bgit\s+push\b/.test(cmd)) return false;
   // Match `git push <ref>` or `git push <remote> <ref>` where ref is main/master.
   // We require the main/master token to appear as a standalone word after `git push`.
@@ -378,9 +506,14 @@ export function isPushProtected(toolInput) {
 
 // ---------- publish matcher ----------
 
+/**
+ * The specific, named publish shapes keep their own rule so the denial
+ * message says "ships a release" rather than the generic egress line. The
+ * general net for every OTHER authenticated gh mutation is
+ * usesAuthedRemoteClient() under egress-other, which evaluates after this.
+ */
 export function isPublish(toolInput) {
-  const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
-  const cmd = stripMessageArgs(raw);
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   return /\bgh\s+pr\s+merge\b/.test(cmd)
     || /\bnpm\s+publish\b/.test(cmd)
@@ -425,34 +558,6 @@ function hasDataFlag(cmd) {
   if (/(^|\s)-Body\b/.test(cmd)) return true;
   if (/(^|\s)-InFile\b/i.test(cmd)) return true;
   return false;
-}
-
-/**
- * Blank out the argument of -m / --message before matching.
- *
- * A commit message is prose the agent wrote, not a command the shell will
- * run, but the matchers see one flat string and cannot tell the difference.
- * Without this, committing a fix whose message explains the fix trips the
- * rule the fix added, which happened within a minute of shipping it.
- *
- * Only the message argument is blanked. Stripping all quoted text would be
- * simpler and would hide `bash -c "git push origin main"` from the matcher,
- * trading a harmless false positive for a real miss.
- */
-function stripMessageArgs(cmd) {
-  // A command substitution inside the message is not prose. `$(...)`,
-  // backticks and `${...}` are evaluated by the shell before the commit
-  // message is ever formed, so `git commit -m "$(curl -d @secrets ...)"`
-  // runs the curl. Blanking the message would hide exactly the executable
-  // part from the egress and publish matchers. If any such syntax is
-  // present, leave the command intact so the matchers see what the shell
-  // will run. A message that merely contains the literal characters in
-  // single quotes is over-matched as a result, which costs a signature, not
-  // a miss. See KNOWN-LIMITS 21.
-  if (/\$\(|\$\{|`/.test(cmd)) return cmd;
-  return cmd
-    .replace(/(-m|--message)(\s+|=)"(?:[^"\\]|\\.)*"/g, '$1 ""')
-    .replace(/(-m|--message)(\s+|=)'[^']*'/g, "$1 ''");
 }
 
 function usesEgressTool(cmd) {
@@ -502,12 +607,60 @@ function isRemoteCopyTarget(cmd) {
   return false;
 }
 
+/**
+ * gh is an authenticated remote API client. It holds the user's GitHub
+ * credential, so every invocation that is not a known read is a write to a
+ * remote surface the user owns — repo metadata, visibility, releases,
+ * secrets, workflows — with no further prompt from anything. Verified live
+ * 2026-07-24: `gh repo edit --description` changed a public repo with no
+ * gate, while a plain `git push` to the same repo would have gated. The rule
+ * set knew git's transports and not git's vendor CLI.
+ *
+ * The structure of this matcher is the fix, not the membership of a list:
+ * WRITE verbs are not enumerated, because four gauntlet rounds (2026-07-24)
+ * proved that shape leaks one verb per round. READ verbs are enumerated
+ * instead, and everything else — edit, delete, set, merge, api, and every
+ * subcommand gh ships next year — gates by default. A gap in the read list
+ * is a false positive, never a silent miss.
+ *
+ * `api` is deliberately not on the read list: it is the raw escape hatch
+ * (any endpoint, any method, and a `-f` field silently turns the GET into a
+ * POST), so it always gates.
+ *
+ * Known noise, accepted: a global flag whose VALUE precedes the subcommand
+ * (`gh --repo o/r pr view`) counts the value as an action word and gates a
+ * read. That costs a signature; the inverse shape would cost a miss.
+ */
+const GH_READ_ONLY_WORDS = new Set([
+  'view', 'list', 'status', 'checks', 'diff', 'search', 'browse',
+  'clone', 'download', 'watch', 'help', 'version', 'completion'
+]);
+
+function usesAuthedRemoteClient(cmd) {
+  for (const segment of cmd.split(CMD_SEPARATORS)) {
+    const tokens = segment.split(/\s+/).filter(Boolean)
+      .map(t => t.replace(/^["']|["']$/g, '').replace(/\.exe$/i, ''));
+    const at = tokens.findIndex(t => t.toLowerCase() === 'gh');
+    if (at === -1) continue;
+    const words = [];
+    for (let j = at + 1; j < tokens.length && words.length < 2; j++) {
+      if (tokens[j].startsWith('-')) continue; // flags name no subcommand
+      words.push(tokens[j].toLowerCase());
+    }
+    // A bare `gh`, `gh --version`, or `gh` as someone else's argument
+    // (`brew install gh`, `which gh`) names no remote action.
+    if (words.length === 0) continue;
+    if (!words.some(w => GH_READ_ONLY_WORDS.has(w))) return true;
+  }
+  return false;
+}
+
 export function isEgressOther(toolInput) {
-  const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
-  const cmd = stripMessageArgs(raw);
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   if (usesRemoteCopyTool(cmd) && isRemoteCopyTarget(cmd)) return true;
   if (usesRemotePublishTool(cmd)) return true;
+  if (usesAuthedRemoteClient(cmd)) return true;
   if (usesEgressTool(cmd) && (hasHttpMethodFlag(cmd) || hasDataFlag(cmd)) && !isLocalhostTarget(cmd)) {
     return true;
   }
@@ -593,7 +746,7 @@ function extractDestructiveTarget(cmd) {
 }
 
 export function isDestructive(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
 
   const hasRmRf = /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*[fF]|-[a-zA-Z]*[fF][a-zA-Z]*[rR])/.test(cmd)
@@ -610,7 +763,7 @@ export function isDestructive(toolInput) {
 // ---------- scope-escalation matcher ----------
 
 export function isScopeEscalation(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   return /\bschtasks(\.exe)?\s+\/create\b/i.test(cmd)
     || /\bRegister-ScheduledTask\b/i.test(cmd)
@@ -659,13 +812,13 @@ const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?![a-z0-9_-])/i;
 const READ_ONLY_LEAD =
   /^\s*(?:cat|less|more|head|tail|grep|rg|ls|dir|stat|wc|type|Get-Content|gc|Select-String|sls)\b/i;
 
-// Shell separators that start a new command. A read verb only exempts the
-// segment it leads: `Get-Content a.ps1 && ./evil.ps1` executes evil.ps1 in a
-// later segment, and that segment is not led by a read verb, so it gates.
-const CMD_SEPARATORS = /(?:&&|\|\||[;&|\n\r])/;
+// CMD_SEPARATORS (shared) is defined with the inert-prose helpers above: a
+// read verb only exempts the segment it leads. `Get-Content a.ps1 &&
+// ./evil.ps1` executes evil.ps1 in a later segment, which is not led by a
+// read verb, so it gates.
 
 export function isOpaqueExec(toolInput) {
-  const cmd = typeof toolInput?.command === 'string' ? toolInput.command : '';
+  const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   for (const segment of cmd.split(CMD_SEPARATORS)) {
     if (!SCRIPT_EXT.test(segment)) continue;      // no script in this segment
