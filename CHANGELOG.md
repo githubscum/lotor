@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.1 — 2026-07-25 — the manifest was lying about the server
+
+Found by smoke-testing the published npm package instead of the local
+checkout, which is the only way this class of defect shows up.
+
+**The server reported itself as version `0.0.0` to every client that
+connected.** `manifest.json` had never been bumped off its placeholder, and it
+is what the server reads at startup. The npm package and the registry entry
+both said 1.0.0 while the running process said 0.0.0, so any client listing its
+MCP servers displayed the wrong one.
+
+**The manifest declared three tools and the server serves four.** `lotor_status`
+was missing, which is the tool that tells you whether the gate is actually
+armed. A client reading the manifest rather than calling `tools/list` would not
+know the status check existed.
+
+Also corrected the manifest description, which still carried the pre-launch
+wording rather than the one used on npm, the registry, and the repo.
+
+Nothing about enforcement, signing, or the chain changed in this release.
+
 ## 2026-07-23 (later) — herding modes, and a denial message that never varies by model
 
 Two changes, one motivation: the experience of hitting the gate should be

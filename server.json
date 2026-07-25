@@ -3,7 +3,7 @@
   "name": "io.github.githubscum/lotor",
   "title": "Lotor",
   "description": "A local receipt and approval gate for AI agent sessions. The agent can act, but it cannot sign.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "repository": {
     "url": "https://github.com/githubscum/lotor",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "lotor-mcp",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "transport": {
         "type": "stdio"
       }
