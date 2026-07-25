@@ -56,8 +56,8 @@ outside reader can see, reproduce, and reason about without a tour of the
 internals. They are not the load-bearing crypto. The full list of what is wrong
 with Lotor, including the parts that need no bounty because they need a signature
 instead, lives in [KNOWN-LIMITS.md](https://github.com/githubscum/lotor/blob/main/KNOWN-LIMITS.md).
-If you read that file and come back with a twenty-third entry, you have done
-something better than close a bounty. You have proven the thesis.
+If you read that file and come back with something that is not on it, you have
+done something better than close a bounty. You have proven the thesis.
 
 ## The board
 
