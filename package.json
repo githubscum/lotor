@@ -2,7 +2,27 @@
   "name": "lotor",
   "version": "1.0.0",
   "type": "module",
-  "description": "Local-first receipt layer for AI agent sessions",
+  "description": "A local receipt and approval gate for AI agent sessions. The agent can act, but it cannot sign.",
+  "mcpName": "io.github.githubscum/lotor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/githubscum/lotor.git"
+  },
+  "homepage": "https://ikeanalytics.com/lotor/",
+  "bin": {
+    "lotor": "src/mcp/server.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "confessions/",
+    "manifest.json",
+    "README.md",
+    "KNOWN-LIMITS.md",
+    "CHANGELOG.md",
+    "MCP-SETUP.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -25,7 +45,16 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
-  "keywords": [],
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "audit",
+    "receipts",
+    "agent",
+    "agent-security",
+    "local-first",
+    "claude-code"
+  ],
   "author": "githubscum",
   "license": "Apache-2.0"
 }
