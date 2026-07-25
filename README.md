@@ -1,10 +1,12 @@
 # Lotor
 
-A local-first, MCP-native receipt layer for AI agent sessions.
+A local receipt and approval gate for AI agent sessions. The agent can act, but it cannot sign.
 
 ## What it is
 
 This tool writes a signed, tamper-evident log of what an agent did during a session: actions performed, files touched, messages sent, costs incurred, failures encountered. The log lives on your machine, in a format you can inspect, verify, and archive. It does not attempt to prove the agent's actions were correct, only to record them faithfully and make any subsequent tampering detectable.
+
+It also gates the actions you choose. Those stop and wait for an approval signed with a passphrase the model has never seen and cannot derive, so an agent can request a consequential action but cannot authorize one. That is the whole of the tagline: it can act, it cannot sign.
 
 ## The other half of reliability
 
