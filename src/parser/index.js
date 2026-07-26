@@ -39,7 +39,8 @@ function parseSession(jsonlText) {
     outputTokens: 0,
     cacheCreationTokens: 0,
     cacheReadTokens: 0,
-    note: 'tokens only; no USD in source'
+    note: 'tokens only; no USD in source',
+    byModel: {} // { "<model-id>": { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, messages } }
   };
   const sent = {
     items: [],
@@ -71,10 +72,33 @@ function parseSession(jsonlText) {
         if (!seenUsageKeys.has(usageKey)) {
           seenUsageKeys.add(usageKey);
           assistantMessages++;
-          cost.inputTokens += entry.message.usage.input_tokens || 0;
-          cost.outputTokens += entry.message.usage.output_tokens || 0;
-          cost.cacheCreationTokens += entry.message.usage.cache_creation_input_tokens || 0;
-          cost.cacheReadTokens += entry.message.usage.cache_read_input_tokens || 0;
+          const input = entry.message.usage.input_tokens || 0;
+          const output = entry.message.usage.output_tokens || 0;
+          const cacheCreate = entry.message.usage.cache_creation_input_tokens || 0;
+          const cacheRead = entry.message.usage.cache_read_input_tokens || 0;
+          cost.inputTokens += input;
+          cost.outputTokens += output;
+          cost.cacheCreationTokens += cacheCreate;
+          cost.cacheReadTokens += cacheRead;
+          // Per-model breakdown. A message with no model field lands in the
+          // "unknown" bucket rather than being dropped; a sum across buckets
+          // is intentionally not produced (see KNOWN-LIMITS #13).
+          const modelKey = entry.message.model || 'unknown';
+          if (!cost.byModel[modelKey]) {
+            cost.byModel[modelKey] = {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheCreationTokens: 0,
+              cacheReadTokens: 0,
+              messages: 0
+            };
+          }
+          const bucket = cost.byModel[modelKey];
+          bucket.inputTokens += input;
+          bucket.outputTokens += output;
+          bucket.cacheCreationTokens += cacheCreate;
+          bucket.cacheReadTokens += cacheRead;
+          bucket.messages += 1;
         }
       }
 
@@ -161,7 +185,7 @@ function parseSession(jsonlText) {
     ran,
     touched: Array.from(touched.entries()).map(([path, meta]) => ({ path, ...meta })),
     failed,
-    cost: { ...cost, schema: 'cost/2' },
+    cost: { ...cost, schema: 'cost/3' },
     sent,
     counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };

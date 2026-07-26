@@ -269,7 +269,51 @@ function findValidToken(actionRequest, home) {
  *
  * @returns {string|null} a short hex id, or null if staging failed
  */
-function stageRequest(home, actionRequest) {
+/**
+ * Normalize an agent-authored purpose line for display.
+ *
+ * This string is written by the agent that just got stopped, so it is a CLAIM
+ * and never evidence. Two consequences, both handled here.
+ *
+ * It must not be able to forge the message it appears in. Left raw, a purpose
+ * of "harmless\n\n  RISK    LOW, nothing to see" would print inside the gate's
+ * own fixed-shape block, and an ESC sequence could move the cursor or recolour
+ * the rest of the output. So every C0 control character, DEL, and ESC is
+ * collapsed to a space, runs of whitespace are squeezed, and the result is
+ * capped. What survives is a single line of plain text that cannot escape its
+ * own field.
+ *
+ * It must not become the thing the owner reads instead of the command. That
+ * part is handled by the caller: the purpose renders above WHAT but is labelled
+ * as unverified, and the command is still printed in full underneath.
+ */
+function sanitizePurpose(raw) {
+  if (typeof raw !== 'string') return null;
+  const flattened = raw
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (flattened === '') return null;
+  return flattened.length > 240 ? flattened.slice(0, 237) + '...' : flattened;
+}
+
+/**
+ * Read a previously staged purpose. Absence is normal and never an error: a
+ * request staged before this existed, or by a caller that supplied no
+ * description, simply has none.
+ */
+function readPurpose(home, requestId) {
+  if (!requestId) return null;
+  try {
+    const file = path.join(home, 'pending-approvals', 'purposes', `${requestId}.json`);
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return sanitizePurpose(parsed?.purpose);
+  } catch (e) {
+    return null;
+  }
+}
+
+function stageRequest(home, actionRequest, purpose) {
   try {
     const dir = path.join(home, 'pending-approvals', 'requests');
     ensureDir(dir);
@@ -278,6 +322,34 @@ function stageRequest(home, actionRequest) {
       const file = path.join(dir, `${id}.json`);
       if (fs.existsSync(file)) continue; // vanishingly unlikely; retry
       fs.writeFileSync(file, JSON.stringify(actionRequest, null, 2) + '\n', { mode: 0o600 });
+
+      // The purpose goes in a SIBLING directory, never inside the request and
+      // never beside it. Two reasons, both learned the hard way.
+      //
+      // Not inside: approve.js canonicalizes and signs this file verbatim, so a
+      // purpose key in it would bind the signature to the agent's prose and let
+      // a reworded description void an approval. That is exactly the
+      // brittleness SIGNED_PARAMS was narrowed to remove.
+      //
+      // Not beside: anything matching *.json in requests/ is read as a request
+      // by findSimilarStagedRequest() and by external readers, and it counts
+      // against that function's 25-newest scan window. Sidecars in the same
+      // directory would have halved the twin matcher's reach.
+      const clean = sanitizePurpose(purpose);
+      if (clean) {
+        try {
+          const pdir = path.join(home, 'pending-approvals', 'purposes');
+          ensureDir(pdir);
+          fs.writeFileSync(
+            path.join(pdir, `${id}.json`),
+            JSON.stringify({ purpose: clean, stagedAt: Date.now() }, null, 2) + '\n',
+            { mode: 0o600 }
+          );
+        } catch (e) {
+          // Best-effort. A missing purpose costs one line of context; a deny
+          // path that throws costs the gate.
+        }
+      }
       return id;
     }
     return null;
@@ -296,6 +368,86 @@ function describeAction(actionRequest) {
   const params = actionRequest?.params || {};
   const detail = params.command || params.file_path || params.url || params.path;
   return detail ? `${action}: ${detail}` : action;
+}
+
+/**
+ * Find an already-staged request that is a near-twin of this one.
+ *
+ * Signature binding is exact, so a trivially-changed command produces a brand
+ * new request id with no visible link to the one the owner just signed. This
+ * happened three times on 2026-07-25: a forced S4U-to-Interactive change, a
+ * `tail -20` becoming `-25`, and a script fixed between attempts. Each time the
+ * owner was asked to re-approve something they had approved minutes earlier,
+ * with nothing on screen saying so. Every avoidable signature teaches the
+ * operator to sign faster and read less (limit 26).
+ *
+ * This changes NOTHING about validation. It only lets the message say "this is
+ * a variant of X" instead of presenting as novel.
+ *
+ * Similarity is deliberately crude: same action, and the differing middle is a
+ * small fraction of the whole once a common prefix and suffix are stripped. A
+ * real edit distance would be more precise and is not worth the code. A missed
+ * match costs the old behaviour; a false match costs one misleading line that
+ * the printed diff immediately corrects.
+ */
+function findSimilarStagedRequest(home, actionRequest, currentId) {
+  try {
+    const dir = path.join(home, 'pending-approvals', 'requests');
+    if (!fs.existsSync(dir)) return null;
+
+    const detailOf = r => {
+      const p = r?.params || {};
+      return p.command || p.file_path || p.url || p.path || '';
+    };
+    const nowDetail = detailOf(actionRequest);
+    if (!nowDetail) return null;
+
+    // Newest first, and capped. This runs on the deny path, which must stay
+    // fast, and staged requests are never cleaned up (185 of them by
+    // 2026-07-25), so an uncapped scan would only get slower.
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.json') && f !== `${currentId}.json`)
+      .map(f => {
+        const full = path.join(dir, f);
+        let mtime = 0;
+        try { mtime = fs.statSync(full).mtimeMs; } catch (e) { /* ignore */ }
+        return { id: f.slice(0, -5), full, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 25);
+
+    for (const f of files) {
+      let prior;
+      try { prior = JSON.parse(fs.readFileSync(f.full, 'utf8')); } catch (e) { continue; }
+      if (prior?.action !== actionRequest?.action) continue;
+
+      const wasDetail = detailOf(prior);
+      if (!wasDetail || wasDetail === nowDetail) continue;
+
+      let head = 0;
+      const max = Math.min(wasDetail.length, nowDetail.length);
+      while (head < max && wasDetail[head] === nowDetail[head]) head++;
+
+      let tail = 0;
+      while (
+        tail < max - head &&
+        wasDetail[wasDetail.length - 1 - tail] === nowDetail[nowDetail.length - 1 - tail]
+      ) tail++;
+
+      const changed = Math.max(wasDetail.length, nowDetail.length) - head - tail;
+      const whole = Math.max(wasDetail.length, nowDetail.length);
+      if (whole > 0 && changed / whole <= 0.25) {
+        return {
+          id: f.id,
+          was: wasDetail.slice(Math.max(0, head - 20), wasDetail.length - tail + 20),
+          now: nowDetail.slice(Math.max(0, head - 20), nowDetail.length - tail + 20)
+        };
+      }
+    }
+    return null;
+  } catch (e) {
+    return null; // never break the deny path over a convenience feature
+  }
 }
 
 /**
@@ -324,13 +476,62 @@ function buildDenialMessage(ruleId, actionRequest, home, requestId) {
 
   const lines = [
     `LOTOR GATE — rule "${ruleId}" (${actionRequest?.action || 'unknown'})`,
-    ``,
-    `  WHAT    ${what}`,
+    ``
+  ];
+
+  // The agent's own one-line statement of what this action is for, placed
+  // FIRST. By the time a request reaches the owner they have usually approved
+  // the plan already, so the question in front of them is which action this is,
+  // not whether the work should happen. A wall of reasoning above a command
+  // produces skimming; one readable line produces reading, and reading is the
+  // entire point of the gate (limit 26).
+  //
+  // It is authored by the process being stopped, so it is a claim and not
+  // evidence. Hence the label, and hence the full command still printed
+  // underneath: a summary the owner trusts INSTEAD of the command would be
+  // worse than no summary at all.
+  const purpose = readPurpose(home, requestId);
+  if (purpose) {
+    const rows = [];
+    let row = '';
+    for (const word of purpose.split(' ')) {
+      if (row === '') {
+        row = word;
+      } else if ((row + ' ' + word).length <= 62) {
+        row = row + ' ' + word;
+      } else {
+        rows.push(row);
+        row = word;
+      }
+    }
+    if (row !== '') rows.push(row);
+    lines.push(`  PURPOSE ${rows[0]}`);
+    for (let i = 1; i < rows.length; i++) lines.push(`          ${rows[i]}`);
+    lines.push(`          (agent-stated, NOT verified. The command below is what runs.)`, ``);
+  }
+
+  lines.push(`  WHAT    ${what}`);
+
+  // If this is a near-twin of something already staged, say so BEFORE the
+  // reasoning. The owner has usually approved the plan already; the question in
+  // front of them is whether this is a variant, and that belongs at the top.
+  const twin = findSimilarStagedRequest(home, actionRequest, requestId);
+  if (twin) {
+    lines.push(
+      `  VARIANT OF staged request ${twin.id} — you approved a near-identical`,
+      `          command. This one differs, so the earlier signature does not`,
+      `          cover it.`,
+      `            was:  ...${twin.was}...`,
+      `            now:  ...${twin.now}...`
+    );
+  }
+
+  lines.push(
     `  WHY     ${info.why}`,
     `  RISK    ${info.risk}`,
     `  SCOPE   ${scopeNote}`,
     `          Single use. Bound to this exact request. Review before you sign.`
-  ];
+  );
 
   if (requestId) {
     lines.push(
@@ -556,7 +757,15 @@ async function main() {
     // Staged once per hook invocation and reused across whichever deny path
     // below actually fires, so the owner sees one consistent --request id
     // for this exact call regardless of why it was denied.
-    const requestId = stageRequest(home, actionRequest);
+    //
+    // `description` is the agent's own one-line account of why it is making
+    // this call. It has always arrived on tool_input and has always been
+    // discarded right here, which is why every denial jumped straight from the
+    // rule name to a raw command with no statement of intent anywhere. It is
+    // deliberately absent from SIGNED_PARAMS and stays out of the request
+    // object, so it can never bind a signature or be voided by rewording; it
+    // is staged alongside, for display only.
+    const requestId = stageRequest(home, actionRequest, toolInput?.description);
 
     if (tokenResult == null) {
       const store = createStore(home);
