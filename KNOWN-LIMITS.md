@@ -973,3 +973,67 @@ Not fixed. The fix is small and has precedent: a sidecar at
 `pending-approvals/rules/<id>.json`, written at staging time and read back the same way
 `readPurpose()` already reads the `purpose` sidecar. Until then, a live token in the
 ledger tells you what it would do and how old it is, not which rule put it there.
+
+## 33. A signed command string is executed by a shell, so an approved commit message can run commands
+
+Found 2026-07-26, by writing one. A commit message explaining why `bin/charter.js`
+must be protected contained the text `` `echo x > bin/charter.js` `` as an example.
+Inside a double-quoted `-m` argument in `bash`, backticks are **command
+substitution**. Running that command would have created the exact file the message
+argues must never be created unsigned, silently, as a side effect of describing the
+hazard.
+
+**The gate does not help here, and that is the entry.** A signature covers the whole
+command string. Once the owner approves it, everything inside it runs under that
+approval, including any `` ` `` or `$(...)` embedded in what looks like prose. The
+matcher can flag the text — it did, which is how this surfaced — but flagging is not
+the same as understanding, and an approved command is an approved command.
+
+**Distinct from limit 26, and sharper.** Limit 26 is about prose being *scanned as
+code* and producing false positives; the cost there is friction. This is prose that
+*is* code, and the cost is execution under the owner's signature. The two look
+similar in a denial message and are opposite in consequence.
+
+**The messy part, recorded because it is the honest bit.** The fix was to escape the
+backticks, which meant changing a command after it had been staged and signed —
+directly against the byte-identical-retry rule that limit 27 exists to enforce. That
+rule assumes the staged command is correct. When it is not, faithfully reproducing a
+defect is the wrong reading, and the resolution is a fresh signature on the corrected
+command plus clearing the old token, because an unspent token authorizing the
+dangerous version is a live authorization to run it later (limit 30). Both were done.
+**A rule that says never change a staged command needs an explicit exception for
+"the staged command is unsafe", or it will eventually be used to argue for executing
+something known to be wrong.**
+
+Not fixed. Candidate mitigations, none built: refuse to stage any command containing
+unquoted `` ` `` or `$(` outside single quotes; prefer `--file` for commit messages
+so message text never becomes shell input; or render the staged command with
+substitutions highlighted so the owner sees them as executable rather than as prose.
+The first is a matcher and inherits limit 21; the second is a workflow change and is
+probably the honest answer.
+
+## 34. The self-mod matcher decides by path fragment, when a path could be resolved
+
+Recorded 2026-07-26 alongside the `bin/` fix, as the better answer that was not taken.
+
+`isSelfModEdit` matches by substring against a hand-maintained fragment list.
+`core-paths.js` answers the same question by **resolving** the path and proving
+containment, refusing anything it cannot place. Those are not equally good: the first
+is a list someone must remember to update, the second is a decision procedure. The
+`bin/` gap existed precisely because the list drifted from `CORE_DIRS`, and it was
+closed by adding a smarter regex, which is a better list and still a list.
+
+**The asymmetry that makes the better fix available:** `Edit`, `Write` and
+`NotebookEdit` all carry a `file_path`, and **a path can be proven contained**. So
+the edit path could call `classifyPath` and gate anything not `grantable`, deleting
+the drift for file operations entirely. Commands cannot do this — deciding what a
+shell command touches needs a grammar, not a resolver — so the fragment list stays
+correct there and only there.
+
+Not done because it couples `src/policy` to `src/grant`, and that coupling deserves
+its own review rather than riding along with an incident fix. **The residual until
+then:** a new core *directory* outside `src/` and `bin/` is non-delegable per
+`core-paths.js` and ungated by self-mod until someone adds a fragment. The `src/`
+side has a guard (`test/core-classification.test.js` fails on an unclassified
+directory) and `bin/` is now covered by pattern. Anywhere else is still list-shaped,
+and a list is only as good as the last person to remember it.
