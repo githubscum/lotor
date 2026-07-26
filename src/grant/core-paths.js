@@ -46,7 +46,22 @@ const CORE_DIRS = Object.freeze([
   'src/policy',   // what the rules ARE
   'src/chain',    // the append-only log's integrity
   'src/store',    // where the log and the keys live on disk
-  'src/grant'     // this machinery, at its final Part B location
+  'src/grant',    // this machinery, at its final Part B location
+  // Charters authorize a reviewed plan once instead of N commands, and
+  // sub-charters carve narrower scopes out of a signed parent. Anything able
+  // to edit the enumeration hash, the coverage check or the narrowing proof
+  // could mint authority rather than merely spend it, which is the same
+  // one-hop escalation this file exists to prevent.
+  //
+  // Added 2026-07-26, and the omission is the lesson. src/charter was written
+  // the night before WITHOUT a single signature, because a new directory
+  // under src/ is grantable by default (see the residual gap below). A new
+  // authorization module is therefore protected only if someone remembers to
+  // protect it, which is the wrong polarity: this list should be one that
+  // every new auth module is added TO, not one it must be noticed as missing
+  // from. The drift-guard test that keeps this list in step with the policy
+  // fragments could not help, because both lists were wrong together.
+  'src/charter'
 ]);
 
 /** Individual core files that do not live under a core directory. */

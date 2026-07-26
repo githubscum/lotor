@@ -299,13 +299,12 @@ function matchableCommand(toolInput) {
 
 // ---------- self-mod matcher ----------
 
-const SELF_MOD_PATH_FRAGMENTS = [
-  '.claude/settings.json',
-  'src/gate/',
-  'src/policy/',
-  // bin/hook-*.js — handled separately as a regex so it matches hook-session-end.js etc.
-  // <baseDir>/keys/ and <baseDir>/policy.json — handled with dynamic baseDir.
-];
+// SELF_MOD_PATH_FRAGMENTS was deleted 2026-07-26. It was declared here and
+// referenced nowhere in the repo, and it enforced nothing: three entries that
+// read like the authoritative core list sitting immediately above the live one
+// in selfModFragmentsForBase(). The hazard was not the dead code, it was that
+// adding a path to it would FEEL like protection and buy none, which is the
+// most expensive kind of wrong a security list can be. Live list below.
 
 /**
  * Build the set of self-mod fragments that depend on baseDir (Lotor home).
@@ -325,6 +324,14 @@ function selfModFragmentsForBase(baseDir) {
     'src/chain/',
     'src/store/',
     'src/grant/',
+    // Added 2026-07-26 alongside core-paths.js CORE_DIRS. Charters authorize a
+    // reviewed plan once instead of N commands; sub-charters carve narrower
+    // scopes from a signed parent. Editing the enumeration hash, the coverage
+    // check or the narrowing proof would mint authority rather than spend it.
+    // The module was written the night before with no signature at all, since
+    // a new directory under src/ is grantable by default. The drift guard
+    // could not catch that: both lists were wrong together.
+    'src/charter/',
     'src/home.js',
     'src/registration.js',
     // Core bin scripts by exact name, so `/usr/bin/...` and `node_modules/.bin`
