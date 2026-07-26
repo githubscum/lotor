@@ -183,6 +183,54 @@ async function createApprovalToken(actionRequest, baseDir = DEFAULT_BASE_DIR) {
 }
 
 /**
+ * Sign an arbitrary buffer with the owner's approval key.
+ *
+ * WHY THIS IS HERE AND NOT IN THE CALLER
+ *   A charter is signed with the same key as an approval token, over different
+ *   bytes. The caller could derive the key itself: the salt, iteration count and
+ *   digest are all exported. It must not. A second implementation of the
+ *   passphrase-to-key path is a second place for it to drift, and the one thing
+ *   this file exists to keep in exactly one place is the step between the
+ *   owner's passphrase and a private key. Callers hand over bytes and receive a
+ *   signature; they never touch the seed.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO
+ *   No nonce, no timestamp, no canonicalization. Those belong to the approval
+ *   TOKEN format and are wrong for anything else — a charter carries its own
+ *   sign-data and its own replay properties. This signs the bytes it is given
+ *   and nothing more, so a caller cannot accidentally inherit token semantics
+ *   for a thing that is not a token.
+ *
+ * The passphrase check is the same one createApprovalToken makes: derive, then
+ * confirm the derived public half matches the stored one, and refuse otherwise.
+ * A typo must fail here rather than produce a signature nothing can verify.
+ *
+ * @param {Buffer} buf - the exact bytes to sign
+ * @param {string} baseDir - Base directory (default: '.')
+ * @returns {Promise<string>} hex signature
+ */
+async function signWithApprovalKey(buf, baseDir = DEFAULT_BASE_DIR) {
+  if (!Buffer.isBuffer(buf) || buf.length === 0) {
+    throw new Error('signWithApprovalKey needs a non-empty Buffer');
+  }
+
+  const pub = loadApprovalPubkey(baseDir);
+  const passphrase = await promptPassphrase(false);
+  const seed = crypto.pbkdf2Sync(passphrase, SALT, PBKDF2_ITER, PBKDF2_KEYLEN, PBKDF2_DIGEST);
+
+  const jwkPriv = { crv: 'Ed25519', d: base64url(seed), x: pub.b64, kty: 'OKP' };
+  const privKeyObj = crypto.createPrivateKey({ key: jwkPriv, format: 'jwk' });
+  const derivedPub = crypto.createPublicKey(privKeyObj).export({ format: 'jwk', type: 'public' });
+
+  if (derivedPub.x !== pub.b64) {
+    console.error('error: passphrase does not match the stored public key.');
+    process.exit(3);
+  }
+
+  return crypto.sign(null, buf, privKeyObj).toString('hex');
+}
+
+/**
  * JSON.stringify replacer that sorts object keys alphabetically at all levels.
  * Used for deterministic canonicalization.
  */
@@ -233,6 +281,7 @@ function recordNonce(nonce, baseDir = DEFAULT_BASE_DIR) {
 export {
   init,
   createApprovalToken,
+  signWithApprovalKey,
   loadApprovalPubkey,
   canonicalizeRequest,
   sortKeysReplacer,

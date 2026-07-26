@@ -357,8 +357,34 @@ function isSelfModEdit(toolName, toolInput, baseDir) {
   const fp = normalizePath(toolInput?.file_path || '');
   if (fp === '') return false;
 
-  // bin/hook-*.js
-  if (/(\/|^)bin\/hook-[^/]+\.js$/.test(fp)) {
+  // Every script in bin/, not just the hooks.
+  //
+  // FOUND 2026-07-26, BY WALKING INTO IT. Writing a new file at bin/charter.js
+  // succeeded with no signature. core-paths.js treats ALL of bin/ as core, but
+  // this matcher gated it by exact filename (approve, setup, mode, gate, view)
+  // plus a hook-* regex, so anything else in bin/ was unprotected. Four files
+  // shipped in the two days before this — tokens.js, inflight.js, retcon.js,
+  // export-chain.js — were editable unsigned, and an edit to retcon.js the
+  // night before had gone through without anyone noticing it should not have.
+  //
+  // WHY IT MATTERED MORE THAN THE COUNT SUGGESTS. The file about to be created
+  // was bin/charter.js, which PRINTS A CHARTER FOR THE OWNER TO READ IMMEDIATELY
+  // BEFORE THEY TYPE THEIR PASSPHRASE. Editable-unsigned, an agent could change
+  // what the owner reads without changing what they sign, producing a valid
+  // signature over an enumeration they were shown a doctored version of. That is
+  // the signing ceremony compromised at its strongest point.
+  //
+  // WHY A REGEX AND NOT A BARE 'bin/' FRAGMENT: a substring 'bin/' sweeps in
+  // /usr/bin and node_modules/.bin. The lookbehind refuses a preceding '.' or
+  // word character, so '.bin/x.js' and 'sbin/x.js' do not match while 'bin/x.js'
+  // and '/repo/bin/x.js' do. Extensions are enumerated rather than left open so
+  // a data file dropped in bin/ is not gated as code.
+  //
+  // The deeper fix is to resolve the path and ask core-paths.js directly, since
+  // an Edit carries a file_path and a path can be PROVEN contained. That couples
+  // this module to the grant module and is a larger change; recorded in
+  // KNOWN-LIMITS rather than done here.
+  if (/(?<![.\w])bin\/[^/]+\.(js|mjs|cjs|ps1|sh)$/.test(fp)) {
     return true;
   }
 
@@ -437,8 +463,25 @@ function isSelfModCommand(toolInput, baseDir) {
     /(\$\{?(env:)?lotor_home\}?|%lotor_home%)/.test(cmdNorm);
   if (refsLotorHome) return true;
 
-  // bin/hook-*.js anywhere in the command
-  if (cmdNorm.match(/bin\/hook-[^/\s'"]+\.js/)) return true;
+  // Any script in bin/ anywhere in the command, not just the hooks.
+  //
+  // The command-side half of the gap found 2026-07-26 (see isSelfModEdit above).
+  // Closing only the Edit path would have been the more dangerous kind of
+  // half-fix: the tool layer would refuse while `echo x > bin/charter.js`
+  // through a shell walked straight past, and the refusal on the quiet path
+  // would read as coverage.
+  //
+  // TERMINATOR HANDLING IS A NEGATIVE ASSERTION, NOT AN ENUMERATION. The
+  // 2026-07-24 gauntlet leaked one new terminator per round — `&`, then `)` and
+  // backtick, then `>` — because each fix listed what ends a token. The version
+  // that held asks instead whether the extension is followed by MORE filename,
+  // which closes the class rather than one member of it. So `bin/x.js.` (the
+  // Windows trailing-dot spelling, KNOWN-LIMITS 22) matches, and `bin/x.jsx`
+  // does not.
+  //
+  // The lookbehind is the same one the Edit path uses: refuse a preceding '.' or
+  // word character so `node_modules/.bin/` and `sbin/` are not swept in.
+  if (/(?<![.\w])bin\/[^/\s'"]+\.(js|mjs|cjs|ps1|sh)(?![a-z0-9_-])/i.test(cmdNorm)) return true;
   return false;
 }
 
