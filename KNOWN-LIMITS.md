@@ -660,3 +660,94 @@ released behaviour.
 
 Until then, read this file as a statement about `main`, and check `git log` before
 trusting any entry in a feature checkout.
+
+## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
+
+Found 2026-07-26, live, from a double-signing that was an accident.
+
+`SIGNED_PARAMS` is `command`, `file_path`, `url`, `path`. For the `Edit` tool that
+means the canonical request is **the path and nothing else**: the content being written
+is not signed, deliberately, because binding a signature to `old_string` and
+`new_string` would make every approval brittle and unreviewable. The SCOPE line in the
+denial message says so honestly, "signs file_path only."
+
+The consequence is not in that line. Because the request is only the path, **every edit
+to a given file produces the same canonical request**, so every token for that file
+validates against every other edit to it. Tokens are single-use by nonce, but they are
+**interchangeable and they accumulate.** Sign the same path twice and the surplus token
+sits in `pending-approvals/` and silently authorizes the next edit to that file,
+whatever its content, whenever it happens, with no further review and no second look
+from the operator. On `main`, where an approval has no expiry (limit 16), it waits
+indefinitely.
+
+**Why this is worse than it first sounds.** Delegation grants are *refused* on the
+non-delegable core: `requestRefusalReason()` rejects any request naming a path
+`classifyPath()` does not call grantable, so no single signature may cover repeated
+operations on `src/gate`, `src/policy`, `src/chain`, `src/store`, `src/grant`, or
+`bin/hook-*`. That refusal is correct and load-bearing.
+
+But N single-use Edit tokens for a core path add up to precisely the grant that was
+refused. Same effect, and strictly weaker in every respect that made the refusal safe:
+no session binding, no expiry, no ceiling, and no chain-recorded enumeration of what
+was authorized (limit 18 exists so a grant's contents are reconstructable; a pile of
+loose tokens has no equivalent). **The control that stops one signature from covering
+many core edits can be assembled by hand out of the primitive it is built from.**
+
+Observed exactly this way: three edits to `bin/hook-pre-tool-use.js`, three denials,
+two signatures, three edits applied. Receipts seq 585, 589, and 590 record three
+`approved` decisions with three distinct approval nonces, so nothing was replayed and
+the nonce layer worked exactly as designed. The gap is that the second signature was
+never spent on the action the owner was looking at when they gave it.
+
+Worth stating plainly because it inverts an instinct: the agent's own reading of this
+was that a third edit had bypassed the gate, and the reasoning offered was a possible
+nonce-replay hole in the core. The chain said otherwise in one read. **A gap found by
+reading receipts is the third time on this project that the record has corrected an
+inference the code invited.**
+
+Not fixed. Candidate directions, none built and each with a cost: expire tokens
+(already on an unmerged branch for other reasons, and it narrows the window without
+closing it); refuse to stage a request whose canonical form already has an unspent
+token on disk, so surplus tokens cannot exist; include a content digest in the signed
+request for core paths only, accepting the brittleness limit 27 describes in exchange
+for one-edit-one-signature on the files that matter most; or delete every remaining
+token for a path once one is spent, on the theory that an operator approving an action
+approved that action and not a credit balance. The last is the smallest and probably
+the right one.
+
+Until then: **for the non-delegable core, sign once per edit and never bank a
+signature.** If a passphrase entry fails, confirm no token landed before signing again.
+
+### Observed live state, 2026-07-26, and this is the part that matters
+
+The paragraphs above describe a mechanism. Checked against the actual machine, the
+mechanism has already accumulated. Token files are deleted when consumed, so every
+file remaining in `pending-approvals/` is by construction **unspent, valid, and
+non-expiring**. There were **eleven**, none of their nonces present in
+`keys/approval-nonces.log`.
+
+Two of the eleven authorize consequential actions: one registers a Windows scheduled
+task, and one opens a GitHub pull request with a full body. Each will execute silently,
+with no gate and no request, the moment its exact command string is next attempted.
+
+This is limits 27 and 16 compounding into a state rather than a hazard. **A signature
+burned by a one-character change does not evaporate; it banks.** Every retry that
+restages instead of reusing leaves the original signed and idle, and with no expiry on
+`main` it stays that way. Nothing counts them, nothing surfaces them, and the operator
+has no view of the balance they have accrued.
+
+Three consequences worth separating, because they have different fixes:
+
+The **absence of a ledger** is the cheapest and largest gap. There is no command that
+answers "what am I currently pre-authorizing." `npm run receipts` reports what
+happened; nothing reports what is still permitted. That is a read-only feature and it
+should exist before any of the harder fixes.
+
+**Deleting a surplus token needs no signature and fails safe**, exactly as limit 19
+argues for grants: removing an authorization only ever reduces capability. So cleanup
+is available today and costs nothing. It just has to be known to be necessary.
+
+**Expiry narrows this and does not close it.** A freshness window (on an unmerged
+branch at time of writing) bounds how long a banked signature waits. It does not stop
+one from existing, and a token spent inside its window is spent on whatever command
+matches, not on the action the owner was looking at.
