@@ -67,7 +67,28 @@ const CORE_DIRS = Object.freeze([
 /** Individual core files that do not live under a core directory. */
 const CORE_FILES = Object.freeze([
   'src/home.js',          // decides where the keys and the chain live
-  'src/registration.js'   // decides which hooks are believed registered
+  'src/registration.js',  // decides which hooks are believed registered
+  // package.json is an EXECUTION MANIFEST, not configuration.
+  //
+  // Found 2026-07-26. Its `scripts` block is arbitrary shell that runs under a
+  // name, and a name is all the command matcher ever sees. Add a script here
+  // unsigned, run `npm run <name>`, and the command string carries no protected
+  // path and no script extension: self-mod sees nothing, opaque-exec sees
+  // nothing, and the body can write to bin/, delete the chain, push, or call
+  // out. The indirection lives in a data file, which is why every matcher that
+  // reads command strings missed it.
+  //
+  // This is the same class opaque-exec exists for — an action the engine cannot
+  // read is unverified, and unverified must not mean allowed — reached through
+  // a file rather than through a .ps1 or .sh invocation.
+  //
+  // Protecting the manifest closes the INJECTION vector: no new script can be
+  // introduced without a signature. It deliberately does not gate `npm run`
+  // itself, which would gate `npm test` and every observability command and
+  // teach the operator to stop reading (limit 26). Existing scripts stay
+  // usable; new ones cost a signature. Recorded as a partial fix, not a
+  // complete one.
+  'package.json'
 ]);
 
 /**

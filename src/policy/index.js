@@ -334,6 +334,20 @@ function selfModFragmentsForBase(baseDir) {
     'src/charter/',
     'src/home.js',
     'src/registration.js',
+    // package.json is an execution manifest (see core-paths.js CORE_FILES for
+    // the full reasoning and the incident). Its `scripts` block is arbitrary
+    // shell that runs under a name, and a name is all a command matcher sees.
+    //
+    // DELIBERATELY BROADER HERE THAN IN core-paths.js, and the asymmetry is not
+    // an oversight. core-paths RESOLVES a path and matches only this repo's own
+    // manifest. This matcher cannot resolve, so a bare fragment matches EVERY
+    // package.json on the machine: other repos, node_modules, anything. That is
+    // accepted rather than worked around, on this file's standing rule that
+    // crying wolf is the cheap failure and silence is the expensive one. Editing
+    // any execution manifest is worth a signature; the cost is a prompt on
+    // unrelated projects, and the cost of being wrong the other way is a script
+    // that runs unread.
+    'package.json',
     // Core bin scripts by exact name, so `/usr/bin/...` and `node_modules/.bin`
     // are not swept in. Hook binaries are additionally matched by regex below.
     'bin/approve.js',
