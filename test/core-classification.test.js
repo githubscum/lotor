@@ -147,7 +147,20 @@ describe('the other half of the residual gap: files directly under src/', () => 
    * Files at src/*.js that are deliberately NOT core. Same rule as GRANTABLE
    * above: name it and say why, or the suite fails.
    */
-  const GRANTABLE_FILES = Object.freeze({});
+  const GRANTABLE_FILES = Object.freeze({
+    // Decides an attribution LABEL (which harness wrote an entry), never what
+    // the gate permits. Editing it can mislead a reader, which is real, but it
+    // cannot widen authority. Same line core-paths.js already draws for
+    // src/views: folding reporting integrity into enforcement integrity makes
+    // the core large enough to be useless.
+    //
+    // Recorded 2026-07-26, and this classification is itself the first thing
+    // this test caught in anger. src/harness.js was created hours after the
+    // test shipped, the suite went red on the next run, and the decision was
+    // made deliberately instead of defaulting to grantable by silence. That is
+    // the whole point of the file.
+    'harness.js': 'attribution label only; can mislead a reader, cannot widen authority'
+  });
 
   for (const name of srcTopLevelFiles()) {
     it(`src/${name} is either core or explicitly grantable`, () => {

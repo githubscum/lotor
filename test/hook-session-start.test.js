@@ -15,10 +15,15 @@ const END_HOOK_PATH = path.join(__dirname, '..', 'bin', 'hook-session-end.js');
 /**
  * Run a hook as a real child process with an isolated LOTOR_HOME.
  */
-function runHook(hookPath, { stdin = '', args = [], home }) {
+function runHook(hookPath, { stdin = '', args = [], home, env = {} }) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [hookPath, ...args], {
-      env: { ...process.env, LOTOR_HOME: home },
+      // A test may inject env (LOTOR_HARNESS and the like), but LOTOR_HOME is
+      // applied LAST so nothing can point a child at the real store by
+      // supplying its own environment. LOTOR_HARNESS is cleared by default so
+      // an ambient value in the developer's shell cannot turn an "inferred" or
+      // "unknown" assertion green for the wrong reason.
+      env: { ...process.env, LOTOR_HARNESS: undefined, ...env, LOTOR_HOME: home },
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
@@ -224,5 +229,72 @@ describe('unclosed-session detection', () => {
     } finally {
       try { fs.rmSync(emptyHome, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
     }
+  });
+
+  /**
+   * End-to-end for KNOWN-LIMITS 13's second half. src/harness.js is unit-tested
+   * separately; what is asserted here is that the resolved value actually
+   * REACHES the chain entry, which is the only thing that matters for a field
+   * whose whole job is to be readable back out of an append-only log.
+   *
+   * Deliberately run against an isolated temp LOTOR_HOME. Invoking the hook
+   * against the real store to "just check" would append a permanent entry with
+   * a fabricated session id, and the chain cannot be edited afterwards. A
+   * verification step must not write to the thing it verifies.
+   */
+  describe('the harness field reaches the chain', () => {
+    let h;
+
+    before(() => {
+      h = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-harness-'));
+    });
+
+    after(() => {
+      try { fs.rmSync(h, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
+    });
+
+    it('records an inferred harness with its basis and evidence', async () => {
+      const res = await start({ stdin: payload('sess-harness-inferred'), home: h });
+      assert.equal(res.code, 0);
+
+      const entry = opens(h).find(e => e.payload.sessionId === 'sess-harness-inferred');
+      assert.ok(entry, 'the open was recorded');
+
+      const hv = entry.payload.harness;
+      assert.ok(hv, 'session-open must carry a harness block');
+      assert.equal(hv.name, 'claude-code');
+      assert.equal(hv.basis, 'inferred', 'a guess must be recorded as a guess');
+      assert.ok(Array.isArray(hv.evidence) && hv.evidence.length >= 2,
+        'the evidence for the guess travels with it');
+      assert.ok(hv.schema, 'a schema marker makes a later shape change visible');
+    });
+
+    it('records a declared harness over an inferable one', async () => {
+      const res = await start({
+        stdin: payload('sess-harness-declared'),
+        home: h,
+        // The launcher of a second harness sets this. It is the mechanism the
+        // Pi work depends on, so it is exercised through the real hook rather
+        // than only at the unit level.
+        env: { LOTOR_HARNESS: 'pi-harness' }
+      });
+      assert.equal(res.code, 0);
+
+      const entry = opens(h).find(e => e.payload.sessionId === 'sess-harness-declared');
+      assert.ok(entry, 'the open was recorded');
+      assert.equal(entry.payload.harness.name, 'pi-harness');
+      assert.equal(entry.payload.harness.basis, 'declared');
+    });
+
+    it('records unknown rather than guessing when the payload says nothing', async () => {
+      const res = await start({ stdin: JSON.stringify({ session_id: 'sess-harness-bare' }), home: h });
+      assert.equal(res.code, 0);
+
+      const entry = opens(h).find(e => e.payload.sessionId === 'sess-harness-bare');
+      assert.ok(entry, 'the open was recorded');
+      assert.equal(entry.payload.harness.basis, 'unknown');
+      assert.notEqual(entry.payload.harness.name, 'claude-code',
+        'an unattributable entry must not inherit this harness by default');
+    });
   });
 });

@@ -66,6 +66,7 @@ import { resolveHome } from '../src/home.js';
 import { loadPolicy } from '../src/policy/index.js';
 import { verifyChain } from '../src/chain/index.js';
 import { snapshotHookRegistration } from '../src/registration.js';
+import { resolveHarness } from '../src/harness.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -154,6 +155,12 @@ async function main() {
     : await readStdin();
   const payload = parsePayload(raw);
 
+  // Resolved once here, from the payload as received, so the recorded basis
+  // reflects what this hook was actually handed rather than anything derived
+  // later. Self-attested, like capture itself: it makes a mixed chain
+  // separable under honest conditions and proves nothing adversarially.
+  const harness = resolveHarness(payload);
+
   const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
     ? payload.session_id
     : (typeof payload.sessionId === 'string' && payload.sessionId.trim() !== ''
@@ -223,6 +230,16 @@ async function main() {
           ? { version: policy.version, mode: policy.mode, modes: policy.modes, digest: digestPolicy(policy) }
           : null,
         hooks,
+        // Which harness wrote this, and on what basis (KNOWN-LIMITS 13).
+        // Never a bare name: `basis` says declared / inferred / unknown, and
+        // an unknown harness stays "unknown" rather than defaulting to the
+        // common case, because defaulting would attribute a foreign harness's
+        // entries to this one and a reader could not tell.
+        //
+        // This has to exist BEFORE a second harness starts writing. The chain
+        // is append-only, so an entry written without the field can never
+        // acquire it.
+        harness,
         lotorVersion: 1,
         timestamp: Date.now()
       };

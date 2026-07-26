@@ -162,6 +162,45 @@ anything reading `session.model` as "the model this session's cost was incurred
 on" is still wrong in exactly the way described above. Read `byModel`, not the
 top-line total.
 
+**Amended again the same day, about two hours later. The paragraph immediately
+above that says "per-harness: not built" is now false, and leaving that gap
+unmarked for even an afternoon is the exact behaviour limit 29 describes.**
+Recording it as a second dated note rather than editing the first, because the
+sequence is the useful artifact: a disclosure written carefully at midday was
+wrong by early afternoon, which is how short the half-life actually is.
+
+**Per-harness: built.** `src/harness.js` resolves a harness for every
+`session-open` entry, and `bin/hook-session-start.js` writes it into the chain.
+It was shipped *before* the second harness rather than with it, because the
+chain is append-only and **an entry written without the field can never acquire
+it** — every entry a second harness produced first would have been permanently
+unattributable.
+
+**It never returns a bare name, and that is the load-bearing part.** The block
+carries a `basis`:
+
+- `declared` — an operator or launcher set `LOTOR_HARNESS`, or the payload named
+  itself. Trustworthy exactly to the degree whoever set it is.
+- `inferred` — guessed from the payload's shape, requiring **two** independent
+  signals rather than one, and shipping the evidence that produced the guess.
+- `unknown` — nothing to go on. **It stays `unknown` and never defaults to
+  `claude-code`.** Defaulting an unattributable entry to the common harness
+  would convert missing information into a false statement that a reader has no
+  way to detect, which is worse than an absent field.
+
+**What this is not: authentication.** A harness naming itself is self-attested,
+exactly as capture is (limit 1). Anything that can set an environment variable
+can call itself anything. This makes a mixed chain **separable under honest
+conditions**; it does not make the label adversarially trustworthy, and nothing
+here should be read as proving provenance.
+
+**Residual, stated rather than left to be discovered.** The field is on
+`session-open` only. Gated-action entries and session receipts do not carry it
+and are attributable only by association through their session. That is
+sufficient for splitting a chain by harness and is not the same as per-entry
+provenance. The per-model half above is likewise unchanged by this: cost is
+still not broken down per harness, only per model.
+
 ## 14. A session that dies badly leaves an open, not a full record
 
 **Partly fixed.** Capture used to be driven entirely by `SessionEnd`: a session
