@@ -121,6 +121,7 @@ function reconstruct(entries, sinceMs) {
     opens: 0,                 // open EVENTS (includes compaction re-opens)
     openedIds: new Set(),     // distinct sessions
     unclosedOpens: new Set(),
+    openDetail: new Map(),    // sessionId -> { at, source, cwd }
     denied: [],
     approved: [],
     grantUses: 0,
@@ -140,6 +141,15 @@ function reconstruct(entries, sinceMs) {
       if (p.sessionId) {
         out.openedIds.add(p.sessionId);
         out.unclosedOpens.add(p.sessionId);
+        // Keep the detail so --unclosed can answer WHAT never closed, not just
+        // how many. `source` distinguishes a fresh start from a resume or a
+        // compaction, and `cwd` usually identifies which job it was.
+        out.openDetail.set(p.sessionId, {
+          at: p.timestamp || e.timestamp,
+          source: p.source || '?',
+          cwd: p.cwd || '?',
+          transcriptPath: p.transcriptPath || null
+        });
       }
       continue;
     }
@@ -197,11 +207,33 @@ function printWindow(r) {
   w(`  distinct sessions opened  ${r.openedIds.size}   (${r.opens} open events, incl. compaction re-opens)`);
   w(`  sessions closed           ${r.sessions.size}`);
   if (r.unclosedOpens.size > 0) {
-    // An open with no close is where a session died badly, which is the whole
-    // reason the record opens at session start rather than end (KNOWN-LIMITS
-    // 14). But it also catches sessions still running, including this one, so
-    // it is a place to look rather than a count of failures.
-    w(`  opened, not yet closed    ${r.unclosedOpens.size}   <- includes any session still running`);
+    // AN OPEN WITH NO CLOSE MEANS TWO OPPOSITE THINGS AND MUST NEVER BE ONE
+    // NUMBER. Either a session did work that was never recorded, which is the
+    // gap KNOWN-LIMITS 14 exists to surface, or a session opened and did
+    // nothing at all, in which case SessionEnd correctly appended nothing
+    // (limit 5's no-change guard) and there is no gap.
+    //
+    // The first version of this view reported them together as 116 sessions
+    // "where work happened that is not in the record", which read as a 9%
+    // capture rate and a crisis. The real figure was an order of magnitude
+    // smaller. A metric that cries wolf is worse than no metric, because the
+    // one time it matters nobody believes it.
+    //
+    // The transcript is what separates them: no transcript, or an empty one,
+    // means the session had no conversation to record.
+    const empty = [];
+    const withWork = [];
+    for (const id of r.unclosedOpens) {
+      const d = r.openDetail.get(id) || {};
+      let bytes = 0;
+      try { if (d.transcriptPath) bytes = fs.statSync(d.transcriptPath).size; } catch { bytes = 0; }
+      (bytes > 2048 ? withWork : empty).push({ id, ...d, bytes });
+    }
+    r.unclosedEmpty = empty;
+    r.unclosedWithWork = withWork;
+
+    w(`  opened and did nothing    ${empty.length}   (no transcript; nothing to record, not a gap)`);
+    w(`  DID WORK, NO RECEIPT      ${withWork.length}   <- the real gap, incl. any session still running`);
   }
   w('');
 
@@ -330,6 +362,40 @@ const home = resolveHome();
 const since = parseSince(flag('--since'));
 const entries = readChain(home);
 const r = reconstruct(entries, since);
+
+if (argv.includes('--unclosed')) {
+  // Answers WHAT never closed rather than how many. Grouped by working
+  // directory and source, because a hundred identical opens from one cron is a
+  // different story from a hundred scattered ones.
+  const w = s => process.stdout.write(s + '\n');
+  const groups = new Map();
+  for (const id of r.unclosedOpens) {
+    const d = r.openDetail.get(id) || {};
+    const key = `${d.source || '?'}  ${d.cwd || '?'}`;
+    const g = groups.get(key) || { n: 0, first: Infinity, last: 0 };
+    g.n += 1;
+    g.first = Math.min(g.first, d.at || Infinity);
+    g.last = Math.max(g.last, d.at || 0);
+    groups.set(key, g);
+  }
+  w('');
+  w(`OPENED, NEVER CLOSED  (${r.unclosedOpens.size} distinct sessions)`);
+  w('='.repeat(64));
+  w('');
+  for (const [key, g] of [...groups].sort((a, b) => b[1].n - a[1].n)) {
+    w(`  ${String(g.n).padStart(4)}x  ${key}`);
+    if (g.n > 1 && g.first !== Infinity) {
+      w(`         first ${stamp(g.first)}   last ${stamp(g.last)}`);
+    }
+  }
+  w('');
+  w('  A session that opens and never closes wrote no session receipt, so');
+  w('  everything after its last captured tool call is unknown. Sessions still');
+  w('  running appear here too, which is why this is a place to look rather');
+  w('  than a count of failures.');
+  w('');
+  process.exit(0);
+}
 
 const charterId = flag('--charter');
 if (charterId) {
