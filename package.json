@@ -36,6 +36,7 @@
     "approve": "node bin/approve.js approve",
     "gate": "node bin/gate.js",
     "grant": "node src/grant/issue.js",
+    "charter": "node bin/charter.js",
     "mode": "node bin/mode.js",
     "receipts": "node bin/view.js --all",
     "tokens": "node bin/tokens.js",
