@@ -504,3 +504,159 @@ the session (cron picking up the file) was never visible to the gate, and the
 accidental early warning the old false positive provided is gone. Staging
 persistence through a prose write is a candidate for a path-based scope-escalation
 rule, not a reason to scan prose again.
+
+**Residual confirmed live, 2026-07-25.** The consumer allowlist that decides whose
+body gets stripped covers `git commit|tag|notes|merge`, `cat`, and `tee`. It does
+not cover `printf`. A shell `printf` used only to write a note was denied by
+`opaque-exec` because the note's *text* quoted a deploy script's filename, with no
+execution of that script attempted. The allowlist behaves exactly as designed here,
+since a consumer not on the list keeps its body visible and therefore over-gates
+rather than misses, which is the safe direction. It is recorded because the cost is
+real and recurring: prose about the system is the system's own documentation, and
+the tool that writes it is the tool most likely to trip.
+
+Two consequences worth stating. The correct response to a false positive of this
+shape is to use the dedicated tool for the job, Read or Write or Edit instead of a
+shell one-liner, and never to reword the prose until it slips past the matcher.
+Rewording to evade a control is the drift this system exists to catch, and it does
+not stop being drift because the trigger was a false positive. And a real fix is
+harder than the terminator-enumeration closure applied on 2026-07-24: the matcher
+would have to distinguish a string that is a command's target from a string that is
+inert text the command writes out, which means parsing structure rather than
+substring-matching a flat command line.
+
+## 27. Signature binding is exact, so any command mutation burns a fresh signature
+
+An approval token is single-use and bound to the literal command string staged at
+signing time. Any difference between staging and execution produces a new,
+unrelated approval request rather than verifying against the original signature: a
+different flag value, reordered arguments, an added redirect, a changed path
+separator. This is intended and is not going to change. A token that survived
+command mutation would not be an approval of *this* action, it would be a standing
+permission slip.
+
+The cost lands on the human, not the agent. Every mismatch asks for another
+signature on something that from their side looks like the action they already
+approved. A few repetitions of that and the natural response is to sign faster and
+read less, which is the exact failure mode the gate exists to prevent. Limit 26
+names the same corrosive dynamic arriving from a different direction.
+
+Confirmed live, 2026-07-25. A signed request for an Ollama dispatch was followed by
+a retry that changed only `tail -20` to `tail -25`, and that produced a new request
+rather than reusing the signature.
+
+The mitigation available today is an operating rule, not a code change: whatever
+stages a signed command must reproduce it byte for byte at execution time and must
+never improve it in between.
+
+**Correction, 2026-07-25, same evening this entry was written.** The paragraph above
+originally continued with a "candidate improvement to the gate itself, not built": a
+denial that identifies itself as a variant of an already-staged request, so the human
+can see they are being asked to re-approve a near-twin rather than to approve
+something novel.
+
+That is built, though **not shipped**, and the distinction is the point of this
+correction. It is committed on the unmerged branch
+`fix/token-freshness-and-variant-denial` (`fefb3d2`), which is four commits ahead of
+`main`. Searching `main` for the function returns nothing. So it is live in the
+working tree, active in any session running from it, and absent from every release.
+An earlier version of this correction said "already shipped," which was the same
+error one layer down: asserting state without checking which branch that state lives
+on. See limit 29.
+
+`buildDenialMessage()` calls `findSimilarStagedRequest()` and, on a match, prints a
+`VARIANT OF staged request <id>` line **above** the reasoning, with the differing
+region of both commands shown. Its own source comment names the three incidents from
+2026-07-25 that motivated it, and one of them is the `tail -20` to `tail -25` retry
+cited as this entry's live confirmation. So the entry used a shipped fix's own
+motivating incident as evidence that the fix did not exist. The error was writing
+about the gate's behaviour from the incident record instead of from the source.
+
+Recorded here rather than quietly edited out, because a disclosure log that silently
+repairs its own false claims is worth less than one that shows them. The general rule
+it earns: **a claim that the gate does not do something requires reading the gate, not
+reading what happened.**
+
+Two genuine residuals, found while checking the above:
+
+Similarity is deliberately crude and **excludes byte-identical priors** (`wasDetail
+=== nowDetail` is skipped). That exclusion is right, because a prior whose token was
+already signed and spent is not a variant of anything and calling it one would
+mislead. The cost is that re-attempting an identical command stages a second request
+with no hint that an unsigned identical one is already pending. A separate line for
+that case, pointing at the existing request instead of the new one, would be a small
+improvement and is not built.
+
+Staged requests are **never pruned**. There were 185 by the morning of 2026-07-25 and
+229 by that evening, one per denial, forever. The deny path caps its twin scan at the
+25 newest so matching stays fast, but the directory itself grows without bound. Same
+shape as the unbounded nonce log in limit 16, and neither has a cleanup path.
+
+## 28. A grant is bound to one session, so it cannot pre-authorize a scheduled task
+
+A grant is one signature over N enumerated requests, scoped to one session, with an
+expiry and a shared action ceiling (limit 17). A recurring scheduled task, whether
+cron, Task Scheduler, or a systemd timer, spawns a **new session on every firing**.
+No grant issued once can therefore cover a job intended to run unattended on a
+schedule. Each firing would need its own signature, which is unavailable by
+definition when nobody is present to sign.
+
+This is a structural gap, not an oversight in the grant schema, and it means the
+honest rule for unattended work is that anything inherently gated cannot be
+automated at all. It can only be prepared and left for a human.
+
+One important refinement, because an earlier version of that conclusion was too
+strong. It holds absolutely for **overnight**, where the operator is asleep and no
+signature is possible at any price. It does not hold for **away**, where the
+operator is out but reachable and signatures are merely latent. In away mode a job
+can legitimately stage a gated action and wait, because someone will come. The
+design does not need a new primitive to handle that; it needs to know which mode it
+is in, and nothing in v1 records or reasons about operator mode.
+
+No change to the grant machinery is proposed here. It lives in the non-delegable
+core, so any change to it requires its own per-edit signature.
+
+## 29. This file documents `main`, but lives in the tree of branches that change it
+
+Found 2026-07-25 while correcting limit 27. The confession log sits in the same
+working tree as the code it describes, so on any feature branch it is simultaneously
+accurate for `main` and false for the checkout you are reading it in. There is nothing
+in the file that says which.
+
+The branch `fix/token-freshness-and-variant-denial`, four commits ahead of `main` at
+the time of writing, demonstrates it. Three commits, all of them shipping code plus
+tests, **none of them touching this file:**
+
+- `fefb3d2` added an approval-token freshness window in `src/gate/index.js` with 128
+  lines of new tests. Limit 16 still opens "An approval token has no expiry."
+- `9d3ec36` added per-model cost attribution in `src/parser/index.js` with 211 lines
+  of new tests, and names limits 4 and 13 in its own subject line. Limit 13 still
+  reads "Per-model, per-harness cost attribution is not built."
+- `13cc2e2` added portable receipt bundles so a chain verifies off the machine that
+  wrote it. Limit 9 still reads "receipts do not verify across machines."
+
+**The direction of the error matters and cuts both ways.** Overstating limits is the
+safer failure: a reader who believes the system is weaker than it is takes more care,
+not less, and nobody is harmed by a disclosure that has not yet been retracted. But it
+is still a false statement of current state, and it corrodes the one property this
+file exists to have. A log that is wrong in the flattering direction and a log that is
+wrong in the unflattering direction are both logs you have to check the code to trust,
+which is the whole thing it was supposed to save you from.
+
+It also inverts the failure mode the confession loop was designed against. That design
+worried about a system rewarded for closing entries, and answered it by rewarding
+discovery instead. This is the other leak: **fixes landing without the disclosure
+being updated, so closure happens in the code and never in the record.** Discovery
+being the product does not help if closure is invisible.
+
+Not fixed here, and deliberately not papered over by rewriting the four entries
+tonight. Each one needs its fix read and its tests run before its entry is amended,
+and amending a disclosure on the strength of a commit subject line would repeat the
+exact mistake that produced limit 27's correction. Candidate fixes, none built: a CI
+check that fails a PR touching `src/` without touching this file or explaining why; a
+per-entry `status:` field naming the branch and commit a claim was last verified
+against; or moving the log out of the code tree entirely so it can only describe
+released behaviour.
+
+Until then, read this file as a statement about `main`, and check `git log` before
+trusting any entry in a feature checkout.
