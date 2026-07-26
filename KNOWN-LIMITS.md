@@ -943,11 +943,11 @@ considerably and would still inherit limit 21's ceiling: the rules match strings
 intent, and a scheduler reached through a wrapper the matcher cannot see into stays
 invisible.
 
-**Live and load-bearing as of this writing.** Five S4U scheduled tasks are registered
-on this machine and are the unattended lane for a week in August when nobody will be
-watching them. Every one of them is the exact class described above. Registering them
-was deliberate and authorized; the point of the entry is that the gate cannot
-distinguish that from the case where it was neither.
+**Live and load-bearing as of this writing.** This install has several S4U scheduled
+tasks registered, and they are how unattended work runs here. Every one of them is the
+exact class described above. Registering them was deliberate and authorized; the point
+of the entry is that **the gate cannot distinguish that from the case where it was
+neither**, which is the whole hazard and does not depend on when they run.
 
 Not fixed in v1.
 
