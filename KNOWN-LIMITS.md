@@ -661,6 +661,26 @@ released behaviour.
 Until then, read this file as a statement about `main`, and check `git log` before
 trusting any entry in a feature checkout.
 
+**Update 2026-07-26. The specific instance closed and the entry got worse, not
+better.** `fix/token-freshness-and-variant-denial` merged into `main` this morning,
+thirteen commits, suite green. So the branch this entry uses as its demonstration no
+longer exists as a gap.
+
+The class did not close. It inverted. While the fixes sat on a branch, limits 4, 9,
+13 and 16 were stale *only in a feature checkout* and correct for `main`, which is
+exactly what the last line above tells a reader to assume. **After the merge they are
+stale on `main` itself**, which is the case that line offers no defence against. A
+reader following this file's own instructions is now misled, where before they were
+protected.
+
+That is worth stating plainly because it is the sharper form of the problem: the
+window between a fix landing and its disclosure being amended is not a branch-local
+inconvenience, it is a period during which the log is confidently wrong about shipped
+behaviour. Merging is what converts a private staleness into a public one, so **the
+merge is the moment the amendment is owed**, not some later tidy-up. None of the
+candidate fixes above would have caught this either; a CI check on `src/` would have
+passed, since the merge commit touches this file's neighbours and not its claims.
+
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
 Found 2026-07-26, live, from a double-signing that was an accident.
@@ -751,3 +771,78 @@ is available today and costs nothing. It just has to be known to be necessary.
 branch at time of writing) bounds how long a banked signature waits. It does not stop
 one from existing, and a token spent inside its window is spent on whatever command
 matches, not on the action the owner was looking at.
+
+**Amended 2026-07-26.** Two of the three consequences above have moved, and the
+parenthetical "on an unmerged branch at time of writing" is now false: the freshness
+window is on `main`. The ledger this entry called "the cheapest and largest gap" is
+built and shipped as `bin/tokens.js` / `npm run tokens`. Its first real run found one
+live unspent token two minutes old, and the run this morning found zero live and one
+expired, which is the intended steady state.
+
+The third consequence stands unchanged and is the one to keep reading: **expiry still
+does not close this.** A token spent inside its window is spent on whatever command
+matches. The ledger makes the balance visible; it does not make a banked signature
+mean what its signer meant. See limit 31 for what the ledger still cannot tell you.
+
+## 31. The rule set reasons about actions taken now, and has no concept of actions scheduled for later
+
+Found 2026-07-25, on the run that found it. Recorded here 2026-07-26 after it survived
+a branch collision that nearly lost it: two branches independently numbered new entries
+27 and 28, the merge kept the other pair, and this one was recovered from the discarded
+side rather than from anyone remembering it.
+
+Persisting a script to run later, unattended and repeatedly, is at least as
+consequential as running it once. It outlives the session, it runs with nobody
+watching, and it re-runs on a schedule the gate never sees again. There is no rule for
+it.
+
+`Register-ScheduledTask` **did** gate when it was observed, but only incidentally: the
+command string happened to contain a `.ps1` path, so `opaque-exec` matched. **The gate
+fired for the right reason by accident.** A task registered against a bare executable,
+a `cmd /c` line, or an interpreter with an inline argument carries no script extension
+and would very likely pass unremarked.
+
+The same hole covers every other persistence surface on the machine: `schtasks`, `at`,
+cron entries written through a tool call, systemd units, shell profile edits, `Run`-key
+registry writes, login items. Limit 26 already noted that staging persistence through a
+prose write is "a candidate for a path-based scope-escalation rule"; this is the same
+gap reached from the other direction, and it is wider, because it needs no prose at
+all.
+
+The honest framing is that this is **a category the matcher does not model rather than
+a verb it is missing**, which is why extending a verb list would not close it. A
+`persistence` rule keyed on the known scheduling surfaces would raise the bar
+considerably and would still inherit limit 21's ceiling: the rules match strings, not
+intent, and a scheduler reached through a wrapper the matcher cannot see into stays
+invisible.
+
+**Live and load-bearing as of this writing.** Five S4U scheduled tasks are registered
+on this machine and are the unattended lane for a week in August when nobody will be
+watching them. Every one of them is the exact class described above. Registering them
+was deliberate and authorized; the point of the entry is that the gate cannot
+distinguish that from the case where it was neither.
+
+Not fixed in v1.
+
+## 32. The authorization ledger cannot show which rule staged a token
+
+Found 2026-07-26 by the unattended overnight pass, which went looking for the rule id
+in the request files and reported its absence rather than assuming it was there.
+
+`bin/tokens.js` reports every live, expired, and spent token in `pending-approvals/`,
+closing the gap limit 30 named. It cannot report **which rule** (`self-mod`,
+`opaque-exec`, and so on) staged a given token, because `stageRequest()` in
+`bin/hook-pre-tool-use.js` writes only the action and its params to the request file,
+never the matched rule id. The rule name exists only as an in-process variable at the
+moment the gate evaluates the call, and is gone once the process exits.
+
+Why it matters more than a missing display field: the ledger's job is to answer *what
+am I currently pre-authorizing*, and a token's rule is the closest thing the system has
+to **why** it needed authorizing. Without it, a reviewer sees a command and its age and
+has to re-derive the hazard from the command string, which is the same work the gate
+already did once and threw away.
+
+Not fixed. The fix is small and has precedent: a sidecar at
+`pending-approvals/rules/<id>.json`, written at staging time and read back the same way
+`readPurpose()` already reads the `purpose` sidecar. Until then, a live token in the
+ledger tells you what it would do and how old it is, not which rule put it there.
