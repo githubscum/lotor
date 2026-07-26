@@ -278,6 +278,145 @@ export function completion(charter, states = {}) {
   return { ...counts, terminal, total: charter.items.length, done: terminal === charter.items.length };
 }
 
+// ---------------------------------------------------------------------------
+// Sub-charters: delegation without escalation.
+// ---------------------------------------------------------------------------
+//
+// WHY THESE EXIST
+//   A charter authorizes a plan. A pack of workers executing that plan should
+//   each hold only the slice they need, not the whole thing. Isaac's framing:
+//   "when you have things that need to be let out in intervals then count them
+//   when they return with what you set them to do."
+//
+// THE DESIGN DECISION THAT MATTERS: A SUB-CHARTER IS NOT SIGNED.
+//
+//   The obvious approach is to have the orchestrator sign sub-charters with its
+//   own key. That is wrong, and expensively so: it would mean a process the
+//   owner does not control holds signing authority, which is the polarity the
+//   whole architecture exists to prevent. An orchestrator that can sign can
+//   eventually sign something nobody asked for.
+//
+//   A sub-charter needs no signature because it grants nothing new. It is a
+//   RESTRICTION of an authority the owner already signed, and a restriction
+//   carries its own proof: it is valid exactly when it is provably narrower
+//   than its parent.
+//
+//   NARROWING NEVER NEEDS A SIGNATURE. ONLY WIDENING DOES.
+//
+//   The same reasoning already appears in KNOWN-LIMITS 19: deleting a grant
+//   requires no signature, because removing capability can only ever reduce
+//   what is possible. This is that principle applied to delegation.
+//
+//   So the orchestrator holds no key at all. It can carve, and it cannot mint.
+//   Tampering is caught without one: adding an item to a sub-charter makes it
+//   stop being a subset, and the subset check runs on every verification.
+
+/**
+ * Carve a sub-charter from a parent. Throws if any item is not already in the
+ * parent — the refusal is the point, and it is a hard failure rather than a
+ * filtered result so a caller cannot quietly proceed with less than it asked
+ * for and believe it got everything.
+ *
+ * The sub-charter cannot outlive its parent. If the caller asks for a longer
+ * window it silently gets the parent's, because a delegate outliving its
+ * mandate is the same escalation by a slower route.
+ */
+export function deriveSubCharter(parent, items, { id, title, expiresAt } = {}) {
+  if (!parent || parent.format !== CHARTER_FORMAT) throw new Error('parent is not a charter');
+  if (!Array.isArray(items) || items.length === 0) throw new Error('sub-charter needs items');
+  if (!id) throw new Error('sub-charter needs an id');
+
+  const parentSet = new Set(parent.items.map(canonicalizeItem));
+  const outside = items.filter(i => !parentSet.has(canonicalizeItem(i)));
+  if (outside.length > 0) {
+    const first = canonicalizeItem(outside[0]);
+    throw new Error(
+      `sub-charter would widen its parent: ${outside.length} item(s) not in charter ${parent.id}. First: ${first}`
+    );
+  }
+
+  // min(requested, parent). A null parent window means unbounded, so the
+  // request stands; otherwise the parent's bound wins whenever it is tighter.
+  let bound = parent.expiresAt ?? null;
+  if (expiresAt && bound) bound = Math.min(expiresAt, bound);
+  else if (expiresAt && !bound) bound = expiresAt;
+
+  return {
+    format: CHARTER_FORMAT,
+    kind: 'sub',
+    id,
+    title: title || `(sub-charter of ${parent.id})`,
+    parentId: parent.id,
+    // Pinning the parent's hash means a sub-charter is void the moment the
+    // parent's enumeration changes. A delegate cannot survive a mandate being
+    // rewritten underneath it.
+    parentEnumerationHash: parent.enumerationHash,
+    issuedAt: Date.now(),
+    expiresAt: bound,
+    itemCount: items.length,
+    enumerationHash: enumerationHash(items),
+    items
+  };
+}
+
+/**
+ * Verify a sub-charter. Four checks, and the ORDER matters: the parent's
+ * signature is established before anything about the child is trusted, because
+ * a subset of an unsigned set authorizes nothing.
+ *
+ *   1. The parent verifies against the owner's key.
+ *   2. The parent is the one this sub was carved from (hash pin).
+ *   3. The sub's own enumeration still hashes to what it claims, so its item
+ *      list has not been edited since derivation.
+ *   4. Every sub item is still in the parent.
+ *
+ * Check 4 is what makes an unsigned sub-charter safe. Adding an item to the
+ * file does not forge anything; it just stops being a subset.
+ */
+export function verifySubCharter(sub, parent, approvalPubJwkX, now = Date.now()) {
+  try {
+    if (!sub || sub.kind !== 'sub') return { ok: false, reason: 'not a sub-charter' };
+
+    const p = verifyCharter(parent, approvalPubJwkX);
+    if (!p.ok) return { ok: false, reason: `parent charter does not verify: ${p.reason}` };
+
+    if (sub.parentId !== parent.id) {
+      return { ok: false, reason: `sub-charter names parent ${sub.parentId}, got ${parent.id}` };
+    }
+    if (sub.parentEnumerationHash !== parent.enumerationHash) {
+      return { ok: false, reason: 'parent enumeration changed since this sub-charter was carved' };
+    }
+    if (!Array.isArray(sub.items) || sub.items.length === 0) {
+      return { ok: false, reason: 'sub-charter has no items' };
+    }
+    if (sub.itemCount !== sub.items.length) {
+      return { ok: false, reason: `itemCount ${sub.itemCount} does not match ${sub.items.length} items` };
+    }
+
+    let recomputed;
+    try { recomputed = enumerationHash(sub.items); }
+    catch (e) { return { ok: false, reason: `sub-charter enumeration malformed: ${e.message}` }; }
+    if (recomputed !== sub.enumerationHash) {
+      return { ok: false, reason: 'sub-charter enumeration hash mismatch: its item list changed' };
+    }
+
+    const parentSet = new Set(parent.items.map(canonicalizeItem));
+    const outside = sub.items.filter(i => {
+      try { return !parentSet.has(canonicalizeItem(i)); } catch (e) { return true; }
+    });
+    if (outside.length > 0) {
+      return { ok: false, reason: `sub-charter is not a subset: ${outside.length} item(s) outside the parent` };
+    }
+
+    if (isExpired(parent, now)) return { ok: false, reason: 'parent charter has expired' };
+    if (isExpired(sub, now)) return { ok: false, reason: 'sub-charter has expired' };
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `sub-charter verification error: ${e.message}` };
+  }
+}
+
 /** Read every charter file in <home>/charters. Unreadable files are skipped. */
 export function loadCharters(home) {
   const dir = path.join(home, 'charters');
