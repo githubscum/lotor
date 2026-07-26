@@ -88,7 +88,7 @@ describe('parseSession usage dedup (cost/2)', () => {
     // turns counts assistant LINES, not deduplicated messages — should be 4
     assert.strictEqual(result.counts.turns, 4);
     // Provenance discriminator
-    assert.strictEqual(result.cost.schema, 'cost/2');
+    assert.strictEqual(result.cost.schema, 'cost/3');
   });
 
   it('sums distinct messages by message.id (no over-collapse)', () => {
