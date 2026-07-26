@@ -299,6 +299,86 @@ function describeAction(actionRequest) {
 }
 
 /**
+ * Find an already-staged request that is a near-twin of this one.
+ *
+ * Signature binding is exact, so a trivially-changed command produces a brand
+ * new request id with no visible link to the one the owner just signed. This
+ * happened three times on 2026-07-25: a forced S4U-to-Interactive change, a
+ * `tail -20` becoming `-25`, and a script fixed between attempts. Each time the
+ * owner was asked to re-approve something they had approved minutes earlier,
+ * with nothing on screen saying so. Every avoidable signature teaches the
+ * operator to sign faster and read less (limit 26).
+ *
+ * This changes NOTHING about validation. It only lets the message say "this is
+ * a variant of X" instead of presenting as novel.
+ *
+ * Similarity is deliberately crude: same action, and the differing middle is a
+ * small fraction of the whole once a common prefix and suffix are stripped. A
+ * real edit distance would be more precise and is not worth the code. A missed
+ * match costs the old behaviour; a false match costs one misleading line that
+ * the printed diff immediately corrects.
+ */
+function findSimilarStagedRequest(home, actionRequest, currentId) {
+  try {
+    const dir = path.join(home, 'pending-approvals', 'requests');
+    if (!fs.existsSync(dir)) return null;
+
+    const detailOf = r => {
+      const p = r?.params || {};
+      return p.command || p.file_path || p.url || p.path || '';
+    };
+    const nowDetail = detailOf(actionRequest);
+    if (!nowDetail) return null;
+
+    // Newest first, and capped. This runs on the deny path, which must stay
+    // fast, and staged requests are never cleaned up (185 of them by
+    // 2026-07-25), so an uncapped scan would only get slower.
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.json') && f !== `${currentId}.json`)
+      .map(f => {
+        const full = path.join(dir, f);
+        let mtime = 0;
+        try { mtime = fs.statSync(full).mtimeMs; } catch (e) { /* ignore */ }
+        return { id: f.slice(0, -5), full, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 25);
+
+    for (const f of files) {
+      let prior;
+      try { prior = JSON.parse(fs.readFileSync(f.full, 'utf8')); } catch (e) { continue; }
+      if (prior?.action !== actionRequest?.action) continue;
+
+      const wasDetail = detailOf(prior);
+      if (!wasDetail || wasDetail === nowDetail) continue;
+
+      let head = 0;
+      const max = Math.min(wasDetail.length, nowDetail.length);
+      while (head < max && wasDetail[head] === nowDetail[head]) head++;
+
+      let tail = 0;
+      while (
+        tail < max - head &&
+        wasDetail[wasDetail.length - 1 - tail] === nowDetail[nowDetail.length - 1 - tail]
+      ) tail++;
+
+      const changed = Math.max(wasDetail.length, nowDetail.length) - head - tail;
+      const whole = Math.max(wasDetail.length, nowDetail.length);
+      if (whole > 0 && changed / whole <= 0.25) {
+        return {
+          id: f.id,
+          was: wasDetail.slice(Math.max(0, head - 20), wasDetail.length - tail + 20),
+          now: nowDetail.slice(Math.max(0, head - 20), nowDetail.length - tail + 20)
+        };
+      }
+    }
+    return null;
+  } catch (e) {
+    return null; // never break the deny path over a convenience feature
+  }
+}
+
+/**
  * Build the fixed-shape denial message every deny path prints. Five parts,
  * always in this order: WHAT matched, WHY it matters, how RISKy it is, what
  * the signature actually SCOPEs (only the listed params — never file
@@ -325,12 +405,29 @@ function buildDenialMessage(ruleId, actionRequest, home, requestId) {
   const lines = [
     `LOTOR GATE — rule "${ruleId}" (${actionRequest?.action || 'unknown'})`,
     ``,
-    `  WHAT    ${what}`,
+    `  WHAT    ${what}`
+  ];
+
+  // If this is a near-twin of something already staged, say so BEFORE the
+  // reasoning. The owner has usually approved the plan already; the question in
+  // front of them is whether this is a variant, and that belongs at the top.
+  const twin = findSimilarStagedRequest(home, actionRequest, requestId);
+  if (twin) {
+    lines.push(
+      `  VARIANT OF staged request ${twin.id} — you approved a near-identical`,
+      `          command. This one differs, so the earlier signature does not`,
+      `          cover it.`,
+      `            was:  ...${twin.was}...`,
+      `            now:  ...${twin.now}...`
+    );
+  }
+
+  lines.push(
     `  WHY     ${info.why}`,
     `  RISK    ${info.risk}`,
     `  SCOPE   ${scopeNote}`,
     `          Single use. Bound to this exact request. Review before you sign.`
-  ];
+  );
 
   if (requestId) {
     lines.push(

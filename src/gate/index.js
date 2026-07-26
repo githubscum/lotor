@@ -24,6 +24,27 @@ import { withLock } from '../store/lock.js';
 
 const DEFAULT_BASE_DIR = '.';
 
+// Approval token freshness (limit 16).
+//
+// A token with no expiry is valid until its nonce is spent, so an approval
+// signed a week ago still authorizes an action attempted today. This bounds it.
+//
+// 60 minutes is chosen for the away-signing case: the owner may sign from a
+// phone over their own VPN, and the gap between signing and the agent's retry is
+// realistically seconds to minutes, occasionally longer. A tighter window would
+// produce false failures in the workflow this exists to serve, and every false
+// failure teaches the operator to sign faster and read less (limit 26).
+//
+// NOT a security boundary on its own: it reads the system clock, so moving the
+// clock backward widens it, exactly as limit 20 already notes for grant expiry.
+// The clock-proof bound remains the single-use nonce. Two ceilings, one
+// clock-dependent and one not, matching how grants already work.
+const APPROVAL_MAX_AGE_MS = 60 * 60 * 1000;
+
+// A token stamped in the future is a clock problem or a forged one. Allow a
+// little skew, reject the rest.
+const APPROVAL_FUTURE_SKEW_MS = 120 * 1000;
+
 /**
  * Verify an approval token against the stored approval public key.
  *
@@ -43,6 +64,28 @@ function verifyApproval(actionRequest, approvalToken, baseDir = DEFAULT_BASE_DIR
 
     if (!request || !nonce || !timestamp || !signature) {
       return { valid: false, reason: 'approval token missing required fields' };
+    }
+
+    // Freshness (limit 16). Checked here because it is the cheapest rejection
+    // available and needs no I/O. The reason string tells the operator to
+    // re-sign, since a stale-token denial that read like a mismatch would send
+    // them hunting the wrong problem.
+    const age = Date.now() - Number(timestamp);
+    if (!Number.isFinite(age)) {
+      return { valid: false, reason: 'approval token timestamp is not a number' };
+    }
+    if (age > APPROVAL_MAX_AGE_MS) {
+      const mins = Math.round(age / 60000);
+      return {
+        valid: false,
+        reason: `approval token is stale (signed ${mins} min ago, limit ${APPROVAL_MAX_AGE_MS / 60000} min). Re-sign the request.`
+      };
+    }
+    if (age < -APPROVAL_FUTURE_SKEW_MS) {
+      return {
+        valid: false,
+        reason: 'approval token timestamp is in the future (check the system clock)'
+      };
     }
 
     // Load approval public key
