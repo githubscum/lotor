@@ -20,6 +20,16 @@ The chain is local-only. External anchoring (to a timestamp authority, blockchai
 
 Where the session transcript records per-turn token counts, receipts carry them. Dollar cost is not computed in v1: it requires an external, model-specific price table that is not bundled. Treat the cost column as token usage, not a billing figure.
 
+**Re-verified 2026-07-26 against `895a176`. Still true, unchanged.** Recorded
+because a re-check that finds nothing is worth as much as one that finds
+something, and limit 29 exists precisely because nobody could tell when an entry
+was last held against the code. The parser still carries `note: 'tokens only; no
+USD in source'` and no price table exists anywhere in `src/`. This entry was
+grouped with 13 in a work item titled "per-model cost attribution", which is a
+different claim: 13 is about *whose* tokens, 4 is about *dollars*. **Amending 4
+on the strength of that grouping would have been exactly the error that produced
+limit 27's correction**, and it was avoided only by reading the source.
+
 ## 5. Session receipts are cumulative subsessions, not a single record
 
 Claude Code fires `SessionEnd` more than once for the same session (on clear, on resume, on exit). Each firing that carries new activity appends a new receipt for that session, indexed `subsession` 0, 1, and so on. Nothing is ever amended or superseded, because the chain is append-only by design.
@@ -51,6 +61,29 @@ The chain key, which signs log entries for tamper-evidence, is written to `keys/
 ## 9. The chain key is per-machine, so receipts do not verify across machines
 
 The chain key is generated on first use and lives on that machine. Receipts written on one machine will not verify on another unless you copy the chain public key across. The approval key behaves differently: because it is derived from your passphrase, the same passphrase reproduces the same approval key anywhere. Expect a single-machine chain in v1.
+
+**Amended 2026-07-26, verified against `895a176` by reading the source and
+running an export/verify round trip on the live 640-entry chain.**
+
+The gap this entry described is closed. `bin/export-chain.js` (`npm run export`,
+`npm run verify:bundle`) packages the chain public key and every entry into one
+file that verifies against the **supplied** key rather than the local one. The
+private key is never read by that file, so a bundle is safe to hand to someone.
+
+The sentence above is what made this worth building: "unless you copy the chain
+public key across" described a *possibility*, not a workflow. Nothing packaged
+the two halves and nothing verified against a supplied key, so in practice the
+record was one only its owner could read. **A record you cannot hand over is
+most of the way back to trusting the party being audited**, which is the thing
+this project exists to refuse.
+
+**What is still true.** The key remains per-machine and generated on first use;
+this makes a chain *portable*, not *multi-machine*. Two installs still produce
+two independent chains under two keys, and nothing merges them. And a clean
+verify on a bundle inherits every limit the local chain has: tail-truncation
+still leaves a valid prefix (limit 22) and capture was self-attested to begin
+with (limit 1). The verifier prints both of those rather than a bare tick, which
+is the correct behaviour and is also why "VALID" must not be read as "complete".
 
 ## 10. Approval key strength is entirely passphrase strength
 
@@ -103,6 +136,31 @@ tokens for comparable work. Summing across services, or reading `session.model` 
 model this session's cost was incurred on," produces a number with no coherent meaning.
 Per-model, per-harness cost attribution is not built. Treat any total from a mixed-model
 session as directional at best, never as a cross-service comparison.
+
+**Amended 2026-07-26, verified against `895a176` by reading `src/parser/index.js`
+and running its tests. HALF of this closed. The half that did not is the half the
+title names second, and the entry stays open on that basis.**
+
+**Per-model: built.** Receipts now carry `cost.byModel`, a per-model breakdown of
+input, output, cache-creation and cache-read tokens plus a message count, under
+schema `cost/3`. A message with no model field lands in an `unknown` bucket
+rather than being dropped, so the buckets do not silently lose work. Crucially,
+**no sum across buckets is produced**, deliberately: the entry's own argument is
+that adding tokens across providers yields a number with no coherent meaning, so
+the fix must not quietly reintroduce the blend it was built to expose.
+
+**Per-harness: not built, and nothing has changed.** There is no `harness` field
+anywhere in `src/`. A chain written by two harnesses still cannot say which one
+wrote what. This matters more now than when the entry was written, because a
+second harness is a live plan rather than a hypothetical, and the field has to
+exist *before* the second harness starts writing or the entries it produces are
+retroactively unattributable. An append-only chain cannot be backfilled.
+
+**And the flat total is still there.** `session.model` still records only the
+last model seen. The breakdown sits alongside it rather than replacing it, so
+anything reading `session.model` as "the model this session's cost was incurred
+on" is still wrong in exactly the way described above. Read `byModel`, not the
+top-line total.
 
 ## 14. A session that dies badly leaves an open, not a full record
 
@@ -202,6 +260,36 @@ signature. A process with direct filesystem access, outside the gated tools,
 can still delete it, and the same residual applies to the chain itself (limit
 22). The log also grows without bound and is scanned linearly on every gated
 call.
+
+**Amended 2026-07-26, verified against `895a176` by reading `src/gate/index.js`
+and running `test/approval-token-freshness.test.js`.**
+
+The first paragraph is closed. `verifyApproval()` now checks the token's
+`timestamp` against the clock and rejects on both sides: older than 60 minutes
+is stale, and more than 120 seconds in the future is a clock problem or a forged
+stamp. **A stale token gets its own denial reason naming the age and the limit**,
+rather than presenting as a mismatch, because a stale-token denial that read like
+a mismatch would send the operator hunting the wrong problem. Sixty minutes was
+chosen for the away-signing case rather than for security: the owner may sign
+from a phone over their own VPN, and a tighter window would manufacture false
+failures in the exact workflow it exists to serve. Every false failure teaches
+the operator to sign faster and read less (limit 26).
+
+**The second paragraph is narrowed, not closed, and the distinction is the
+point.** Deleting `keys/approval-nonces.log` no longer restores *every token ever
+signed* — it restores only those signed within the last hour. That is a real
+reduction in blast radius and it is not a fix: a process with direct filesystem
+access outside the gated tools can still delete the log, and any token inside its
+window comes back. The clock-proof bound is still the single-use nonce; the
+freshness window reads the system clock, so moving the clock backward widens it,
+exactly as limit 20 already notes for grant expiry. **Two ceilings, one
+clock-dependent and one not.** Neither alone is the guarantee.
+
+Unbounded log growth and the linear scan on every gated call are unchanged.
+
+See also limit 30: expiry bounds how long a banked signature waits and does not
+stop one from existing, and a token spent inside its window is spent on whatever
+command matches.
 
 ## 17. A grant lets one signature cover many executions
 
