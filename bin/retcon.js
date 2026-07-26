@@ -109,8 +109,17 @@ function truncate(s, n) {
   return s.length <= n ? s : s.slice(0, n - 1) + '…';
 }
 
-/** Fold the chain into the few facts a human actually reads. */
-function reconstruct(entries, sinceMs) {
+/**
+ * Fold the chain into the few facts a human actually reads.
+ *
+ * Exported so it can be tested. It shipped untested and produced two wrong
+ * numbers on its first real run, both of which changed what the output MEANT
+ * rather than merely how it looked: approvals were counted into the denial
+ * histogram, and open EVENTS were counted as sessions so one busy session read
+ * as a hundred crashed ones. Two meaning-changing bugs in one fold is the
+ * argument for the tests that now exist.
+ */
+export function reconstruct(entries, sinceMs) {
   const inWindow = entries.filter(e => (e.timestamp || 0) >= sinceMs);
 
   const out = {
@@ -352,6 +361,16 @@ function printCharter(charter, r, home) {
 
 // --------------------------------------------------------------------------
 
+// Only run the CLI when invoked directly. Importing this file for its fold
+// must not read the chain, print a report, or call process.exit — a test that
+// exits the runner on import is a test that cannot fail usefully.
+const INVOKED_DIRECTLY =
+  process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('bin/retcon.js');
+
+if (!INVOKED_DIRECTLY) {
+  // Imported. Exports are already defined above; do nothing else.
+} else {
+
 const argv = process.argv.slice(2);
 function flag(name) {
   const i = argv.indexOf(name);
@@ -405,3 +424,5 @@ if (charterId) {
 }
 
 printWindow(r);
+
+} // end INVOKED_DIRECTLY
