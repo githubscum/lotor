@@ -1137,6 +1137,36 @@ the retcon is reading an empty room and reporting it as an empty plan.**
 Not fixed here. `bin/` is non-delegable core, and the charter under which this was
 found required stopping rather than working around.
 
+**Amended 2026-07-27. FIXED, and verified against the charter that produced this
+entry.** Run against charter 004, the same eight declared items it previously
+reported as `declared and never attempted 8`, it now reports `confirmed by a
+touched path 8` and `declared, no matching path 0`. 689 tests green.
+
+The reconciliation moved to `src/views/reconcile.js`, outside the non-delegable
+core, and the fold now keys `toolsSeen` by the bare tool-name string the gate
+actually writes and retains `touchedPaths` instead of only a count.
+
+**The coverage fact underneath is unchanged and no fix could change it.** Gate
+receipts still carry no target (limit 36) and session receipts still carry paths
+only at session end. What changed is that the tool no longer converts that absence
+into a confident wrong answer. There are now four outcomes, and three of them are
+shades of "the record cannot say": a declared **command** item is `unreconcilable`
+because nothing in the chain records command strings, and a window with no closed
+session is `undetermined` rather than absent, which was the empty room this entry
+described being read as an empty plan.
+
+**A NEW LIMITATION THE FIX INTRODUCES, in the wrong direction, stated here rather
+than left in a docstring.** `samePath()` matches exactly or on a path-segment-
+boundary suffix, because a charter is written by a human in relative form while
+`touched` records whatever the harness captured, usually absolute. **That can
+falsely confirm two different files that share a tail** — the same relative path
+inside two checkouts, most obviously. The failure direction is a false
+CONFIRMATION, which is worse than a false miss, and it cannot be closed by
+resolving the path: a charter may name a file that does not exist yet, and a chain
+may be read on a machine that did not write it (limit 9). Read `confirmed` as
+"a path consistent with this item was touched", never as proof the declared file
+was the one.
+
 ## 39. The retcon's honesty block states invented specifics
 
 Found in the same run, and it is the worse of the pair.
@@ -1158,6 +1188,24 @@ no caveat**, because a reader who distrusts the numbers will trust the disclaime
 
 The fix is to derive the sentence from the counts already computed, or to drop the
 specifics and keep the general statement. Not done here: `bin/` is core.
+
+**Amended 2026-07-27. FIXED.** `deviationNote()` in `src/views/reconcile.js` builds
+the sentence from the counts it was handed, states nothing numeric when nothing was
+counted, and is covered by four assertions including one that fails if the string
+`items 3 and 7` ever reappears. Verified live on charter 004, where it now prints
+"This run counted: 2 tool(s) were used that no declared item names" against a report
+showing exactly that.
+
+**What has NOT changed, and is the reason this entry stays worth reading.** The
+block still presents rather than detects. It can only report what was counted, and
+what was counted is bounded by limit 36 (a gate receipt records the tool, never the
+target) and by the fact that the whole comparison is self-attested capture
+(limit 1). A caveat that is now honest about its arithmetic is still a caveat about
+a record that cannot see intent.
+
+One line was added that the old block never had, because the fix made it necessary:
+**an item this cannot check is NOT an item that did not run.** The previous version
+had no way to say that, since it had no category for it.
 
 ## 40. Nothing in this repository writes a confession
 

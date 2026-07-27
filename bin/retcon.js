@@ -51,11 +51,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveHome } from '../src/home.js';
 import {
-  canonicalizeItem,
   verifyCharter,
   completion,
   loadCharters
 } from '../src/charter/index.js';
+
+// The bearing itself lives in views, not here.
+//
+// It belongs there: core-paths.js excludes src/views from the non-delegable
+// core because rendering "can mislead a human reader, which is a real risk,
+// but it cannot change what is permitted", and comparing two lists is
+// rendering. It is also the reason that logic could be written AND TESTED
+// unattended while this file could not, which is worth saying plainly rather
+// than dressing up as pure architecture.
+//
+// `canonicalizeItem` is gone from the import above. Calling it on a
+// gated-action receipt's `action` was the whole of KNOWN-LIMITS 38.
+import { reconcile, deviationNote } from '../src/views/reconcile.js';
 
 function die(msg) {
   process.stderr.write(`lotor retcon: ${msg}\n`);
@@ -135,7 +147,18 @@ export function reconstruct(entries, sinceMs) {
     approved: [],
     grantUses: 0,
     deniedByRule: new Map(),
-    actionsSeen: new Map()    // canonical action -> count
+
+    // Tool NAME -> count. The rename from `actionsSeen` IS the fix for
+    // KNOWN-LIMITS 38. A gated-action receipt records `action` as a bare tool
+    // name (src/gate/index.js:144) and never its target (limit 36), so this can
+    // answer WHICH TOOLS ran and can never answer ON WHAT.
+    toolsSeen: new Map(),
+
+    // Every file path a session receipt reported in this window. The only path
+    // evidence the chain carries, so the only thing a declared file item can be
+    // reconciled against. Shape at src/parser/index.js:186 is { path, via },
+    // not a bare string.
+    touchedPaths: new Set()
   };
 
   for (const e of inWindow) {
@@ -172,6 +195,17 @@ export function reconstruct(entries, sinceMs) {
           touched: Array.isArray(p.touched) ? p.touched.length : 0
         });
       }
+      // Keep the PATHS, not only how many. The count is what the summary
+      // prints; the paths are what reconciliation needs, and discarding them
+      // here is why a charter of file items could not be checked at all.
+      // Collected outside the `if (id)` because a session receipt missing its
+      // id still carries real evidence of what was touched.
+      if (Array.isArray(p.touched)) {
+        for (const t of p.touched) {
+          const s = typeof t === 'string' ? t : (t && t.path);
+          if (s) out.touchedPaths.add(s);
+        }
+      }
       continue;
     }
     if (p.type === 'gated-action') {
@@ -193,10 +227,14 @@ export function reconstruct(entries, sinceMs) {
         out.deniedByRule.set(key, (out.deniedByRule.get(key) || 0) + 1);
       }
 
-      try {
-        const c = canonicalizeItem(p.action);
-        out.actionsSeen.set(c, (out.actionsSeen.get(c) || 0) + 1);
-      } catch { /* not a shape we can canonicalize; skip */ }
+      // `p.action` is a bare tool-name string, not an object. The previous
+      // version called canonicalizeItem() on it, which throws on a string,
+      // into an empty catch — so this map was ALWAYS EMPTY in production and
+      // every charter reconciled against it reported all items unattempted and
+      // nothing undeclared. Both directions wrong. That is KNOWN-LIMITS 38.
+      if (typeof p.action === 'string' && p.action !== '') {
+        out.toolsSeen.set(p.action, (out.toolsSeen.get(p.action) || 0) + 1);
+      }
       continue;
     }
     if (p.type === 'grant-use') out.grantUses += 1;
@@ -323,39 +361,39 @@ function printCharter(charter, r, home) {
   w(`  charter is ${c.done ? 'DONE' : 'STILL OPEN'}`);
   w('');
 
-  // The bearing itself.
-  const declared = new Map();
-  for (const item of charter.items) {
-    try { declared.set(canonicalizeItem(item), item); } catch { /* skip */ }
-  }
-
-  const ranButNotDeclared = [];
-  for (const [canon, n] of r.actionsSeen) {
-    if (!declared.has(canon)) ranButNotDeclared.push({ canon, n });
-  }
-  const declaredButNotRun = [];
-  for (const [canon, item] of declared) {
-    if (!r.actionsSeen.has(canon)) declaredButNotRun.push(item);
-  }
+  // The bearing itself. Four outcomes, not two, because three of them are
+  // shades of "the record cannot say" and that is the truthful shape of this
+  // comparison rather than a hedge. See src/views/reconcile.js for why a
+  // declared COMMAND item can never be checked against anything in the chain.
+  const out = reconcile(charter, r);
 
   w('  DEVIATION');
-  w(`    declared and never attempted   ${declaredButNotRun.length}`);
-  for (const item of declaredButNotRun.slice(0, 8)) {
-    w(`      - ${item.id || '?'}  ${truncate(detailOf(item), 56)}`);
+  w(`    confirmed by a touched path    ${out.confirmed.length}`);
+  w(`    declared, no matching path     ${out.noEvidence.length}`);
+  for (const x of out.noEvidence.slice(0, 8)) {
+    w(`      - ${x.item.id || '?'}  ${truncate(detailOf(x.item), 56)}`);
   }
-  w(`    attempted and not declared     ${ranButNotDeclared.length}`);
-  for (const x of ranButNotDeclared.slice(0, 8)) {
-    let d = '';
-    try { d = detailOf(JSON.parse(x.canon)); } catch { d = x.canon; }
-    w(`      - ${String(x.n).padStart(2)}x  ${truncate(d, 56)}`);
+  if (!out.pathEvidenceAvailable) {
+    w(`    NOT YET CHECKABLE              ${out.undetermined.length}   (no session has closed in this window)`);
+  }
+  w(`    cannot be checked at all       ${out.unreconcilable.length}   (receipts record no command strings)`);
+  for (const x of out.unreconcilable.slice(0, 8)) {
+    w(`      - ${x.item.id || '?'}  ${truncate(detailOf(x.item), 56)}`);
+  }
+  w(`    tools used but not declared    ${out.toolsNotDeclared.length}`);
+  for (const x of out.toolsNotDeclared.slice(0, 8)) {
+    w(`      - ${String(x.n).padStart(2)}x  ${x.tool}`);
   }
   w('');
 
+  // DERIVED, never invented. The previous version printed "items 3 and 7 never
+  // ran and four things ran which were not on the list" as hardcoded prose,
+  // regardless of the data, inside this very block. In the run that found it,
+  // those numbers contradicted the computed figures six lines above. A caveat
+  // that invents specifics is worse than no caveat, because a reader who
+  // distrusts the numbers will trust the disclaimer. KNOWN-LIMITS 39.
   w('  WHAT THIS DOES NOT TELL YOU');
-  w('    Receipts carry which tools ran and a digest of their parameters.');
-  w('    They carry no intent, ever. This shows that items 3 and 7 never ran');
-  w('    and that four things ran which were not on the list. It cannot show');
-  w('    why. Read the deviation as a question, not a verdict.');
+  for (const line of deviationNote(out).split('\n')) w(`    ${line}`);
   w('');
 }
 
