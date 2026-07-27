@@ -16,6 +16,22 @@
  *
  * THE RULE BEING TESTED
  *   Absent is not zero. A field that does not apply is omitted, not defaulted.
+ *
+ * PROVE-FAIL-FIRST, RUN LATE
+ *   The fix was written before this test, so the discipline was broken. Rather
+ *   than assert the test would have caught it, the pre-fix summariser was
+ *   reproduced verbatim and these assertions were run against it on 2026-07-26.
+ *   All five failed:
+ *
+ *     - gated-action reports a type                    failed
+ *     - gated-action must not report toolCalls         failed
+ *     - session-open carries payload-level sessionId   failed
+ *     - a kind-discriminated row is labelled           failed
+ *     - a quiet session and a denial differ            failed
+ *
+ *   Every assertion discriminates. A test that passes against the broken code
+ *   is worse than no test, because it manufactures confidence, and the only way
+ *   to know which kind you have is to run it against the break.
  */
 
 import { test } from 'node:test';
