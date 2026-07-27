@@ -44,7 +44,7 @@ Lotor is one primitive, a signed local receipt, applied wherever "what did my ag
 - **Tamper-evidence.** The chain detects after-the-fact alteration of the log. It does not prove the events were complete or truthful at capture time (see Known limits), but it proves the record has not been changed since.
 - **Feeding your own memory.** Receipts are durable, structured input to your own long-horizon agent memory, not telemetry for a vendor's dashboard.
 - **Vendor-churn survival.** Switch models or providers whenever you want. The record stays on your machine and stays readable. Your history does not belong to whichever engine you were renting.
-- **Scoped custodial integrations (pending, reach out for details).** The sanctioned path for sharing a record with an auditor, a client, or your own IT: a scoped, redacted view, signed, sent only where you send it. Not built in v1. Today the default is absolute rather than chosen, because there is no export path at all. Anything you share, you share by hand.
+- **Scoped custodial integrations (pending, reach out for details).** The sanctioned path for sharing a record with an auditor, a client, or your own IT: a scoped, redacted view, signed, sent only where you send it. Not built in v1. A portable bundle (`npm run export`) will hand over the whole chain with its public key so it verifies on a machine that did not write it, but whole-chain-or-nothing is the only granularity there is. Choosing what to share is the part that does not exist.
 
 ## Claim discipline
 
