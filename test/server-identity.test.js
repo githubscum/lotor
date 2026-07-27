@@ -81,7 +81,7 @@ describe('server identity', () => {
     const src = readFileSync(path.join(root, 'src/mcp/server.js'), 'utf8');
     const manifest = readJson('manifest.json');
     const declared = new Set(manifest.tools.map((t) => t.name));
-    const known = ['query_receipts', 'sessions_since', 'verify_chain', 'lotor_status', 'gated_action'];
+    const known = ['query_receipts', 'sessions_since', 'sessions_live', 'verify_chain', 'lotor_status', 'gated_action'];
     for (const name of known) {
       if (src.includes(`'${name}'`) || src.includes(`"${name}"`)) {
         assert.ok(

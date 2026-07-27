@@ -48,6 +48,10 @@
       "description": "What happened while you were not looking. Summarises every session in the chain since a point in time, grouped by session, with what each ran and which files it touched. Call it before asserting something has not been built: concurrent sessions cannot see each other and the chain is the only place their work is visible. Idle sessions are counted, not listed. Gate decisions carry no session id and are reported unattributed. Params: since, excludeSessionId, includeQuiet, limit."
     },
     {
+      "name": "sessions_live",
+      "description": "What the other windows are doing right now. Reads live transcripts of sessions that have opened but not yet written a close receipt, so it sees work the chain cannot: a receipt is only written when a session ends. Use it before editing a shared file, and before git add -A in a repo another session may be using. Awareness, not evidence: unsigned, not in the chain, changing as you read. Params: excludeSessionId, staleAfterMinutes, withinHours."
+    },
+    {
       "name": "verify_chain",
       "description": "Verify chain integrity. Returns { ok, brokenAt?, reason?, entryCount }."
     },

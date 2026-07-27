@@ -23,6 +23,7 @@ import { resolveHome } from '../home.js';
 import { loadPolicy } from '../policy/index.js';
 import { snapshotHookRegistration } from '../registration.js';
 import { sinceReport } from '../views/since.js';
+import { liveReport } from '../views/live.js';
 import * as crypto from 'node:crypto';
 
 // Initialize store under the canonical Lotor home
@@ -164,6 +165,27 @@ function handleSessionsSince(args) {
   }
 
   return report;
+}
+
+/**
+ * Tool handler: sessions_live
+ *
+ * What the other windows are doing RIGHT NOW.
+ *
+ * `sessions_since` reads the chain, and the chain only learns about a session
+ * when it ends. With three windows open concurrently that answers nothing about
+ * the two you are not looking at. This reads their live transcripts instead,
+ * whose paths their own session-open receipts already recorded.
+ *
+ * Awareness, not evidence: unsigned, not in the chain, and changing as you read.
+ */
+function handleSessionsLive(args) {
+  const { excludeSessionId, staleAfterMinutes, withinHours } = args || {};
+  return liveReport(resolveHome(), {
+    excludeSessionId,
+    ...(typeof staleAfterMinutes === 'number' ? { staleAfterMs: staleAfterMinutes * 60000 } : {}),
+    ...(typeof withinHours === 'number' ? { withinMs: withinHours * 3600000 } : {})
+  });
 }
 
 /**
@@ -371,6 +393,27 @@ function createMcpServer() {
           }
         },
         {
+          name: 'sessions_live',
+          description: 'What the other windows are doing RIGHT NOW. Reads the live transcripts of sessions that have opened but not yet written a close receipt, so it sees work in progress that the chain cannot: a receipt is only written when a session ends. Use this when you are working in more than one window, before editing a shared file, and before `git add -A` in a repo another session may be using. Reports per session: model, working directory, tool calls, files touched, and how long since it last did anything. AWARENESS, NOT EVIDENCE: these readings are unsigned, are not receipts, are not in the chain, and change as the sessions run. Absence means no open receipt, no transcript, or no work yet, and never that no session is running.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              excludeSessionId: {
+                type: 'string',
+                description: 'Omit one session, usually your own.'
+              },
+              staleAfterMinutes: {
+                type: 'number',
+                description: 'Idle minutes after which a session reads as stale rather than live. Default 30.'
+              },
+              withinHours: {
+                type: 'number',
+                description: 'Only consider sessions opened within this many hours. Default 24. Older transcripts are cleaned up and their absence is expected.'
+              }
+            }
+          }
+        },
+        {
           name: 'verify_chain',
           description: 'Verify the integrity of the receipt chain using the stored public key. Returns ok, brokenAt, reason, and entryCount.',
           inputSchema: {
@@ -418,6 +461,8 @@ function createMcpServer() {
     switch (name) {
       case 'query_receipts':
         return { content: [{ type: 'text', text: JSON.stringify(handleQueryReceipts(args), null, 2) }] };
+      case 'sessions_live':
+        return { content: [{ type: 'text', text: JSON.stringify(handleSessionsLive(args), null, 2) }] };
       case 'sessions_since':
         return { content: [{ type: 'text', text: JSON.stringify(handleSessionsSince(args), null, 2) }] };
       case 'verify_chain':
@@ -438,6 +483,7 @@ function createMcpServer() {
 export {
   handleQueryReceipts,
   handleSessionsSince,
+  handleSessionsLive,
   handleVerifyChain,
   handleStatus,
   handleGatedAction,
