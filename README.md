@@ -28,6 +28,8 @@ Trust used to be the default, because checking was expensive. That assumption is
 
 Lotor separates the two roles by construction. The receipt is written local first, to your machine, under your key. The party with the real stake in the record's integrity, you, is the party that keeps it. The one who did the work does not get to be the one who certifies it. That is why local first is not a feature here. It is the point.
 
+The same rule points back at this repository. What is wrong with Lotor is published by the party it costs, and the fixes are open to you: the [confession board](./confessions/) is a live list of real holes in this tool, each with a reproduction and a scope. It is there so you can check the work instead of taking it.
+
 ## Use cases
 
 Lotor is one primitive, a signed local receipt, applied wherever "what did my agent actually do" is a question you need answered honestly.
@@ -305,4 +307,15 @@ See [DEMO.md](./DEMO.md) for the full runnable walkthrough and [KNOWN-LIMITS.md]
 
 ## Known limits
 
-See [KNOWN-LIMITS.md](./KNOWN-LIMITS.md).
+Everything I know to be wrong with Lotor is in [KNOWN-LIMITS.md](./KNOWN-LIMITS.md), written against my own interest, because a list of your own product's weaknesses is the one claim in this repository that is expensive to fake.
+
+Some of them are open bounties. The [confession board](./confessions/) publishes the string-matcher limits with a file:line anchor, a scope, and acceptance criteria written so you can check your own work before you submit, without me in the loop.
+
+| ID | Title | Difficulty |
+|---|---|---|
+| [A1](./confessions/A1-armed-first-receipt.md) | Armed. Install Lotor, arm the gate, earn your first signed receipt | trivial |
+| [LOTOR-C1](./confessions/C1-egress-get-query-string.md) | Data leaves in a GET query string, ungated and uncaptured | medium |
+| [LOTOR-C2](./confessions/C2-command-rule-undergate.md) | A dangerous command that a gated rule does not catch | hard |
+| [LOTOR-C3](./confessions/C3-bare-push-protected-branch.md) | A bare `git push` to a checked-out protected branch is not seen | medium |
+
+You claim one with a signed Lotor receipt of your own work, so claiming a bounty means running the tool. Attribution and contributor status. No money in this round. And if you read KNOWN-LIMITS and come back with an entry that is not on it yet, you have done something better than close a bounty.
