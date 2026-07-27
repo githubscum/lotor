@@ -89,6 +89,22 @@ test('a policy-warn carries its rule id', () => {
   assert.ok(!('toolCalls' in s));
 });
 
+test('a payload discriminated by `kind` is labelled, not called unknown', () => {
+  // The attempt-ledger writer uses `kind` and snake_case where the gate and the
+  // hooks use `type` and camelCase. Reading only one convention mislabels the
+  // other, which is absent-is-not-zero wearing a different hat. Found while
+  // auditing coverage, not by reasoning about it.
+  const s = summarizeEntry(entry({
+    kind: 'ledger-head',
+    limit_id: 11,
+    entry_count: 2,
+    head_hash: 'c'.repeat(64)
+  }));
+
+  assert.equal(s.type, 'ledger-head');
+  assert.ok(!('toolCalls' in s));
+});
+
 test('an unknown type is described thinly rather than dropped', () => {
   // A future payload type must still be legible. Reporting it as an unknown
   // row is honest; omitting it would make the readout quietly incomplete,

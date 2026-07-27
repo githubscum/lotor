@@ -56,9 +56,14 @@ const store = createStore(resolveHome());
  */
 function summarizeEntry(entry) {
   const p = entry.payload || {};
-  // An untyped payload is the original session receipt. Naming it here rather
-  // than leaving it undefined means callers never have to know the history.
-  const type = p.type ?? 'session';
+  // Two discriminator conventions live in the same chain, found 2026-07-26
+  // while auditing coverage:
+  //   `type`  camelCase payloads written by the gate and the hooks
+  //   `kind`  snake_case payloads written by the attempt-ledger work
+  // Reading only one of them labels the other as unknown, which is the same
+  // absent-is-not-zero failure in a different costume. An untyped payload
+  // carrying `session` is the original receipt shape and predates both.
+  const type = p.type ?? p.kind ?? (p.session ? 'session' : 'unknown');
 
   const base = { seq: entry.seq, timestamp: entry.timestamp, type, hash: entry.hash };
 

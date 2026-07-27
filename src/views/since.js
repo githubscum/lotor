@@ -29,9 +29,15 @@
 
 import { loadChain } from '../store/index.js';
 
-/** An untyped payload is the original session receipt, which predates types. */
+/**
+ * Two discriminator conventions live in the same chain, found 2026-07-26:
+ *   `type`  camelCase payloads from the gate and the hooks
+ *   `kind`  snake_case payloads from the attempt-ledger work
+ * An untyped payload carrying `session` is the original receipt shape and
+ * predates both. Reading only one convention silently mislabels the other.
+ */
 function typeOf(payload) {
-  return payload?.type ?? (payload?.session ? 'session' : 'unknown');
+  return payload?.type ?? payload?.kind ?? (payload?.session ? 'session' : 'unknown');
 }
 
 /**
