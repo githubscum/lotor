@@ -1037,3 +1037,79 @@ then:** a new core *directory* outside `src/` and `bin/` is non-delegable per
 side has a guard (`test/core-classification.test.js` fails on an unclassified
 directory) and `bin/` is now covered by pattern. Anywhere else is still list-shaped,
 and a list is only as good as the last person to remember it.
+
+## 35. A gate decision carries no session id, so a denial cannot be attributed
+
+Found 2026-07-26 building the cross-session view.
+
+Every `gated-action` receipt written in `src/gate/index.js` (four call sites, lines
+149, 167, 192 and 209) carries `decision`, `action`, `reason` or `approvalNonce`, and
+`timestamp`. **None of them carries a session id.**
+
+With one session running that costs nothing, because the denial obviously belongs to
+whoever was there. With concurrent sessions it costs the question entirely: 57
+denials were recorded on 2026-07-26 across six working sessions and **not one can be
+attributed to the session that caused it.**
+
+Attributing by timestamp is available and is not done, deliberately. Sessions overlap,
+so the nearest-open heuristic is wrong often enough that a confident wrong answer
+would be worse than a stated gap. `src/views/since.js` reports gate decisions in a
+separate unattributed list and says why in its own output.
+
+**Why it is not simply fixed:** the gate is called from the hook with an action
+request, and the session id is available to the hook. Threading it through is a core
+change to `src/gate`, which is one signature per edit and belongs in a reviewed
+sitting rather than riding along with a view. Until then, denials are a timeline and
+not a per-session fact.
+
+## 36. An approved receipt records the tool, never the target
+
+Found 2026-07-26 building the autograph ratio, by reading `src/gate/index.js:209`.
+
+The approval receipt is `{ decision: 'approved', action, approvalNonce, timestamp }`.
+`action` is the tool name. There is no path, no command string, no params, and no
+digest of the request.
+
+So the chain answers **that** a signature was spent and **on which tool**, and can
+never answer **on what**. A signature cannot be matched to a charter item, a file, or
+a command after the fact. This is not a missing feature; it is not derivable from the
+record as it stands, and any tool claiming per-signature attribution would be
+guessing.
+
+`src/views/autograph.js` therefore attributes by charter **window** rather than per
+signature, and states the reason in its own output rather than in a comment nobody
+reads.
+
+**The trade this preserves is real and should not be discarded casually.** The
+approval token binds to the exact request, and the request never enters the chain, so
+the chain leaks nothing about what was approved. Recording the target would make
+attribution possible and would put command strings in the log, which limit 18 already
+flags as a disclosure surface. The fix is a digest, not the string, and it is a core
+change.
+
+## 37. The chain accepts entries from writers outside this repository
+
+Found 2026-07-26 while auditing receipt coverage.
+
+Chain entries at seq 727 and 728 are `ledger-head` records carrying `limit_id`,
+`limit_text_sha256`, `entry_count` and `head_hash`. **Nothing in this repository
+writes them.** A search across every JavaScript file finds the string only in a
+comment, a test, and the chain itself. They are produced by the attempt-ledger work,
+which lives in a separate tree.
+
+Two consequences.
+
+**No in-repo enumeration of receipt types can claim completeness**, including
+`docs/receipt-coverage.md`, which says so. A future audit has to re-derive the set
+from a real chain rather than trust the document.
+
+**And the outside writer uses a different discriminator.** Its rows are keyed by
+`kind` and its fields are snake_case, where every payload written here uses `type` and
+camelCase. Both readers in this repo checked only `type` and so labelled those rows
+`unknown`; both were fixed the same day. That is the same class as reporting an absent
+count as zero: a reader that knows one convention describes the other wrongly while
+appearing to work.
+
+There is nothing wrong with a chain that accepts entries from more than one producer.
+The limit is that **the set of producers is not enumerated anywhere**, so the only
+honest way to learn what is in a chain is to read that chain.
