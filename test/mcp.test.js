@@ -139,8 +139,26 @@ describe('MCP tool handlers', () => {
       assert.ok(!JSON.stringify(receipt).includes('/secret/file.js'),
         'receipt summary should not contain full paths');
 
-      // Should only have summary fields
-      const allowedFields = ['seq', 'timestamp', 'sessionId', 'model', 'subsession', 'hash', 'touchedCount', 'toolCalls'];
+      // Should only have summary fields.
+      //
+      // This list grew on 2026-07-26 when query_receipts started reporting what
+      // each row IS. Every addition is a count or a label already present in the
+      // payload, never a path or a param value, so the leakage assertion above is
+      // the part doing the security work and it is unchanged. `type` is the
+      // reason for the change: without it a gate denial and an empty session
+      // were indistinguishable.
+      const allowedFields = [
+        'seq', 'timestamp', 'hash', 'type',
+        // session receipts
+        'sessionId', 'model', 'subsession',
+        'turns', 'toolCalls', 'failures', 'transcriptEntries', 'touchedCount',
+        // session-open
+        'source', 'cwd',
+        // gated-action
+        'decision', 'action', 'reason',
+        // policy-warn
+        'ruleId'
+      ];
       const actualFields = Object.keys(receipt);
       for (const field of actualFields) {
         assert.ok(allowedFields.includes(field),

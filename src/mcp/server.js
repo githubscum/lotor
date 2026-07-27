@@ -28,9 +28,99 @@ import * as crypto from 'node:crypto';
 const store = createStore(resolveHome());
 
 /**
+ * The chain holds several kinds of entry and they do not share a shape.
+ *
+ *   (untyped)      the original session receipt. No `type` field, because it
+ *                  predates typed payloads. Carries session, counts, touched.
+ *   session-open   written at session start. sessionId at payload level.
+ *   gated-action   a gate decision. decision, action (tool name), reason.
+ *   policy-warn    a rule that warned rather than gated. ruleId.
+ *   egress-event   something left the machine.
+ *   ledger-head    a chain-head anchor.
+ *
+ * ABSENT IS NOT ZERO, and this is the whole reason this function was rewritten.
+ *
+ * The previous version mapped every entry through one shape with `|| 0` on the
+ * counts, so a gate denial and a session that genuinely did nothing were
+ * reported identically: `toolCalls: 0, touchedCount: 0`, no type, no way to
+ * tell them apart. On 2026-07-26 an agent queried this surface to find out what
+ * a concurrent session had built, got twelve consecutive rows of zeros, and
+ * concluded the chain was empty. It was not: 771 entries, intact, ~67 of them
+ * carrying real work counts. The data was there and the answer was unavailable.
+ *
+ * A counting product whose readout cannot distinguish "nothing happened" from
+ * "this kind of row has no counts" is not counting. So a field that does not
+ * apply to a row is now OMITTED rather than zeroed, and every row says what it
+ * is.
+ */
+function summarizeEntry(entry) {
+  const p = entry.payload || {};
+  // An untyped payload is the original session receipt. Naming it here rather
+  // than leaving it undefined means callers never have to know the history.
+  const type = p.type ?? 'session';
+
+  const base = { seq: entry.seq, timestamp: entry.timestamp, type, hash: entry.hash };
+
+  switch (type) {
+    case 'session': {
+      const s = p.session || {};
+      const c = p.counts || {};
+      return {
+        ...base,
+        sessionId: s.id,
+        model: s.model,
+        // subsession is meaningfully null on a top-level session, so it is
+        // reported rather than omitted.
+        subsession: s.subsession ?? null,
+        ...(typeof c.turns === 'number' ? { turns: c.turns } : {}),
+        ...(typeof c.toolCalls === 'number' ? { toolCalls: c.toolCalls } : {}),
+        ...(typeof c.failures === 'number' ? { failures: c.failures } : {}),
+        ...(typeof c.transcriptEntries === 'number'
+          ? { transcriptEntries: c.transcriptEntries } : {}),
+        ...(Array.isArray(p.touched) ? { touchedCount: p.touched.length } : {})
+      };
+    }
+
+    case 'session-open':
+      return {
+        ...base,
+        sessionId: p.sessionId,
+        ...(p.source ? { source: p.source } : {}),
+        ...(p.cwd ? { cwd: p.cwd } : {})
+      };
+
+    case 'gated-action':
+      // There is no rule id on this payload. decision + action + reason is the
+      // whole of what was recorded, and reporting a rule name here would be
+      // inventing one.
+      return {
+        ...base,
+        ...(p.decision ? { decision: p.decision } : {}),
+        ...(p.action ? { action: p.action } : {}),
+        ...(p.reason ? { reason: p.reason } : {})
+      };
+
+    case 'policy-warn':
+      return { ...base, ...(p.ruleId ? { ruleId: p.ruleId } : {}) };
+
+    default:
+      // Unknown or future types still report their type and anything from the
+      // small set of fields that recur across payloads. Silently dropping a row
+      // would be worse than describing it thinly.
+      return {
+        ...base,
+        ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+        ...(p.ruleId ? { ruleId: p.ruleId } : {}),
+        ...(p.decision ? { decision: p.decision } : {}),
+        ...(p.action ? { action: p.action } : {})
+      };
+  }
+}
+
+/**
  * Tool handler: query_receipts
  * Returns receipt summaries from the persisted chain (most recent first).
- * Optional filter by sessionId.
+ * Optional filter by sessionId, which now matches session-open rows too.
  */
 function handleQueryReceipts(args) {
   const { limit, sessionId } = args || {};
@@ -38,19 +128,11 @@ function handleQueryReceipts(args) {
   // Reload to get latest
   const entries = store.reload();
 
-  // Map to receipt summaries, filter if needed
-  let receipts = entries.map(entry => ({
-    seq: entry.seq,
-    timestamp: entry.timestamp,
-    sessionId: entry.payload?.session?.id,
-    model: entry.payload?.session?.model,
-    subsession: entry.payload?.session?.subsession ?? null,
-    hash: entry.hash,
-    touchedCount: entry.payload?.touched?.length || 0,
-    toolCalls: entry.payload?.counts?.toolCalls || 0
-  }));
+  let receipts = entries.map(summarizeEntry);
 
-  // Filter by sessionId if provided
+  // Filter by sessionId if provided. session-open carries it at payload level
+  // and the session receipt carries it under session.id; summarizeEntry has
+  // already normalised both onto `sessionId`, so one comparison covers them.
   if (sessionId) {
     receipts = receipts.filter(r => r.sessionId === sessionId);
   }
@@ -281,7 +363,10 @@ export {
   handleQueryReceipts,
   handleVerifyChain,
   handleStatus,
-  handleGatedAction
+  handleGatedAction,
+  // Exported so the per-type shaping can be tested against synthetic payloads
+  // without standing up a store or a chain.
+  summarizeEntry
 };
 
 // Export store for testing (allows tests to reset/reload)
