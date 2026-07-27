@@ -1158,3 +1158,137 @@ no caveat**, because a reader who distrusts the numbers will trust the disclaime
 
 The fix is to derive the sentence from the counts already computed, or to drop the
 specifics and keep the general statement. Not done here: `bin/` is core.
+
+## 40. Nothing in this repository writes a confession
+
+Found 2026-07-26, by being asked what this tool is for and measuring the answer
+against the file you are reading.
+
+The stated purpose is to **find gaps and document them automatically**. The first
+half is real and running. The second half does not exist.
+
+**Every one of the entries above was written by hand, by an agent, inside an
+interactive session.** Discovery is genuinely semi-automated: limit 32 was found by
+the unattended overnight pass, which went looking for a field and reported its
+absence rather than assuming it was there. But nothing anywhere writes to this file
+except a human-driven session that remembers to.
+
+**Limit 29 describes the symptom and this is the cause.** That entry worries about
+the window between a fix landing and its disclosure being amended, and proposes CI
+checks and `status:` fields. All of those presuppose a writer. There isn't one. The
+confession log has no producer, which is the same shape as limit 37 (chain rows
+written by a producer that lives outside this repo) and the same shape as
+`src/charter` sitting two days with neither a producer nor a consumer while its
+tests passed.
+
+**The honest consequence: "automatically" is aspirational and should be read that
+way** anywhere this project describes itself. What exists is a disciplined manual
+practice with good habits around it. That is worth something and it is not what the
+sentence claims.
+
+**Why this is harder than pointing an agent at the code.** Two constraints found
+the same day. Finding can happen blind, but **numbering and deduplication
+structurally require the live file**, so they belong to whoever applies rather than
+whoever discovers. And an automated confessor scored on entries produced will learn
+to find the findable ones. The confession loop's whole design answered the
+closure-Goodhart problem by rewarding discovery instead; rewarding discovery
+mechanically reintroduces the same failure one door down. **A confessor with a quota
+is a confessor that stops writing the expensive confessions.**
+
+Not fixed. Nothing is proposed here either, because the tempting fix (an agent that
+appends entries on a schedule) is the version most likely to produce volume and
+least likely to produce this entry.
+
+## 41. The MCP server answers from a process that can predate the fix
+
+Found 2026-07-26 by walking into it, and the demonstration is the entry.
+
+`query_receipts` was fixed at 19:36:55 CDT to report each row's type and to never
+present an absent count as zero. At 20:45 the same tool returned pre-fix output, and
+that stale output was read as a live defect and reported as a new finding to the
+operator. It was not a defect. It was a **long-lived server process started before
+the commit.**
+
+An MCP server is spawned once by the client and persists across sessions, so any
+change under `src/mcp/` is invisible until the client restarts. Nothing in the
+response says which build answered.
+
+**Why it is worse than an ordinary stale cache.** The tools this server exposes are
+the ones whose entire job is to answer *what actually happened*. This project's own
+strongest operating rule is that the record beats the reasoning, and it has been
+right three times. **This is the one way the record can be wrong: not the chain,
+which is intact and signed, but the reader in front of it running code that no
+longer exists.** The chain said the same true thing the whole time.
+
+Not fixed. The cheap mitigation is for every MCP response to carry the server's own
+commit or build id, so a reader can see that the answer came from a version older
+than the fix they are checking. Until then, after changing anything under
+`src/mcp/`, restart the client before trusting its output, and treat a surprising
+result from these tools as possibly a version question rather than a finding.
+
+## 42. A signature is spent when the gate verifies it, not when the action succeeds
+
+Found 2026-07-26, live, on a push.
+
+An approval was signed and the gate approved it. `git push` then failed, because the
+remote had moved and the histories had diverged. **The token was already consumed.**
+Confirmed by reading `npm run tokens` rather than inferring: zero live, zero spent,
+and the request absent from the expired list, which means consumed, because
+consuming a token deletes its file.
+
+So the operator signed for an action, the action did not happen, and the
+authorization is gone. Signing again is required for the same intent.
+
+**Distinct from the two neighbouring entries.** Limit 27 is a signature burned by
+*mutating* the command. Limit 30 is a surplus signature *banking*. This is a
+signature spent on a command the gate approved and the world refused.
+
+**And it is probably not fixable at this layer, which is why it is disclosed rather
+than queued.** The gate is a `PreToolUse` hook. It runs before the tool runs and
+never sees the outcome, so "consume on success" is not implementable where the nonce
+is recorded. Holding a nonce open pending a result the gate cannot observe would
+also reopen the replay window that single-use nonces exist to close. The honest
+statement is that **an approval authorizes an attempt, never an outcome**, and the
+cost of a failed attempt falls on the human as another signature.
+
+Practical consequence worth stating: before staging anything that can fail for
+reasons outside the gate, especially a network operation, check the precondition
+first. The `git fetch` that would have revealed the diverged history cost nothing and
+was not run.
+
+## 43. The per-action, per-path signature has costs that care cannot avoid
+
+Recorded 2026-07-26 after an evening that spent roughly fifteen signatures on one
+piece of work. Three separate costs, one mechanism: the primitive is bound to an
+action and a path, and nothing else.
+
+**Multi-hunk core work requires banking, and limit 30 frames it as an accident.**
+That entry opens "found live, from a double-signing that was an accident." It is not
+only an accident. For `Edit` the canonical request is the file path alone, so two
+edits to one core file produce two requests that canonicalize identically, and the
+two resulting tokens are completely interchangeable. Neither the operator nor the
+gate can tell which was meant for which hunk. **Any task needing more than one edit
+to one core file therefore requires exactly the credit balance limit 30 warns
+against**, and the only way to avoid it is to sign, apply, then sign again, which
+serialises the work against a sleeping human. The control's design makes its own
+anti-pattern mandatory whenever the change is deeper than one hunk.
+
+**Reverting costs a signature, though it only ever reduces capability.** Restoring a
+core file to its committed state with `git checkout --` is gated as HIGH. Limit 19
+already argues the principle for grants: "deleting requires no signature. That
+direction fails safe, since removing a grant only ever reduces capability." The
+grant layer honours it. The file layer does not, because the matcher sees a
+protected path in a command and cannot tell restoration from modification. This was
+paid twice in one evening.
+
+**An `Edit` denial carries no PURPOSE line.** The mitigation shipped 2026-07-26 puts
+an agent-stated purpose at the top of the denial, sourced from the `description`
+field every tool call was said to carry. Tool calls that edit files do not carry
+one, so the line silently does not appear for `Edit`, `Write` or `NotebookEdit`.
+Commands get the context; file edits, which are the ones that hit `self-mod` most
+often, get none. The fix that was supposed to make forgetting impossible covers
+about half the traffic, and nothing said so until now.
+
+None of the three is fixed. All three point the same way, which is that friction
+relief belongs at the altitude of the plan rather than the action, and that
+charters cannot supply it for the non-delegable core by construction.
