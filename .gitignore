@@ -13,3 +13,14 @@ my-token.json
 mcp-publisher.exe
 mcp-publisher
 mcp-publisher_*.tar.gz
+
+# Runtime state, never source. The live policy is read from LOTOR_HOME
+# (bin/hook-pre-tool-use.js, bin/hook-post-tool-use.js, bin/mode.js all
+# resolve it against the home dir, never against the repo). A policy.json
+# committed here would be a decoy: editing it to tighten your gate would
+# change nothing, and a pull could silently alter someone's enforcement.
+policy.json
+
+# Local scratch
+.run-baseline.sh
+.baseline.txt

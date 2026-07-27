@@ -112,10 +112,10 @@ Both halves reach the chain: the signed grant is recorded when it is issued, and
 
 Named here so no sentence above has to carry a promise it cannot keep.
 
-- **Scoped custodial integrations.** Pending. Reach out for details. The sanctioned path for a redacted slice of your record to reach an auditor, a client, or your own IT, without handing over the whole chain and without a vendor in the middle. There is no export path in v1, so today the only way anything leaves is you moving it by hand.
+- **Scoped custodial integrations.** Pending. Reach out for details. The sanctioned path for a redacted slice of your record to reach an auditor, a client, or your own IT, without handing over the whole chain and without a vendor in the middle. A portable bundle (`npm run export`) now packages the chain with its public key so a record verifies off the machine that wrote it (see KNOWN-LIMITS 9), but that is the whole chain or nothing. Selective disclosure is not built, and it is the piece this bullet is actually about.
 - **External anchoring.** Pending. Without a timestamp authority or an outside notary, the chain proves alteration but not erasure: truncating the tail leaves a shorter chain that still verifies. See KNOWN-LIMITS 3.
 - **Hardware-backed key custody.** Pending. The chain key sits on disk in plaintext today. See KNOWN-LIMITS 8.
-- **Per-model cost attribution.** Pending. A mixed-model session reports one blended total. See KNOWN-LIMITS 13.
+- **Per-harness cost attribution.** Pending. Receipts now carry a per-model breakdown (`cost.byModel`, schema `cost/3`) and every `session-open` records which harness wrote it. Cost itself is still not broken down per harness, and the top-line total remains a blend reported under the last model seen, so read `byModel` and never the total. See KNOWN-LIMITS 13.
 
 ## Install
 
