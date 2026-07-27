@@ -22,6 +22,7 @@ import { gatedAction, isApprovalKeyInitialized } from '../gate/index.js';
 import { resolveHome } from '../home.js';
 import { loadPolicy } from '../policy/index.js';
 import { snapshotHookRegistration } from '../registration.js';
+import { sinceReport } from '../views/since.js';
 import * as crypto from 'node:crypto';
 
 // Initialize store under the canonical Lotor home
@@ -115,6 +116,49 @@ function summarizeEntry(entry) {
         ...(p.action ? { action: p.action } : {})
       };
   }
+}
+
+/**
+ * Tool handler: sessions_since
+ *
+ * The cross-session answer. `query_receipts` returns rows; this returns what
+ * those rows MEAN, grouped by session, which is the unit a reader thinks in.
+ *
+ * WHY IT IS AN MCP TOOL AND NOT ONLY A CLI
+ *   An agent mid-session will not shell out to run a view. It will call a tool
+ *   or it will guess. On 2026-07-26 one asserted three times that something did
+ *   not exist while another session's receipt, and a file that session had
+ *   written, both said otherwise. Putting this where the agent already looks is
+ *   the entire point of the item.
+ *
+ * Defaults to the last 24 hours, because "while I was not looking" is almost
+ * always since yesterday rather than since the beginning of the chain.
+ */
+const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
+
+function handleSessionsSince(args) {
+  const { since, excludeSessionId, includeQuiet, limit } = args || {};
+  const entries = store.reload();
+
+  const report = sinceReport(entries, {
+    since: since ?? Date.now() - DEFAULT_SINCE_MS,
+    excludeSessionId,
+    includeQuiet: Boolean(includeQuiet)
+  });
+
+  // A long window can carry a lot of sessions. Truncate the list rather than
+  // the report, and say so, because a silently shortened answer is the same
+  // class of failure this whole item exists to fix.
+  if (limit && typeof limit === 'number' && report.sessions.length > limit) {
+    report.truncated = {
+      shown: limit,
+      of: report.sessions.length,
+      note: 'Session list truncated by the limit argument. Raise it or narrow the window.'
+    };
+    report.sessions = report.sessions.slice(-limit);
+  }
+
+  return report;
 }
 
 /**
@@ -297,6 +341,31 @@ function createMcpServer() {
           }
         },
         {
+          name: 'sessions_since',
+          description: 'What happened while you were not looking. Summarises every session recorded in the chain since a point in time, grouped by session, with what each one ran and which files it touched. Use this BEFORE asserting that something does not exist, has not been built, or was never done: concurrent sessions cannot see each other, and the chain is the only place their work is visible. Also worth calling at the start of a session to find out what changed since the last one. Sessions that opened and did nothing are counted rather than listed. Gate decisions carry no session id and are reported unattributed rather than guessed at. Reports what it cannot tell you: receipts carry which tools ran and a digest of their parameters, never intent, and capture is self-attested, so an empty result means nothing was recorded rather than nothing happened.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              since: {
+                type: 'string',
+                description: 'Window start as an ISO timestamp. Defaults to the last 24 hours.'
+              },
+              excludeSessionId: {
+                type: 'string',
+                description: 'Omit one session, usually your own, to see only what everyone else did.'
+              },
+              includeQuiet: {
+                type: 'boolean',
+                description: 'Include sessions that opened and did no work. Off by default; one real day produced 101 of them against 6 that did work.'
+              },
+              limit: {
+                type: 'number',
+                description: 'Cap the session list. Truncation is reported rather than silent.'
+              }
+            }
+          }
+        },
+        {
           name: 'verify_chain',
           description: 'Verify the integrity of the receipt chain using the stored public key. Returns ok, brokenAt, reason, and entryCount.',
           inputSchema: {
@@ -344,6 +413,8 @@ function createMcpServer() {
     switch (name) {
       case 'query_receipts':
         return { content: [{ type: 'text', text: JSON.stringify(handleQueryReceipts(args), null, 2) }] };
+      case 'sessions_since':
+        return { content: [{ type: 'text', text: JSON.stringify(handleSessionsSince(args), null, 2) }] };
       case 'verify_chain':
         return { content: [{ type: 'text', text: JSON.stringify(handleVerifyChain(), null, 2) }] };
       case 'lotor_status':
@@ -361,6 +432,7 @@ function createMcpServer() {
 // Export handlers for testing
 export {
   handleQueryReceipts,
+  handleSessionsSince,
   handleVerifyChain,
   handleStatus,
   handleGatedAction,

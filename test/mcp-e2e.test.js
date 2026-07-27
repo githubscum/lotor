@@ -62,7 +62,7 @@ describe('MCP stdio e2e', () => {
   it('completes a real initialize handshake and lists all tools', async () => {
     const { tools } = await client.listTools();
     const names = tools.map(t => t.name).sort();
-    assert.deepStrictEqual(names, ['gated_action', 'lotor_status', 'query_receipts', 'verify_chain']);
+    assert.deepStrictEqual(names, ['gated_action', 'lotor_status', 'query_receipts', 'sessions_since', 'verify_chain']);
     for (const tool of tools) {
       assert.ok(
         typeof tool.description === 'string' && tool.description.length > 0,

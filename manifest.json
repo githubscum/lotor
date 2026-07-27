@@ -44,6 +44,10 @@
       "description": "Query receipt summaries from the chain (most recent first). Optional params: limit, sessionId."
     },
     {
+      "name": "sessions_since",
+      "description": "What happened while you were not looking. Summarises every session in the chain since a point in time, grouped by session, with what each ran and which files it touched. Call it before asserting something has not been built: concurrent sessions cannot see each other and the chain is the only place their work is visible. Idle sessions are counted, not listed. Gate decisions carry no session id and are reported unattributed. Params: since, excludeSessionId, includeQuiet, limit."
+    },
+    {
       "name": "verify_chain",
       "description": "Verify chain integrity. Returns { ok, brokenAt?, reason?, entryCount }."
     },
