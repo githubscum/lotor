@@ -1113,3 +1113,48 @@ appearing to work.
 There is nothing wrong with a chain that accepts entries from more than one producer.
 The limit is that **the set of producers is not enumerated anywhere**, so the only
 honest way to learn what is in a chain is to read that chain.
+
+## 38. The retcon cannot reconcile a charter of file items, and reports the opposite
+
+Found 2026-07-26 running the retcon against the charter that produced it.
+
+`bin/retcon.js:329` builds the declared set from charter items, which are
+`{ action, params: { file_path } }`. `bin/retcon.js:197` builds the observed set from
+`gated-action` receipts, canonicalizing `p.action`, which on a gate receipt is a bare
+tool-name string like `"Edit"`.
+
+**A string and an object never canonicalize to the same key.** The string form throws,
+the empty `catch` on line 199 swallows it, and the observed set stays empty. So a
+charter of eight built, tested and committed items reported as `declared and never
+attempted 8` and `attempted and not declared 0`. Both directions wrong, confidently.
+
+**The root is a coverage fact, not a typo.** Only the session receipt carries file
+paths, in `touched`. Gate receipts carry no path (limit 36). A charter of file items
+cannot be reconciled against gate receipts even in principle: the comparison needs
+`touched`, which is written once, at session end. **While a session is still running,
+the retcon is reading an empty room and reporting it as an empty plan.**
+
+Not fixed here. `bin/` is non-delegable core, and the charter under which this was
+found required stopping rather than working around.
+
+## 39. The retcon's honesty block states invented specifics
+
+Found in the same run, and it is the worse of the pair.
+
+`bin/retcon.js:356-357` prints, inside the section headed WHAT THIS DOES NOT TELL
+YOU:
+
+> This shows that items 3 and 7 never ran and that four things ran which were not on
+> the list.
+
+**Those numbers are hardcoded prose.** They are printed regardless of the data, and in
+the run that found them they contradicted the computed figures six lines above in the
+same report.
+
+Crying wolf is a true signal at the wrong threshold and is merely expensive. This is a
+false statement wearing the shape of a derived one, inside the block whose whole job
+is to bound what the tool is claiming. **A caveat that invents specifics is worse than
+no caveat**, because a reader who distrusts the numbers will trust the disclaimer.
+
+The fix is to derive the sentence from the counts already computed, or to drop the
+specifics and keep the general statement. Not done here: `bin/` is core.
