@@ -81,7 +81,15 @@ describe('denial message: stands on its own', () => {
     // The five fixed sections, in order.
     assert.match(res.stderr, /LOTOR GATE — rule "self-mod"/);
     assert.match(res.stderr, /WHAT\s+Edit:/);
-    assert.match(res.stderr, /WHY\s+this path can change the gate/);
+    // WHY became path-specific on 2026-07-26 (selfModWhy in the hook). This
+    // asserts the LINE rendered with real content, then asserts the SPECIFIC
+    // sentence for this path. The previous assertion pinned the generic string
+    // and so would have failed on a message that got MORE accurate, which is
+    // the wrong polarity for a test whose stated job is the five fixed
+    // sections rendering in order.
+    assert.match(res.stderr, /WHY\s+\S.*\S/, 'the WHY line must render with content');
+    // policy.json IS the rule set, so the specific line has to say so.
+    assert.match(res.stderr, /WHY\s+this is key material, the log itself, or the rule set/);
     assert.match(res.stderr, /RISK\s+HIGH/);
     assert.match(res.stderr, /SCOPE\s+signs file_path only/);
     assert.match(res.stderr, /Single use\. Bound to this exact request/);
@@ -93,6 +101,40 @@ describe('denial message: stands on its own', () => {
     // not reintroduce anything a human or model would have to fill in.
     assert.ok(!res.stderr.includes('<f>'), 'no <f> placeholder should remain');
     assert.ok(!res.stderr.includes('<name>'), 'no <name> placeholder should remain');
+  });
+
+  it('the WHY names which KIND of protected path matched, not one sentence for all of them', async () => {
+    // FOUND 2026-07-26, from the operator's side. RULE_INFO is keyed by rule id
+    // alone, so every self-mod denial printed "this path can change the gate,
+    // its policy, its hooks, or the log". That is TRUE for a hook and FALSE for
+    // bin/retcon.js, which reads the chain and writes to stdout and has no
+    // write path at all. An overstated risk line teaches the operator to
+    // discount it everywhere, including where it is true (KNOWN-LIMITS 26).
+    //
+    // This asserts the two ends are DIFFERENT and each is right. It says
+    // nothing about what gates: both still cost a signature, which the
+    // bin-risk-classes suite asserts separately.
+    const home = path.join(tempDir, 'home-why-specific');
+    fs.mkdirSync(home, { recursive: true });
+
+    const forPath = async file_path => {
+      const res = await runHook({
+        home,
+        stdin: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path } })
+      });
+      assert.strictEqual(res.code, 2, `${file_path} must still be denied`);
+      return /WHY\s+(.+)/.exec(res.stderr)?.[1]?.trim() ?? '';
+    };
+
+    const hookWhy = await forPath('bin/hook-pre-tool-use.js');
+    const reporterWhy = await forPath('bin/retcon.js');
+
+    assert.match(hookWhy, /enforcement hook/,
+      'a hook must be described as the thing that decides what gates');
+    assert.match(reporterWhy, /reports rather than enforces/,
+      'a reporter must not be described as able to change what the gate permits');
+    assert.notStrictEqual(hookWhy, reporterWhy,
+      'the whole defect was one sentence for every protected path');
   });
 
   it('the staged request file exists exactly where the message says, with exactly the denied request', async () => {

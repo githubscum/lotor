@@ -463,11 +463,68 @@ function findSimilarStagedRequest(home, actionRequest, currentId) {
  * an agent to relay this verbatim rather than compose its own warning —
  * this message, not agent judgment, is what is meant to carry the weight.
  */
+/**
+ * WHY, specific to the path that actually matched. self-mod only.
+ *
+ * FOUND 2026-07-26, from the operator's side rather than from an audit.
+ * RULE_INFO is keyed by rule id alone, so every self-mod denial printed the
+ * identical sentence: "this path can change the gate, its policy, its hooks,
+ * or the log." For `bin/retcon.js` that is FALSE. It does readFileSync,
+ * existsSync, statSync and stdout.write, and has no write path of any kind.
+ * It is core because bin/ is covered wholesale, which is the right call for a
+ * directory that also holds every hook and the signing ceremony.
+ *
+ * An overstated risk line is not a harmless excess. It teaches the operator to
+ * discount the line everywhere, including where it is true, which is precisely
+ * the corrosion KNOWN-LIMITS 26 describes. Fifteen self-mod signatures in one
+ * evening under one identical false sentence is what that looks like from the
+ * other side of the prompt.
+ *
+ * TEXT ONLY, AND THAT BOUNDARY IS LOAD-BEARING. This changes what the operator
+ * READS and never what gates. Every path below still requires a signature. The
+ * RISK level is deliberately left at whatever RULE_INFO says rather than graded
+ * here: relitigating the level through a message change would be the drift this
+ * system exists to catch. A grading of bin/ was attempted and reverted the same
+ * night, because `bin/retcon.js` is what the operator reads to judge whether
+ * work matched its charter, which is the same class of hazard as the file that
+ * prints a charter for signing.
+ *
+ * Returns null when it has nothing more specific to say, and the generic
+ * RULE_INFO line stands. Silence here means "no refinement", never "no risk".
+ */
+function selfModWhy(actionRequest) {
+  const t = String(
+    actionRequest?.params?.file_path || actionRequest?.params?.path || ''
+  ).replace(/\\/g, '/').toLowerCase();
+  if (t === '') return null;
+
+  if (/(^|\/)bin\/hook-[^/]+$/.test(t)) {
+    return 'this IS the enforcement hook: it decides what gates at all';
+  }
+  if (/(^|\/)bin\/(charter|approve|setup|gate|mode)\.js$/.test(t)) {
+    return 'this is part of the signing ceremony: it shapes what you read, or how a signature is taken';
+  }
+  if (/(^|\/)(keys|receipts)\//.test(t) || /(^|\/)policy\.json$/.test(t)) {
+    return 'this is key material, the log itself, or the rule set';
+  }
+  if (/(^|\/)src\/(gate|policy|chain|store|grant|charter)\//.test(t)) {
+    return 'this can change what the gate permits';
+  }
+  if (/(^|\/)bin\/[^/]+$/.test(t)) {
+    return 'a tool in the protected bin/ directory. It reports rather than enforces, so it ' +
+           'cannot change what the gate permits. It is gated because it is what you read to ' +
+           'judge whether the work matched the plan';
+  }
+  return null;
+}
+
 function buildDenialMessage(ruleId, actionRequest, home, requestId) {
-  const info = RULE_INFO[ruleId] || {
+  const base = RULE_INFO[ruleId] || {
     why: 'this matched a gated rule',
     risk: 'UNKNOWN — no risk description is defined for this rule'
   };
+  const refinedWhy = ruleId === 'self-mod' ? selfModWhy(actionRequest) : null;
+  const info = refinedWhy ? { ...base, why: refinedWhy } : base;
   const what = describeAction(actionRequest);
   const signedKeys = Object.keys(actionRequest?.params || {});
   const scopeNote = signedKeys.length > 0
