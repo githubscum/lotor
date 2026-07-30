@@ -1340,3 +1340,31 @@ about half the traffic, and nothing said so until now.
 None of the three is fixed. All three point the same way, which is that friction
 relief belongs at the altitude of the plan rather than the action, and that
 charters cannot supply it for the non-delegable core by construction.
+
+## 44. Scheduled task and cron operations are not gated
+
+Persistent unattended execution paths — Windows scheduled tasks
+(`Register-ScheduledTask`, `schtasks /Create`, `New-JobTrigger`), POSIX cron
+(`crontab`, `systemd-run --on-*`, `at`), and their equivalents — install an
+execution channel that runs outside the harness with no MCP hook in its path.
+The current matcher categories (`opaque-exec`, `egress-other`, `destructive`,
+`push-protected`, `self-mod`, `publish`) pattern-match on command strings and
+file paths. A cmdlet call with structured parameters that installs a recurring
+script has no matchable action verb, and the file it writes on disk (the
+scheduled-task database or a cron file) is not a path this repository considers
+`self-mod`. So there is nothing in the current matcher set that would fire.
+
+`AGENTS.md` in the operator's brain classifies scheduled work as Gate A. The
+mechanism does not enforce it. Found 2026-07-29 by an agent expecting a gate
+ceremony on `Register-ScheduledTask` that never materialized; the task
+registered clean, no staged approval, no receipt of a denial.
+
+The shape closest to a fix is a schedule-source-file gate — watch writes to
+`%SystemRoot%\System32\Tasks\` on Windows and to `crontab` files, systemd-timer
+units, and `atq` state on Linux — which detects the persistence artifact rather
+than the invocation. Detection is not refusal: a scheduled task once registered
+runs without the harness in its path, so preventing registration is the only
+meaningful control at this altitude. What runs when a scheduled task fires is
+back inside the harness (if the scheduled command is `claude` or an agent
+process) or entirely outside it (if the scheduled command is a `.ps1` or shell
+script), and only the first case is even in principle reachable by any hook.
