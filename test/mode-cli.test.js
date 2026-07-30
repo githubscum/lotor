@@ -81,7 +81,14 @@ describe('bin/mode.js', () => {
     const res = await runMode({ home });
     assert.strictEqual(res.code, 0, 'printing must not require a TTY or a passphrase');
     assert.match(res.stdout, /mode: grazing/, 'a fresh home reports the Grazing default');
-    assert.match(res.stdout, /self-mod\s+gate/);
+    // The output is grouped by consequence, not sorted alphabetically. Each
+    // rule appears on a line with its plain-English title followed by the
+    // rule id (dim in a real TTY, plain in this spawned pipe). self-mod
+    // gates in every preset including grazing, so it is under STOPS YOU.
+    assert.match(res.stdout, /STOPS YOU/, 'gated rules land under STOPS YOU');
+    assert.match(res.stdout, /Editing Lotor itself\s+self-mod/, 'self-mod appears with its plain-English title');
+    // Computed summary line closes the printout.
+    assert.match(res.stdout, /\d+ rules\.\s+\d+ stops? you\.\s+\d+ records? you\.\s+\d+ (?:is|are) asleep\./);
   });
 
   it('rejects an unknown mode name before touching the passphrase at all', async () => {

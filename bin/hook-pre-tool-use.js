@@ -51,6 +51,7 @@ import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
 import { resolveGrant } from '../src/grant/check.js';
+import { colour, dim, colourEnabled } from '../src/term/colour.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -520,8 +521,9 @@ function selfModWhy(actionRequest) {
 
 function buildDenialMessage(ruleId, actionRequest, home, requestId) {
   const base = RULE_INFO[ruleId] || {
+    title: 'Gated action',
     why: 'this matched a gated rule',
-    risk: 'UNKNOWN — no risk description is defined for this rule'
+    risk: 'UNKNOWN. No risk description is defined for this rule.'
   };
   const refinedWhy = ruleId === 'self-mod' ? selfModWhy(actionRequest) : null;
   const info = refinedWhy ? { ...base, why: refinedWhy } : base;
@@ -531,22 +533,39 @@ function buildDenialMessage(ruleId, actionRequest, home, requestId) {
     ? `signs ${signedKeys.join(', ')} only. Nothing else about this call is covered by the signature.`
     : 'signs the action itself; no parameters were included.';
 
+  // Title-first header. The plain-English title in gate red is what a fresh
+  // reader anchors on; the rule id stays as a dim technical suffix so a bug
+  // report or a search still has the anchor it needs. Both fall back to
+  // plain text under NO_COLOR or a non-TTY, per src/term/colour.js.
+  const title = info.title || 'Gated action';
+  const idSuffix = colourEnabled() ? `  ${dim('[' + ruleId + ']')}` : `  [${ruleId}]`;
+  const header = `${colour('gate', title)}${idSuffix}`;
+
   const lines = [
-    `LOTOR GATE — rule "${ruleId}" (${actionRequest?.action || 'unknown'})`,
-    ``
+    `LOTOR GATE  ${header}`,
+    ``,
+    `  WHAT    ${what}`
   ];
 
-  // The agent's own one-line statement of what this action is for, placed
-  // FIRST. By the time a request reaches the owner they have usually approved
-  // the plan already, so the question in front of them is which action this is,
-  // not whether the work should happen. A wall of reasoning above a command
-  // produces skimming; one readable line produces reading, and reading is the
-  // entire point of the gate (limit 26).
-  //
-  // It is authored by the process being stopped, so it is a claim and not
-  // evidence. Hence the label, and hence the full command still printed
-  // underneath: a summary the owner trusts INSTEAD of the command would be
-  // worse than no summary at all.
+  // Twin-of-staged notice sits between WHAT and the reasoning, because the
+  // owner has usually approved the plan already; the question in front of
+  // them is whether this is a variant, and that belongs above the rationale.
+  const twin = findSimilarStagedRequest(home, actionRequest, requestId);
+  if (twin) {
+    lines.push(
+      ``,
+      `  VARIANT OF staged request ${twin.id}. You approved a near-identical`,
+      `          command. This one differs, so the earlier signature does not`,
+      `          cover it.`,
+      `            was:  ...${twin.was}...`,
+      `            now:  ...${twin.now}...`
+    );
+  }
+
+  // Purpose is the agent's own one-line account of intent. It sits AFTER
+  // WHAT so the command is what the eye lands on first, and it stays
+  // labelled unverified so a summary the owner reads INSTEAD OF the command
+  // never manufactures false confidence (KNOWN-LIMITS 33/43).
   const purpose = readPurpose(home, requestId);
   if (purpose) {
     const rows = [];
@@ -562,41 +581,26 @@ function buildDenialMessage(ruleId, actionRequest, home, requestId) {
       }
     }
     if (row !== '') rows.push(row);
-    lines.push(`  PURPOSE ${rows[0]}`);
+    lines.push(``, `  PURPOSE ${rows[0]}`);
     for (let i = 1; i < rows.length; i++) lines.push(`          ${rows[i]}`);
-    lines.push(`          (agent-stated, NOT verified. The command below is what runs.)`, ``);
-  }
-
-  lines.push(`  WHAT    ${what}`);
-
-  // If this is a near-twin of something already staged, say so BEFORE the
-  // reasoning. The owner has usually approved the plan already; the question in
-  // front of them is whether this is a variant, and that belongs at the top.
-  const twin = findSimilarStagedRequest(home, actionRequest, requestId);
-  if (twin) {
-    lines.push(
-      `  VARIANT OF staged request ${twin.id} — you approved a near-identical`,
-      `          command. This one differs, so the earlier signature does not`,
-      `          cover it.`,
-      `            was:  ...${twin.was}...`,
-      `            now:  ...${twin.now}...`
-    );
+    lines.push(`          (agent-stated, NOT verified. The command above is what runs.)`);
   }
 
   lines.push(
+    ``,
     `  WHY     ${info.why}`,
     `  RISK    ${info.risk}`,
     `  SCOPE   ${scopeNote}`,
-    `          Single use. Bound to this exact request. Review before you sign.`
+    `          Single use. Bound to this exact request. Review before you sign.`,
+    `          Expires 60 minutes after staging if not signed. Doing nothing`,
+    `          is a complete answer.`
   );
 
   if (requestId) {
     lines.push(
       ``,
       `  Approve, in a real terminal:`,
-      `    npm run approve -- --request ${requestId}`,
-      ``,
-      `  (staged at ${path.join(home, 'pending-approvals', 'requests', requestId + '.json')})`
+      `    npm run approve -- --request ${requestId}`
     );
   } else {
     // Staging failed (best-effort). Fall back to the older file-based flow

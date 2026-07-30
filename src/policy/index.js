@@ -91,50 +91,69 @@ const LEGACY_V1_DEFAULTS = {
 };
 
 /**
- * Per-rule risk description, shown in the gate's denial message so the
- * warning is proportional to what was actually matched. See
- * bin/hook-pre-tool-use.js buildDenialMessage().
+ * Per-rule metadata shown in the gate's denial message and in the mode
+ * printout. The `title` is the plain-English name a fresh reader sees
+ * before the rule id (which stays as the technical anchor). The `why` is
+ * the situation the rule matched; the `risk` is what approving it costs.
+ *
+ * Rule ids are NOT renamable: they appear in every policy.json and every
+ * historical chain entry, and renaming would rewrite history. Titles are
+ * ornament on top of them.
+ *
+ * No em dashes anywhere in these strings: they are printed to a public
+ * surface (the gate denial) and Isaac's standing rule bans em dashes on
+ * any surface a stranger reads.
  */
 const RULE_INFO = {
   'self-mod': {
+    title: 'Editing Lotor itself',
     why: 'this path can change the gate, its policy, its hooks, or the log',
-    risk: 'HIGH — approving this lets the agent alter what stops it'
+    risk: 'HIGH. Approving this lets the agent alter what stops it.'
   },
   'mode-change': {
+    title: 'Changing the posture',
     why: 'this replaces the gate posture for every rule at once',
-    risk: 'HIGH — approving this changes what every future action requires'
+    risk: 'HIGH. Approving this changes what every future action requires.'
   },
   'push-force': {
+    title: 'Force-pushing',
     why: 'a force push can overwrite history on a remote you do not control from here',
-    risk: 'HIGH — overwritten history is not easy to get back'
+    risk: 'HIGH. Overwritten history is not easy to get back.'
   },
   'push-protected': {
+    title: 'Pushing straight to main',
     why: 'this pushes directly to a protected branch ref (main/master)',
-    risk: 'MEDIUM — bypasses whatever review that branch normally requires'
+    risk: 'MEDIUM. Bypasses whatever review that branch normally requires.'
   },
   'publish': {
+    title: 'Publishing',
     why: 'this ships a package, release, or merge to somewhere other people see it',
-    risk: 'MEDIUM — hard to unpublish once someone else has pulled it'
+    risk: 'MEDIUM. Hard to unpublish once someone else has pulled it.'
   },
   'egress-other': {
+    title: 'Sending data off this machine',
     why: 'this sends data off this machine to a remote host',
-    risk: 'HIGH — once sent, it is out of your custody'
+    risk: 'HIGH. Once sent, it is out of your custody.'
   },
   'opaque-exec': {
+    title: 'Running a script it cannot read',
     why: 'this hands control to a local script the gate cannot read the contents of',
-    risk: 'HIGH — what it actually does is unverified by construction'
+    risk: 'HIGH. What it actually does is unverified by construction.'
   },
   'destructive': {
+    title: 'Force-deleting',
     why: 'this recursively force-deletes a path',
-    risk: 'HIGH — deleted this way does not go to a trash you can recover from'
+    risk: 'HIGH. Deleted this way does not go to a trash you can recover from.'
   },
   'scope-escalation': {
+    title: 'Outliving this session',
     why: 'this registers a scheduled task or service that runs beyond this session',
-    risk: 'MEDIUM — it keeps running after you stop watching'
+    risk: 'MEDIUM. It keeps running after you stop watching.'
   },
   'spend': {
+    title: 'Spending money',
     why: 'this rule is reserved for financial actions and has no matcher yet',
-    risk: 'N/A — off in v1'
+    risk: 'N/A. Off in v1.'
   }
 };
 

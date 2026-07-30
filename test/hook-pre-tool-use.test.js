@@ -167,7 +167,12 @@ describe('bin/hook-pre-tool-use.js', () => {
     assert.strictEqual(res.code, 2, 'gate match without token must exit 2');
     assert.match(res.stderr, /self-mod/, 'stderr mentions the rule id');
     assert.match(res.stderr, /npm run approve/, 'stderr includes the signing command');
-    assert.match(res.stderr, /pending-approvals/, 'stderr includes the pending-approvals path');
+    // The staged path used to be printed on a line nobody opened. Dropped
+    // 2026-07-29. The request id in the approve command deterministically
+    // maps to <LOTOR_HOME>/pending-approvals/requests/<id>.json for anyone
+    // who wants the file. What the denial does still promise on this
+    // dimension is the request id itself.
+    assert.match(res.stderr, /--request [0-9a-f]+/, 'stderr includes a request id');
 
     const entries = loadChain(gHome);
     const gated = entries.filter(e => e.payload?.type === 'gated-action');

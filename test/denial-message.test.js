@@ -78,8 +78,11 @@ describe('denial message: stands on its own', () => {
 
     assert.strictEqual(res.code, 2);
 
-    // The five fixed sections, in order.
-    assert.match(res.stderr, /LOTOR GATE — rule "self-mod"/);
+    // The fixed sections in order. Header is title-first ("Editing Lotor
+    // itself") with the rule id as a technical suffix; test process is
+    // non-TTY so colour/dim collapse to plain, and the id appears in
+    // brackets. See buildDenialMessage in bin/hook-pre-tool-use.js.
+    assert.match(res.stderr, /LOTOR GATE\s+.*Editing Lotor itself.*\[self-mod\]/);
     assert.match(res.stderr, /WHAT\s+Edit:/);
     // WHY became path-specific on 2026-07-26 (selfModWhy in the hook). This
     // asserts the LINE rendered with real content, then asserts the SPECIFIC
@@ -153,10 +156,14 @@ describe('denial message: stands on its own', () => {
     const id = extractRequestId(res.stderr);
     assert.ok(id, 'a request id must be printed');
 
+    // The staged file is what the --request id points at. The message no
+    // longer prints the staging path (a line nobody opened; dropped
+    // 2026-07-29), so the semantic check moved from "message names the
+    // path" to "the id-implied path exists with the right contents". If a
+    // reader wants the full path, the id in the approve command deterministically
+    // produces it.
     const expectedPath = path.join(home, 'pending-approvals', 'requests', `${id}.json`);
-    assert.match(res.stderr, /\(staged at /, 'message names where the request was staged');
-    assert.ok(res.stderr.includes(expectedPath), 'the staged-at path must match the id in the approve command');
-    assert.ok(fs.existsSync(expectedPath), 'the staged request file must actually exist');
+    assert.ok(fs.existsSync(expectedPath), 'the staged request file must actually exist at the id-implied path');
 
     const staged = JSON.parse(fs.readFileSync(expectedPath, 'utf8'));
     assert.strictEqual(staged.action, 'Write');
@@ -184,8 +191,11 @@ describe('denial message: stands on its own', () => {
     // Grazing (the default) gates egress-other and only warns destructive,
     // so only the egress call should actually deny here.
     assert.strictEqual(egressRes.code, 2);
-    assert.match(egressRes.stderr, /rule "egress-other"/);
-    assert.match(egressRes.stderr, /once sent, it is out of your custody/);
+    assert.match(egressRes.stderr, /Sending data off this machine.*\[egress-other\]/);
+    // Case relaxed 2026-07-29: em-dash removal turned mid-sentence
+    // "once sent" into sentence-start "Once sent". Same substance, one
+    // capital letter of difference; the assertion cares about the phrase.
+    assert.match(egressRes.stderr, /once sent, it is out of your custody/i);
 
     assert.strictEqual(destructiveRes.code, 0, 'destructive is warn under the Grazing default, so it allows');
     assert.match(destructiveRes.stderr, /warn: destructive/);

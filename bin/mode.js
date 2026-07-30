@@ -31,8 +31,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy, MODE_NAMES, expandMode } from '../src/policy/index.js';
+import { loadPolicy, MODE_NAMES, expandMode, RULE_INFO } from '../src/policy/index.js';
 import { loadApprovalPubkey, SALT, PBKDF2_ITER, PBKDF2_KEYLEN, PBKDF2_DIGEST } from '../src/gate/sign.js';
+import { colour, dim } from '../src/term/colour.js';
+
+// Group labels for the consequence-grouped mode printout. Same three keys
+// as the policy states themselves so a printout in a new state (e.g. a
+// future 'custom-off' variant) would fail loudly here rather than silently
+// omit rules from the display.
+const GROUP_LABELS = { gate: 'STOPS YOU', warn: 'RECORDS YOU', off: 'ASLEEP' };
 
 function base64url(buf) {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -114,13 +121,50 @@ async function verifyOwnerPassphrase(home) {
   }
 }
 
+/**
+ * Print the mode grouped by consequence rather than sorted alphabetically.
+ * The invariant that matters to a fresh reader is what each rule DOES to
+ * them (stops, records, sleeps), so that is the primary axis; the rule id
+ * is the technical anchor and sits dim on the right. Closes with a
+ * computed summary line so an eleventh rule added later shows up in the
+ * arithmetic without anyone remembering to update a hardcoded count.
+ */
 function printMode(home) {
   const policy = loadPolicy(home);
-  console.log(`mode: ${policy.mode}`);
+  const modes = policy.modes;
+  const ids = Object.keys(modes);
+
+  const grouped = {
+    gate: ids.filter(id => modes[id] === 'gate'),
+    warn: ids.filter(id => modes[id] === 'warn'),
+    off:  ids.filter(id => modes[id] === 'off'),
+  };
+
   console.log('');
-  for (const ruleId of Object.keys(policy.modes).sort()) {
-    console.log(`  ${ruleId.padEnd(18)} ${policy.modes[ruleId]}`);
+  console.log(`  mode: ${colour('ok', policy.mode)}`);
+  console.log('');
+
+  for (const state of ['gate', 'warn', 'off']) {
+    if (grouped[state].length === 0) continue;
+    console.log('  ' + colour(state, GROUP_LABELS[state]));
+    for (const id of grouped[state]) {
+      const title = RULE_INFO[id]?.title || id;
+      const line = '    ' + colour(state, '│') + '  ' + title.padEnd(34) + dim(id);
+      console.log(line);
+    }
+    console.log('');
   }
+
+  const total = ids.length;
+  const g = grouped.gate.length;
+  const w = grouped.warn.length;
+  const o = grouped.off.length;
+  const parts = [`${total} rules.`];
+  if (g > 0) parts.push(`${g} ${g === 1 ? 'stops' : 'stop'} you.`);
+  if (w > 0) parts.push(`${w} ${w === 1 ? 'records' : 'record'} you.`);
+  if (o > 0) parts.push(`${o} ${o === 1 ? 'is' : 'are'} asleep.`);
+  console.log('  ' + parts.join(' '));
+  console.log('');
 }
 
 async function main() {

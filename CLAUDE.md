@@ -4,7 +4,7 @@ This is Lotor: a local-first receipt layer and gate for agent sessions. Its own 
 
 ## When the gate blocks you
 
-The `PreToolUse` hook denies with exit code 2 and prints a fixed-shape message: what matched, why it matters, how risky it is, exactly what the signature does and does not cover, and one command that runs as printed (`npm run approve -- --request <id>`). That message is designed to stand on its own — read cold, by a human who has read none of this file, it should still be enough to decide.
+The `PreToolUse` hook denies with exit code 2 and prints a fixed-shape message: a plain-English title (with the rule id as a technical suffix), what matched, any agent-stated purpose labelled as unverified, why it matters, how risky it is, exactly what the signature does and does not cover, and one command that runs as printed (`npm run approve -- --request <id>`). That message is designed to stand on its own. Read cold, by a human who has read none of this file, it should still be enough to decide.
 
 Your job around that message has four beats. Do all four, in order, every time:
 

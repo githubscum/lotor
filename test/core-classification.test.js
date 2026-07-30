@@ -63,7 +63,13 @@ const GRANTABLE = Object.freeze({
   mcp: 'a client of the gate, not the gate; its requests traverse the same enforcement path',
   views: 'rendering only; can mislead a reader, cannot change what is permitted',
   parser: 'reads transcripts; no authority over enforcement',
-  ingest: 'reads transcripts into the store; no authority over enforcement'
+  ingest: 'reads transcripts into the store; no authority over enforcement',
+  // Terminal-surface utilities: colour + TTY detection, and (later) the raccoon
+  // loader animation. Reads env and stdout, writes nothing, spawns nothing,
+  // never touches chain or gate. Same class as views: it can render badly, it
+  // cannot widen authority. Added 2026-07-29 as part of the colour convention
+  // rollout; the deliberate classification is the whole point of this file.
+  term: 'colour and TTY detection for the terminal surface; reads env only, cannot widen authority'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */
