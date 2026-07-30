@@ -205,19 +205,18 @@ function start(label) {
       cancelled = true;
       clearTimeout(startTimer);
       clearInterval(tickTimer);
-      if (started) {
-        clearLastFrame(rowCount);
-      }
-      // Draw resolve unconditionally: even if animation never started
-      // (work finished under the 300ms threshold), the caller asked for a
-      // resolve, so show it. The resolve frame is the caller's final
-      // answer to the user regardless of how the work timed out.
+      // If the animation never actually drew — work returned faster than
+      // the 300ms start-delay — do nothing. The WO is explicit that work
+      // under the threshold prints its result with no animation at all,
+      // and a resolve frame IS an animation. A raccoon "done" face on a
+      // fast command is exactly the noise-pretending-to-be-craft the
+      // start delay exists to prevent.
+      if (!started) return;
+      clearLastFrame(rowCount);
       const rendered = RESOLVE.map((row, i) => (i === 1 ? paintMaskRow(row) : row));
       process.stderr.write(rendered.join('\n') + '\n');
-      if (started) {
-        process.stderr.write(CURSOR_SHOW);
-        started = false;
-      }
+      process.stderr.write(CURSOR_SHOW);
+      started = false;
     },
     stop: restoreCursor
   };

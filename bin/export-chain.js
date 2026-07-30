@@ -40,6 +40,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { verifyChain } from '../src/chain/index.js';
 import { resolveHome } from '../src/home.js';
+import { start as startRaccoon } from '../src/term/raccoon.js';
 
 const BUNDLE_FORMAT = 'lotor-bundle/1';
 
@@ -66,18 +67,30 @@ function doExport(outArg) {
   const pubFile = path.join(home, 'keys', 'chain.pub');
   if (!fs.existsSync(pubFile)) die(`no chain public key at ${pubFile}`);
 
-  const entries = readChain(home);
-  const bundle = {
-    format: BUNDLE_FORMAT,
-    exportedAt: Date.now(),
-    // PEM, already mode 0644 on disk. The private half is never touched.
-    publicKey: fs.readFileSync(pubFile, 'utf-8'),
-    entryCount: entries.length,
-    entries
-  };
-
-  const out = outArg || path.join(process.cwd(), `lotor-bundle-${entries.length}.json`);
-  fs.writeFileSync(out, JSON.stringify(bundle, null, 2) + '\n', { mode: 0o644 });
+  // The raccoon washes while the chain is read and the bundle is written.
+  // Silent on small chains (300ms start-delay), draws only when export
+  // takes real time. resolve() lands before the stdout summary so the
+  // sequence reads raccoon-done then output.
+  const spinner = startRaccoon();
+  let entries;
+  let out;
+  try {
+    entries = readChain(home);
+    const bundle = {
+      format: BUNDLE_FORMAT,
+      exportedAt: Date.now(),
+      // PEM, already mode 0644 on disk. The private half is never touched.
+      publicKey: fs.readFileSync(pubFile, 'utf-8'),
+      entryCount: entries.length,
+      entries
+    };
+    out = outArg || path.join(process.cwd(), `lotor-bundle-${entries.length}.json`);
+    fs.writeFileSync(out, JSON.stringify(bundle, null, 2) + '\n', { mode: 0o644 });
+  } catch (e) {
+    spinner.stop();
+    throw e;
+  }
+  spinner.resolve();
 
   process.stdout.write(`exported ${entries.length} entries to ${out}\n`);
   process.stdout.write(`public key included; private key was not read\n`);
@@ -110,7 +123,18 @@ function doVerify(file) {
   // undefined, so a perfectly good 564-entry chain reported INVALID. Caught by
   // running it; a verifier that cries wolf is worse than none, because the one
   // time it matters nobody believes it.
-  const result = verifyChain(bundle.entries, pub);
+  //
+  // The raccoon washes while the crypto work runs. A large chain takes real
+  // time to walk; a small one returns before the loader ever draws.
+  const spinner = startRaccoon();
+  let result;
+  try {
+    result = verifyChain(bundle.entries, pub);
+  } catch (e) {
+    spinner.stop();
+    throw e;
+  }
+  spinner.resolve();
 
   if (result.ok) {
     process.stdout.write(`VALID  ${bundle.entries.length} entries, hashes and signatures check out\n`);

@@ -16,6 +16,7 @@ import {
   renderMorningAfter
 } from '../src/views/index.js';
 import { resolveHome } from '../src/home.js';
+import { start as startRaccoon } from '../src/term/raccoon.js';
 
 function main() {
   const args = process.argv.slice(2);
@@ -24,9 +25,22 @@ function main() {
   const showMorning = !showSession || showAll;
   const showSessionOnly = showSession || showAll;
 
-  // Load chain from the canonical Lotor home
-  const home = resolveHome();
-  const entries = loadReceiptChain(home);
+  // Load chain from the canonical Lotor home. The loader is silent on a
+  // fresh install and on small chains (300ms start-delay), and draws only
+  // when reading the chain takes real time. resolve() is called before
+  // the console.log output so the raccoon "finishes washing" and the
+  // summary appears underneath rather than after a hidden pause.
+  const spinner = startRaccoon();
+  let home;
+  let entries;
+  try {
+    home = resolveHome();
+    entries = loadReceiptChain(home);
+  } catch (e) {
+    spinner.stop();
+    throw e;
+  }
+  spinner.resolve();
 
   // Morning-after summary
   if (showMorning) {
