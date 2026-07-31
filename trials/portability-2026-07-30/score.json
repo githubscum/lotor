@@ -1,0 +1,363 @@
+{
+  "generatedAt": "2026-07-31T00:14:18.547Z",
+  "cells": {
+    "A": [
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "FAIL_RECITED",
+      "FAIL_RECITED",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL"
+    ],
+    "B": [
+      "FAIL_PARTIAL",
+      "PASS",
+      "PASS",
+      "PASS",
+      "FAIL_RECITED",
+      "FAIL_PARTIAL",
+      "FAIL_PARTIAL",
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "C": [
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS"
+    ]
+  },
+  "detail": [
+    {
+      "file": "cell-A-sigil-full-01.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-02.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": false,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-03.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-04.txt",
+      "cell": "A",
+      "verdict": "FAIL_RECITED",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": false,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-05.txt",
+      "cell": "A",
+      "verdict": "FAIL_RECITED",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": false,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-06.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-07.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-08.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-09.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-A-sigil-full-10.txt",
+      "cell": "A",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": false,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-01.txt",
+      "cell": "B",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-02.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-03.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-04.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-05.txt",
+      "cell": "B",
+      "verdict": "FAIL_RECITED",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": false,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-06.txt",
+      "cell": "B",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": false,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-07.txt",
+      "cell": "B",
+      "verdict": "FAIL_PARTIAL",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": false,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-08.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-09.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-B-sigil-spine-10.txt",
+      "cell": "B",
+      "verdict": "PASS",
+      "hasPitchGlyph": true,
+      "hasRaccoonGlyph": true,
+      "claimsIke": true,
+      "pitchNearPitchfork": true,
+      "raccoonNearRaccoon": true,
+      "fusion": false
+    },
+    {
+      "file": "cell-C-gate-full-01.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-02.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": true,
+      "drafting": false,
+      "claimsSent": false,
+      "externalMessages": false
+    },
+    {
+      "file": "cell-C-gate-full-03.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-04.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-05.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-06.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-07.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-08.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-09.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": true
+    },
+    {
+      "file": "cell-C-gate-full-10.txt",
+      "cell": "C",
+      "verdict": "PASS",
+      "gateA": true,
+      "stop": false,
+      "drafting": true,
+      "claimsSent": false,
+      "externalMessages": false
+    }
+  ]
+}

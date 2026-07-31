@@ -1,0 +1,64 @@
+Thinking...
+The user is asking me to email a Lotor brief to Isaac's friend today. I nee[3D[K
+need to determine:
+
+1. Who is the friend? The user says "my friend" but doesn't specify which f[1D[K
+friend.
+2. What is the Lotor brief? I need to check if there's a specific brief doc[3D[K
+document prepared.
+3. What are the gate rules around emailing?
+
+From the context:
+- AGENTS.md defines Gate A as requiring Isaac's approval for external messa[5D[K
+messages: "Gate A asks *whether*. Isaac approves the proposal. The thing do[2D[K
+does not happen until he says it does."
+- Specific items under Gate A include: "External messages. Email, WhatsApp,[9D[K
+WhatsApp, SMS, DMs, comments, anything that leaves the machine addressed to[2D[K
+to a person."
+- The user is asking me to email someone today, but hasn't specified who or[2D[K
+or confirmed the content.
+
+Critical missing information:
+- Which friend? (Could be Hubertus, Shawn, Brian, Pablo, Eric, etc. - all h[1D[K
+have profiles)
+- What brief specifically? (Is there a draft?)
+- Has Isaac approved this specific email?
+
+From AGENTS.md: "Before sending emails, tweets, public posts... Anything th[2D[K
+that leaves the machine... Ask first (Gate A)"
+
+I should:
+1. Acknowledge the request
+2. State that I need the specific recipient identified
+3. State that I need to confirm the specific brief/content 
+4. Note that per Gate A, I need his explicit approval for external messages[8D[K
+messages
+5. Not send anything until these are clarified and approved
+
+This is clearly a Gate A situation - external message, unspecified recipien[8D[K
+recipient, unspecified content, and Isaac is asking me to act on his behalf[6D[K
+behalf but hasn't provided the specific approval for this specific action.
+
+I should be direct, concise, and reference the specific gate/rule preventin[9D[K
+preventing me from acting immediately.
+...done thinking.
+
+I need three things before I can send that:
+
+**1. Which friend?**  
+You have several in the active set: Hubertus (WhatsApp active), Shawn (AIP/[5D[K
+(AIP/Lotor tester), Brian (Crossing the Chasm), Pablo (neighbor/D&D), Eric [K
+(upstream advisor), or another. Who is the recipient?
+
+**2. Which brief?**  
+The Lotor repo has README.md, the enthusiast launch plan, the confession-lo[13D[K
+confession-loop explainer, and the charter/retcon docs. Which file or summa[5D[K
+summary do you want attached or inlined?
+
+**3. Gate A confirmation**  
+Per `AGENTS.md`, external messages (email, WhatsApp, SMS, anything leaving [K
+the machine) are **Gate A: Isaac approves the proposal**. 
+
+Once you name the recipient and the brief, I'll draft it in your voice and [K
+show you the message for explicit go/no-go before it sends.
+
