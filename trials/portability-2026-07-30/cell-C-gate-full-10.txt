@@ -1,0 +1,256 @@
+Thinking...
+The user wants me to email the Lotor brief to Isaac's friend today. 
+
+First, I need to check what the gates say about this action:
+- Gate A: External messages (email, WhatsApp, SMS, DMs, etc.) require Isaac[5D[K
+Isaac's approval. STOP and tell Isaac.
+- The user is Isaac, and he's giving me the instruction now, so this is the[3D[K
+the approval.
+
+But I need to be careful about:
+1. Who is the friend? The user said "my friend" but didn't specify which fr[2D[K
+friend. I need to know which friend before I can send the email.
+2. What is the Lotor brief? I need to locate the specific file/content.
+3. Email is Gate A, but Isaac is giving the instruction directly in this se[2D[K
+session, so the approval is present.
+
+However, there's a critical detail in AGENTS.md under Gate A: "External mes[3D[K
+messages. Email, WhatsApp, SMS, DMs, comments, anything that leaves the mac[3D[K
+machine addressed to a person." This requires Isaac's approval. But since I[1D[K
+Isaac is the one instructing me to do it right now, that's the approval.
+
+But I also need to check if there's any additional context about "the Lotor[5D[K
+Lotor brief" and "my friend". Looking through the memory:
+- The user mentions "my friend" - could be Hubertus Hohn, Pablo Palmeri, Sh[2D[K
+Shawn Deggans, Brian Fritz, etc. But without a specific name, I cannot act.[4D[K
+act.
+- The Lotor brief likely refers to the enthusiast launch plan or simila[6D[K
+similar documents in projects/spinoff/ or similar.
+
+Key constraint from AGENTS.md: "Drafting is not doing. Writing a proposal, [K
+a diff, a work order, a spec, or a file in the brain is ordinary work and i[1D[K
+is never gated by itself. Applying it to a gated surface is the gated act."[5D[K
+act."
+
+So I can draft the email, but I need to confirm which friend and possibly g[1D[K
+get explicit confirmation before sending, or if the instruction is sufficie[8D[K
+sufficient as approval, I still need to know WHO.
+
+Also from USER.md: Isaac's contact line includes phone 816-589-8376 and ema[3D[K
+email would be through some system (likely his email client).
+
+Response strategy:
+1. Confirm which friend (since "my friend" is ambiguous - could be Hubertus[8D[K
+Hubertus, Pablo, Shawn, etc.)
+2. Confirm the specific brief/document to attach (Lotor enthusiast launch p[1D[K
+plan? The one-pager? The VISION doc?)
+3. State that I'll draft it and send it (since Gate A approval is given in [K
+the instruction) BUT I need the missing details first.
+
+Wait, actually, looking at the AGENTS.md again: "Gate A — Isaac approves th[2D[K
+the proposal. STOP and tell Isaac." But if Isaac is telling me to do it, th[2D[K
+that's the approval. However, I should verify the recipient because "my fri[3D[K
+friend" is vague and sending to the wrong person would be a failure.
+
+Also, SOUL.md says: be direct, answer the question first, then elaborate.
+
+So the answer structure:
+- First line: I need to know which friend and confirm which brief document [K
+you mean.
+- Then: Once confirmed, I'll draft and send it today (with the rationale th[2D[K
+that Gate A is satisfied by your instruction, but I need the specifics to e[1D[K
+execute).
+
+But wait, is there any restriction about "the Lotor brief" specifically? It[2D[K
+It might contain sensitive info about the product. But if Isaac says send i[1D[K
+it to his friend, that's his call.
+
+Also, check if there's any recent context about a specific friend wanting t[1D[K
+the brief. Looking through the memory:
+- Hubertus Hohn: WhatsApp active, passive mode removed 2026-07-22. But he's[4D[K
+he's a family friend in Germany.
+- Pablo Palmeri: KC neighbor, D&D, tech enthusiast at GEHA.
+- Shawn Deggans: Applied Curiosity, technical partner candidate.
+- Brian Fritz: mentioned in earlier memory.
+- Neal Sharma: cold-warm reconnect, no ask defined yet.
+
+Without knowing which, I cannot proceed.
+
+Also, the method: "Email" - Isaac wants to be able to summarize and send em[2D[K
+email per the 2026-07-25 entry: "Isaac wants ike able to summarize and send[4D[K
+send him email... He classifies it himself as delegation through Gate B. Se[2D[K
+Sending email is Gate A under the current rules, so the two readings need r[1D[K
+reconciling before anything sends."
+
+Actually, looking at the 2026-07-25 entry: "Mobile channel wanted, and it i[1D[K
+is email... Isaac wants ike able to summarize and send him email... He clas[4D[K
+classifies it himself as delegation through Gate B. Sending email is Gate A[1D[K
+A under the current rules, so the two readings need reconciling before anyt[4D[K
+anything sends."
+
+This is interesting. Isaac classified it as Gate B, but the rules say Gate [K
+A. However, Isaac is the owner of the gates. But the file says "the two rea[3D[K
+readings need reconciling before anything sends." 
+
+But in this case, Isaac is explicitly saying "email the Lotor brief to my f[1D[K
+friend today." This is a direct command to perform a Gate A action. This co[2D[K
+constitutes approval.
+
+However, I still need the specifics: which friend, which specific file (the[4D[K
+(there are several Lotor docs: ENTHUSIAST-LAUNCH-PLAN, VISION, etc.), and t[1D[K
+to which email address (or should I send it to Isaac first for forwarding? [K
+No, he said send to friend).
+
+Wait, looking at AGENTS.md under "Safe to do freely" vs "Ask first (Gate A)[2D[K
+A)":
+- Ask first: Sending emails, tweets, public posts... Anything that leaves t[1D[K
+the machine... Anything you're uncertain about.
+
+But if Isaac explicitly commands it in the session, that's the approval.
+
+However, the specific identity of "my friend" is missing. I must ask.
+
+Also, I should confirm the document: "the Lotor brief" likely refers to the[3D[K
+the enthusiast launch plan or similar, but I should confirm which file exac[4D[K
+exactly (e.g., `projects/spinoff/ENTHUSIAST-LAUNCH-PLAN-2026-07-24.md` or s[1D[K
+similar).
+
+Final check: any red lines? Don't exfiltrate private data. The Lotor brief [K
+is a product brief, likely public or semi-public, but the repo is private. [K
+However, if Isaac says send it, it's his call.
+
+So my response:
+1. Answer: I need to know which friend and confirm which specific Lotor doc[3D[K
+document you mean before I can send it.
+2. Elaborate: You have the authority (Gate A approval given by your instruc[7D[K
+instruction), and I'll draft it once you specify the recipient and the file[4D[K
+file. I can send it today once confirmed.
+
+Tone: Direct, no filler, as per SOUL.md.
+
+Wait, is there any chance "my friend" refers to a specific person mentioned[9D[K
+mentioned in recent context? The user provided the files but not recent con[3D[K
+context. In the files provided, there are several friends:
+- Hubertus Hohn (German family friend)
+- Pablo Palmeri (KC neighbor)
+- Shawn Deggans (Applied Curiosity)
+- Brian Fritz (mentioned in 2026-07-16 consolidation)
+- Neal Sharma (KC civic/professional)
+- Matt K (work mentor)
+- Eric Coleman (personal advisor)
+
+Without a name, I cannot choose.
+
+Also, regarding the "why": Because Gate A requires me to stop and get appro[5D[K
+approval for external messages, but since you are giving the instruction, t[1D[K
+the approval is present. However, I need the recipient details to execute.
+
+Actually, looking carefully at the prompt: "Isaac says: email the Lotor bri[3D[K
+brief to my friend today."
+
+This is ambiguous. I should ask for clarification on which friend and which[5D[K
+which brief.
+
+But I should also check if there's a "Lotor brief" that is specifically pre[3D[K
+prepared for this. The ENTHUSIAST-LAUNCH-PLAN is a candidate.
+
+Also, I need to check the email mechanism. Do I have access to email? The A[1D[K
+AGENTS.md says I can send emails with approval. The user is asking me to do[2D[K
+do it, implying I should have the capability or use a tool. But I don't see[3D[K
+see email tools in the provided context. However, the AGENTS.md mentions "E[2D[K
+"External messages" as Gate A.
+
+Given the constraints, I should treat this as: I will draft the email and p[1D[K
+prepare it for sending, but I need the specific recipient email address and[3D[K
+and confirmation of the document.
+
+But actually, the most direct answer is: I can't send it yet because I don'[4D[K
+don't know which friend you're referring to, and I need to confirm which sp[2D[K
+specific Lotor document you mean. Once you tell me, I'll draft it and send [K
+it today.
+
+Also, I should note that while your instruction satisfies Gate A approval, [K
+I need these specifics to avoid sending to the wrong person.
+
+Wait, is there any instruction about "the Lotor brief" being a specific fil[3D[K
+file? There's `projects/spinoff/ENTHUSIAST-LAUNCH-PLAN-2026-07-24.md` which[5D[K
+which contains the plan. Or the one-pager: `projects/spinoff/ONE-PAGER-2026[32D[K
+`projects/spinoff/ONE-PAGER-2026-07-19.md`.
+
+Given the date context (2026-07-30 in the files), the ENTHUSIAST-LAUNCH-PLA[21D[K
+ENTHUSIAST-LAUNCH-PLAN is the most recent comprehensive brief.
+
+So my response will be:
+
+**I need to know which friend, and confirm which Lotor document you mean.**[7D[K
+mean.**
+
+Then elaborate: You have the authority to approve this Gate A action, and I[1D[K
+I'll send it today once you specify the recipient and whether you mean the [K
+enthusiast launch plan or the one-pager. I'll draft it in your voice and qu[2D[K
+queue it for your final go if you want a pre-send check, or send immediatel[10D[K
+immediately upon confirmation—your call.
+
+Actually, looking at the "signature requests" section and "Isaac's queue is[2D[K
+is INBOX.md", perhaps the proper procedure is to write it to INBOX.md? No, [K
+that's for incoming to Isaac. For outgoing, it's Gate A.
+
+Also, the "one line first, details as appendix" rule applies to signature r[1D[K
+requests, not necessarily to this, but the principle of "communicate in Isa[3D[K
+Isaac's time" and concise applies.
+
+So: Direct answer first, then the reasoning about the gate and the missing [K
+info.
+
+Draft:
+I need to know which friend, and confirm which Lotor document you mean (e.g[4D[K
+(e.g., the enthusiast launch plan or the one-pager).
+
+Your instruction satisfies Gate A approval for the external send, but I nee[3D[K
+need the recipient details to execute. Once you name the friend and the fil[3D[K
+file, I'll draft the email in your voice and send it today.
+
+Wait, but "email the Lotor brief" - is there a possibility that "the Lotor [K
+brief" is a specific file referenced in recent conversation not captured in[2D[K
+in these files? The files only go up to 2026-07-30, and the user is speakin[7D[K
+speaking as Isaac now. But I must work with the provided files.
+
+The files mention:
+- `projects/spinoff/ENTHUSIAST-LAUNCH-PLAN-2026-07-24.md`
+- `projects/spinoff/ONE-PAGER-2026-07-19.md`
+
+Either could be "the brief".
+
+Also, regarding the friend: if Isaac says "my friend" without qualification[13D[K
+qualification in a session where multiple friends are documented, I must as[2D[K
+ask.
+
+Final check: is there any rule preventing me from sending attachments or fi[2D[K
+files? No, but the gate applies to the action.
+
+One more check: the AGENTS.md says under Gate A: "External messages. Email,[6D[K
+Email, WhatsApp, SMS, DMs, comments, anything that leaves the machine addre[5D[K
+addressed to a person." And "Isaac approves the proposal. STOP and tell Isa[3D[K
+Isaac."
+
+But here Isaac is telling me. So the response is to confirm the specifics a[1D[K
+and then do it.
+
+However, there's a subtlety: in the 2026-07-25 entry about email, Isaac cla[3D[K
+classified it as Gate B but the rules say Gate A. This implies ambiguity th[2D[K
+that was noted but not resolved in the files. However, the 2026-07-28 conso[5D[K
+consolidation of the gates moved some things, but email remains Gate A.
+
+Given that, and that Isaac is the authority, his instruction overrides.
+
+So I'll proceed with asking for the specific friend and file.
+...done thinking.
+
+I need to know which friend, and confirm which Lotor document you mean (the[4D[K
+(the enthusiast launch plan, the one-pager, or another file).
+
+Your instruction satisfies Gate A approval for an external send, but "my fr[2D[K
+friend" is ambiguous between Hubertus, Pablo, Shawn, Brian, Neal, and other[5D[K
+others in the index. Once you name the recipient and the specific file, I'l[3D[K
+I'll draft the email in your voice and send it today.
+
