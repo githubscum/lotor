@@ -22,6 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 
 /**
  * Herding modes (2026-07-23): three named presets over the same matchers,
@@ -162,6 +163,54 @@ const DEFAULT_POLICY = {
   mode: 'grazing',
   modes: expandMode('grazing')
 };
+
+// ---------- matcher version hash ----------
+
+/**
+ * Schema marker for the HASHING METHOD (which functions are included, how
+ * they're joined). Bumped only if that method changes. A rule moving from
+ * warn to gate, a regex edit, or a new matcher function changes the HASH
+ * VALUE below automatically and needs no edit here.
+ */
+export const MATCHER_SCHEMA = 'matcher/1';
+
+function sortKeysDeep(value) {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const sorted = {};
+    for (const k of Object.keys(value).sort()) sorted[k] = sortKeysDeep(value[k]);
+    return sorted;
+  }
+  return value;
+}
+
+let cachedMatcherHash = null;
+
+/**
+ * Content hash of the matcher logic in force right now. Pure and in-memory:
+ * no disk I/O, so it is safe to call on every gate/warn/grant/egress
+ * receipt, not just once per session. Cached after first call in a process.
+ */
+export function matcherVersionHash() {
+  if (cachedMatcherHash) return cachedMatcherHash;
+  const parts = [
+    isSelfMod.toString(),
+    isModeChange.toString(),
+    isPushForce.toString(),
+    isPushProtected.toString(),
+    isPublish.toString(),
+    isEgressOther.toString(),
+    isDestructive.toString(),
+    isScopeEscalation.toString(),
+    isOpaqueExec.toString(),
+    JSON.stringify(sortKeysDeep(RULE_TABLE)),
+    JSON.stringify(sortKeysDeep(RULE_INFO))
+  ];
+  cachedMatcherHash = crypto.createHash('sha256')
+    .update(parts.join(' '))
+    .digest('hex')
+    .slice(0, 16);
+  return cachedMatcherHash;
+}
 
 /** Shallow, structurally-independent copy of DEFAULT_POLICY. */
 function defaultPolicyCopy() {

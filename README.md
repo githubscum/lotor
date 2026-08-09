@@ -12,7 +12,7 @@ It also gates the actions you choose. Those stop and wait for an approval signed
 
 **Local first, and not as a deployment option.** The receipt is written to your machine and nowhere else. No upload path, no account, no server component. Nothing leaves because nothing is built to send it. Most accountability tooling is cloud observability, which means your agent's history becomes inventory in someone else's books. The record of what your machines did for you should answer to your key, not to a vendor's retention policy.
 
-Longer arguments for why that matters live at [ikeanalytics.com](https://ikeanalytics.com). This file is about running the thing.
+Longer arguments for why that matters live at [ikeanalytics.com](https://ikeanalytics.com), including [the measurement behind them](https://ikeanalytics.com/articles/the-bones-do-remember/). This file is about running the thing.
 
 ## What you use it for
 

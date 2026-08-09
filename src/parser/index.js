@@ -234,6 +234,68 @@ function digestParams(input) {
 }
 
 /**
+ * Canonicalize a value for hashing: object keys sorted recursively at every
+ * depth, arrays kept in their original order, scalars passed through.
+ *
+ * Implemented locally rather than imported from src/gate/sign.js's
+ * sortKeysReplacer because that file is non-delegable core (src/gate/).
+ * If a later ceremony dedupes the two canonicalizers, this copy can drop;
+ * until then the two are textually similar but semantically identical over
+ * JSON-compatible input. Strings, numbers, booleans, and nulls survive
+ * `JSON.stringify` unchanged, which is the surface a tool_input carries.
+ */
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) out[i] = canonicalize(value[i]);
+    return out;
+  }
+  const sorted = {};
+  for (const k of Object.keys(value).sort()) {
+    sorted[k] = canonicalize(value[k]);
+  }
+  return sorted;
+}
+
+/**
+ * Compute a canonical SHA-256 hex digest of a tool's parameters.
+ *
+ * Returns the FULL 64-character lowercase hex digest (no truncation), over
+ * a canonical serialization where object keys are sorted recursively at
+ * every depth and arrays keep their original order. Two inputs that
+ * differ only in key ordering hash to the same digest; two inputs that
+ * differ in content or array order hash differently.
+ *
+ * Strings hash as their JSON encoding (so embedded characters are
+ * escaped the same way every time); numbers, booleans, and null survive
+ * `JSON.stringify` unchanged. `undefined` and function values are
+ * dropped by `JSON.stringify`, which matches what a JSON transcript
+ * would round-trip.
+ *
+ * SCHEMA MARKER. The schema marker for receipts that record this digest
+ * is `params/1`, extending the `<class>/N` convention `matcher/1`
+ * established in src/policy/index.js. The marker is bumped only if the
+ * canonicalization method changes (sort strategy, separator choice,
+ * escape policy); a change to the function that calls this one does
+ * not require bumping it.
+ *
+ * NOT WIRED INTO RECEIPT EMISSION. This function is exported only.
+ * Existing call sites continue to use `digestParams`, which produces a
+ * truncated 16-hex digest over an unordered serialization. Callers that
+ * want a byte-stable identifier across key reorderings reach for this
+ * function instead.
+ *
+ * @param {*} input - any JSON-compatible value (typically a tool input)
+ * @returns {string} 64 lowercase hex chars, or 'empty' for absent input
+ */
+export function digestParamsCanonical(input) {
+  if (input === undefined || input === null) return 'empty';
+  const text = JSON.stringify(canonicalize(input));
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/**
  * Create a short digest of content (for error reporting)
  */
 function digestContent(content) {
