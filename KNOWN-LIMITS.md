@@ -1368,3 +1368,59 @@ meaningful control at this altitude. What runs when a scheduled task fires is
 back inside the harness (if the scheduled command is `claude` or an agent
 process) or entirely outside it (if the scheduled command is a `.ps1` or shell
 script), and only the first case is even in principle reachable by any hook.
+
+## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
+
+The `--public` flag on `pap-export` forces the operator to acknowledge that the
+encoded spine will be on a scannable medium anyone can read. Nothing about the
+tool decides what is safe to publish. If the operator encodes personal data, it
+is in the QR. The signature proves who authored the bundle, not that the bundle
+is safe to distribute. Landed with PAP (WO-PAP-01) on 2026-08-09; the flag is a
+discipline check in the same spirit as the self-cancelling-leak-grep lesson
+(2026-07-20), where the tool cannot know what is private and must force the
+human to say so.
+
+## 46. A PAP signature proves authorship and integrity, never spine quality or safety
+
+A verified PAP signature confirms that the bytes now decoded are the bytes the
+chain key signed, at the timestamp in the manifest, keyed to the fingerprint in
+the manifest. It says nothing about whether the spine boots a functional agent,
+whether the identity described matches who the operator meant to publish, or
+whether the running agent will behave. The Row B ceiling applies: a spine
+transfers identity and policy, not capability, so the resulting agent's ceiling
+is the receiving model's. Same class as the standing observation that receipts
+are behavioral metadata, never intent — a signature is evidence of custody, not
+of correctness.
+
+## 47. The head hash verifies memoir integrity, never memoir availability
+
+If a memoir URL is present in the manifest, the chain head hash lets a reader
+detect tampering when they fetch the memoir. It does not guarantee the memoir
+will be fetchable at all. A dead host is a dead memoir, and the QR still boots
+the spine, because the memoir is optional. This is deliberate: publication
+should not require perpetual hosting. What the bundle guarantees is that IF a
+memoir is retrieved, its integrity is checkable; it makes no availability claim.
+
+## 48. PAP bundle signing uses the chain key, not the approval key
+
+Lotor's chain key is stored plaintext on the operator's machine (limit 8). A
+`pap-export` bundle is signed with that key, not the passphrase-derived approval
+key. So bundle authenticity is chain-key strength (per-machine, plaintext at
+rest) rather than passphrase strength. An operator whose chain key is
+compromised can have PAP bundles forged in their name. The design choice is
+recorded rather than hidden: signing a bundle must not require an interactive
+ceremony on every export, and the chain key already carries the same identity
+claim on every receipt. An optional operator co-signature slot (a second
+passphrase-signed field marking human-attested bundles) is deferred, not
+shipped.
+
+## 49. No pre-encode leak grep in PAP v1
+
+`pap-export` does not scan the spine for likely-private patterns (phone numbers,
+addresses, family names, credentials) before encoding. The `--public` flag is a
+discipline check, not a content filter. A leak-grep pass would have to exclude
+its own replacement tokens from the scan or it self-cancels (the 2026-07-20
+lesson: a validator that scans its own output matches both the real pattern and
+the placeholder the redaction introduced, and passes on every run). Queued for a
+later signature sitting rather than shipped half-implemented. Until it exists,
+the operator is the only filter, and limit 45 is why that is stated plainly.

@@ -47,10 +47,13 @@
     "hook:session-start": "node bin/hook-session-start.js",
     "hook:session-end": "node bin/hook-session-end.js",
     "hook:pre-tool-use": "node bin/hook-pre-tool-use.js",
-    "hook:post-tool-use": "node bin/hook-post-tool-use.js"
+    "hook:post-tool-use": "node bin/hook-post-tool-use.js",
+    "pap:export": "node bin/pap-export.js",
+    "pap:boot": "node bin/pap-boot.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "qrcode": "^1.5.4"
   },
   "keywords": [
     "mcp",
