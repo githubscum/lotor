@@ -1424,3 +1424,37 @@ lesson: a validator that scans its own output matches both the real pattern and
 the placeholder the redaction introduced, and passes on every run). Queued for a
 later signature sitting rather than shipped half-implemented. Until it exists,
 the operator is the only filter, and limit 45 is why that is stated plainly.
+
+## 50. Two digest fields exist for the same input, with different meanings
+
+As of 2026-08-10, every `ran[]` item on a session receipt carries two digests
+of the same tool input. `paramsDigest` is the legacy field: 16 hex characters
+(64 bits) over an insertion-order `JSON.stringify`. `paramsDigestCanonical` is
+the interop field: full 256-bit hex over a recursively key-sorted canonical
+serialization (`params/1`). They are not interchangeable, and neither can be
+derived from the other.
+
+The split is deliberate (add-alongside, never replace) so that receipts written
+before the change stay verifiable and readers can tell which rule produced
+which value: receipts carrying `receiptSchema: 'receipt/2'` have both fields;
+older receipts have only the short one. The costs, stated plainly:
+
+- **Cross-era comparison is not defined.** A pre-`receipt/2` receipt cannot be
+  content-matched against an external system's canonical digest at all. The
+  seam only closes for receipts written after the wiring.
+- **The short digest is weak as evidence.** 64 bits is fine for the parser's
+  internal dedup and birthday-attackable (~2^32 hashes, laptop-feasible) as a
+  commitment. Anything treating `paramsDigest` as an evidence binding is
+  leaning on the wrong field; the full-length canonical digest is the one an
+  external verifier should compare.
+- **A reader who confuses the two gets silent nonsense.** Comparing a
+  canonical digest against the short field (or vice versa) fails for shape
+  reasons on inspection, but truncating the canonical digest to 16 characters
+  and comparing produces a value that looks comparable and means nothing.
+
+The correlation echo shipped in the same change has its own honest edge: the
+`_observaCorrelationId` key is echoed verbatim from tool input, which means it
+is attacker-writable by anything that can shape a tool call. The echo proves
+an id was PRESENT at call time, never that the authorising system named by it
+actually issued it. Binding the id to its issuer is the authorising system's
+job (signature over its own decision record), not the witness's.
