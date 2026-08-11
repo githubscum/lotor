@@ -111,7 +111,30 @@ function parseSession(jsonlText) {
             const toolId = item.id || `anon-${toolCalls}`;
             const paramsDigest = digestParams(item.input);
 
-            ran.push({ tool: toolName, id: toolId, paramsDigest });
+            // Observa interop seam, option 2 (OBSERVA-INTEROP-SEAM-SPEC
+            // 2026-08-07 §4/§9, wired 2026-08-10). The canonical digest is a
+            // SECOND field beside the legacy 16-hex digest, never a
+            // replacement: old receipts stay verifiable, and a reader can
+            // tell which rule produced which digest by presence + the
+            // receiptSchema marker below. Full 256-bit on purpose - the
+            // short digest is parser dedup, this one is an evidence seam
+            // (spec §5: 64-bit prefixes are birthday-attackable on a laptop).
+            const runRecord = {
+              tool: toolName,
+              id: toolId,
+              paramsDigest,
+              paramsDigestCanonical: digestParamsCanonical(item.input)
+            };
+            // Opaque correlation echo: an authorising system (e.g. Observa)
+            // may plant `_observaCorrelationId` in the tool input; the
+            // witness echoes it verbatim and never interprets it. Bounded
+            // and typed so a hostile input cannot bloat or shape the chain.
+            const corr = item.input && typeof item.input === 'object'
+              ? item.input._observaCorrelationId : undefined;
+            if (typeof corr === 'string' && corr.length > 0 && corr.length <= 64) {
+              runRecord.correlationIdEcho = corr;
+            }
+            ran.push(runRecord);
             toolUseMap.set(toolId, { tool: toolName, paramsDigest });
 
             // Check for network-capable tools for 'sent' tracking
@@ -186,6 +209,11 @@ function parseSession(jsonlText) {
     touched: Array.from(touched.entries()).map(([path, meta]) => ({ path, ...meta })),
     failed,
     cost: { ...cost, schema: 'cost/3' },
+    // receipt/2 (2026-08-10): ran[] items carry paramsDigestCanonical (full
+    // 256-bit, params/1 canonicalisation) and may carry correlationIdEcho.
+    // Absence of this field is the read hint that a receipt predates the
+    // Observa seam wiring; those older receipts carry only the 16-hex digest.
+    receiptSchema: 'receipt/2',
     sent,
     counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };

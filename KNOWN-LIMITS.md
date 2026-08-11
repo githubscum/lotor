@@ -1368,3 +1368,93 @@ meaningful control at this altitude. What runs when a scheduled task fires is
 back inside the harness (if the scheduled command is `claude` or an agent
 process) or entirely outside it (if the scheduled command is a `.ps1` or shell
 script), and only the first case is even in principle reachable by any hook.
+
+## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
+
+The `--public` flag on `pap-export` forces the operator to acknowledge that the
+encoded spine will be on a scannable medium anyone can read. Nothing about the
+tool decides what is safe to publish. If the operator encodes personal data, it
+is in the QR. The signature proves who authored the bundle, not that the bundle
+is safe to distribute. Landed with PAP (WO-PAP-01) on 2026-08-09; the flag is a
+discipline check in the same spirit as the self-cancelling-leak-grep lesson
+(2026-07-20), where the tool cannot know what is private and must force the
+human to say so.
+
+## 46. A PAP signature proves authorship and integrity, never spine quality or safety
+
+A verified PAP signature confirms that the bytes now decoded are the bytes the
+chain key signed, at the timestamp in the manifest, keyed to the fingerprint in
+the manifest. It says nothing about whether the spine boots a functional agent,
+whether the identity described matches who the operator meant to publish, or
+whether the running agent will behave. The Row B ceiling applies: a spine
+transfers identity and policy, not capability, so the resulting agent's ceiling
+is the receiving model's. Same class as the standing observation that receipts
+are behavioral metadata, never intent — a signature is evidence of custody, not
+of correctness.
+
+## 47. The head hash verifies memoir integrity, never memoir availability
+
+If a memoir URL is present in the manifest, the chain head hash lets a reader
+detect tampering when they fetch the memoir. It does not guarantee the memoir
+will be fetchable at all. A dead host is a dead memoir, and the QR still boots
+the spine, because the memoir is optional. This is deliberate: publication
+should not require perpetual hosting. What the bundle guarantees is that IF a
+memoir is retrieved, its integrity is checkable; it makes no availability claim.
+
+## 48. PAP bundle signing uses the chain key, not the approval key
+
+Lotor's chain key is stored plaintext on the operator's machine (limit 8). A
+`pap-export` bundle is signed with that key, not the passphrase-derived approval
+key. So bundle authenticity is chain-key strength (per-machine, plaintext at
+rest) rather than passphrase strength. An operator whose chain key is
+compromised can have PAP bundles forged in their name. The design choice is
+recorded rather than hidden: signing a bundle must not require an interactive
+ceremony on every export, and the chain key already carries the same identity
+claim on every receipt. An optional operator co-signature slot (a second
+passphrase-signed field marking human-attested bundles) is deferred, not
+shipped.
+
+## 49. No pre-encode leak grep in PAP v1
+
+`pap-export` does not scan the spine for likely-private patterns (phone numbers,
+addresses, family names, credentials) before encoding. The `--public` flag is a
+discipline check, not a content filter. A leak-grep pass would have to exclude
+its own replacement tokens from the scan or it self-cancels (the 2026-07-20
+lesson: a validator that scans its own output matches both the real pattern and
+the placeholder the redaction introduced, and passes on every run). Queued for a
+later signature sitting rather than shipped half-implemented. Until it exists,
+the operator is the only filter, and limit 45 is why that is stated plainly.
+
+## 50. Two digest fields exist for the same input, with different meanings
+
+As of 2026-08-10, every `ran[]` item on a session receipt carries two digests
+of the same tool input. `paramsDigest` is the legacy field: 16 hex characters
+(64 bits) over an insertion-order `JSON.stringify`. `paramsDigestCanonical` is
+the interop field: full 256-bit hex over a recursively key-sorted canonical
+serialization (`params/1`). They are not interchangeable, and neither can be
+derived from the other.
+
+The split is deliberate (add-alongside, never replace) so that receipts written
+before the change stay verifiable and readers can tell which rule produced
+which value: receipts carrying `receiptSchema: 'receipt/2'` have both fields;
+older receipts have only the short one. The costs, stated plainly:
+
+- **Cross-era comparison is not defined.** A pre-`receipt/2` receipt cannot be
+  content-matched against an external system's canonical digest at all. The
+  seam only closes for receipts written after the wiring.
+- **The short digest is weak as evidence.** 64 bits is fine for the parser's
+  internal dedup and birthday-attackable (~2^32 hashes, laptop-feasible) as a
+  commitment. Anything treating `paramsDigest` as an evidence binding is
+  leaning on the wrong field; the full-length canonical digest is the one an
+  external verifier should compare.
+- **A reader who confuses the two gets silent nonsense.** Comparing a
+  canonical digest against the short field (or vice versa) fails for shape
+  reasons on inspection, but truncating the canonical digest to 16 characters
+  and comparing produces a value that looks comparable and means nothing.
+
+The correlation echo shipped in the same change has its own honest edge: the
+`_observaCorrelationId` key is echoed verbatim from tool input, which means it
+is attacker-writable by anything that can shape a tool call. The echo proves
+an id was PRESENT at call time, never that the authorising system named by it
+actually issued it. Binding the id to its issuer is the authorising system's
+job (signature over its own decision record), not the witness's.
