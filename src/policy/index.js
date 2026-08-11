@@ -400,6 +400,13 @@ function selfModFragmentsForBase(baseDir) {
     // a new directory under src/ is grantable by default. The drift guard
     // could not catch that: both lists were wrong together.
     'src/charter/',
+    // Added 2026-08-09 with WO-PAP-01, in lockstep with core-paths.js
+    // CORE_DIRS 'src/publish'. The signing path for published QR bundles:
+    // editing pack()/manifest.js could forge a bundle that boots a doctored
+    // spine under the keeper's chain signature. Both lists move together or
+    // the drift guard fails, which is exactly the check that caught the
+    // chain/store/grant drift on 2026-07-24.
+    'src/publish/',
     'src/home.js',
     'src/registration.js',
     // package.json is an execution manifest (see core-paths.js CORE_FILES for

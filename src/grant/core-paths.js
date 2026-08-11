@@ -61,7 +61,18 @@ const CORE_DIRS = Object.freeze([
   // every new auth module is added TO, not one it must be noticed as missing
   // from. The drift-guard test that keeps this list in step with the policy
   // fragments could not help, because both lists were wrong together.
-  'src/charter'
+  'src/charter',
+  // Added 2026-08-09 with the PAP publishing feature (WO-PAP-01). src/publish
+  // holds the bundle signing path: encodeManifest + pack() sign a spine with
+  // the chain key, and a poisoned signer forges bundles that impersonate the
+  // keeper (a scanned QR that boots a doctored spine under Isaac's signature).
+  // That is the same threat that keeps src/gate and src/policy in core, so the
+  // whole directory is non-delegable. Isaac's classification call at the
+  // signing sitting: CORE_DIRS, not the split. The decode side (unpack, a
+  // receiver tool) is bundled in rather than carved out because a v1 with one
+  // protected directory is simpler to reason about than two, and loosening the
+  // decoder later is one signed edit; tightening a leaked signer is not.
+  'src/publish'
 ]);
 
 /** Individual core files that do not live under a core directory. */
