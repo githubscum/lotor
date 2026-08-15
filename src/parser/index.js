@@ -11,7 +11,13 @@ import crypto from 'node:crypto';
  * @param {string} jsonlText - The raw JSONL content (one JSON object per line)
  * @returns {ReceiptSummary}
  */
-function parseSession(jsonlText) {
+function parseSession(jsonlText, opts = {}) {
+  // opts.transcriptBytes: when provided, use this byte slice for the
+  // transcriptHash. When absent, hash the utf-8 encoding of jsonlText.
+  // Same bytes either way in the common case; the session-end hook
+  // passes the raw Buffer so the bind does not rely on a round-trip
+  // through the JS string type.
+  const transcriptBytes = opts.transcriptBytes || Buffer.from(jsonlText, 'utf8');
   const lines = jsonlText.split('\n').filter(line => line.trim());
   const entries = lines.map(line => {
     try {
@@ -105,6 +111,32 @@ function parseSession(jsonlText) {
       // Tool invocations (tool_use content items)
       if (Array.isArray(entry.message.content)) {
         for (const item of entry.message.content) {
+          // Per-thinking-block digest (thought-capture tier 1, 2026-08-15).
+          // Captured self-report of reasoning emitted at a step in this turn.
+          // Same 16-hex format as paramsDigest: short, sortable, never
+          // reconstructible without the raw transcript. Full content never
+          // enters the receipt. Empty blocks are skipped explicitly so a
+          // reader never sees a zero-length entry; a transcript with no
+          // thinking blocks yields NO thinkingBlocks field (absence reads
+          // "unrecorded", never "no thoughts").
+          if (item.type === 'thinking') {
+            const thinkingText = typeof item.thinking === 'string'
+              ? item.thinking
+              : (typeof item.text === 'string' ? item.text : '');
+            if (thinkingText.length > 0) {
+              const thinkingDigest = crypto.createHash('sha256')
+                .update(thinkingText)
+                .digest('hex')
+                .slice(0, 16);
+              if (!session.thinkingBlocks) session.thinkingBlocks = [];
+              session.thinkingBlocks.push({
+                turn: turns,
+                digest: thinkingDigest,
+                length: thinkingText.length
+              });
+            }
+            continue;
+          }
           if (item.type === 'tool_use') {
             toolCalls++;
             const toolName = item.name || 'unknown';
@@ -214,6 +246,13 @@ function parseSession(jsonlText) {
     // Absence of this field is the read hint that a receipt predates the
     // Observa seam wiring; those older receipts carry only the 16-hex digest.
     receiptSchema: 'receipt/2',
+    // transcriptHash: pointer with teeth. Binds this receipt to the exact
+    // transcript bytes it summarizes, so a missing or altered transcript is
+    // a visible gap rather than a silent one. FULL 64-char hex, no slice:
+    // this digest runs once per session and bytes-fidelity is the point.
+    // It proves what was hashed, not that what was hashed is the whole
+    // session (see KNOWN-LIMITS).
+    transcriptHash: crypto.createHash('sha256').update(transcriptBytes).digest('hex'),
     sent,
     counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };
@@ -373,6 +412,44 @@ function extractTarget(input, toolName) {
   }
 
   return 'unknown';
+}
+
+/**
+ * Schema marker for the parser hash's METHOD, distinct from
+ * `cost.schema`, which versions only the cost sub-object. This covers
+ * parser behavior `cost.schema` does not: `isNetworkTool`'s verb list,
+ * `extractTarget`, `entryTimestamp`'s field preference. A change to any
+ * of those moves the hash below without moving `cost.schema`.
+ */
+export const PARSER_SCHEMA = 'parser/1';
+
+let cachedParserHash = null;
+
+/**
+ * Content hash of the parsing logic in force right now. Pure,
+ * in-memory, no disk I/O. Safe to call on every gate/warn/grant/egress
+ * receipt. Cached after first call in a process. Mirrors
+ * matcherVersionHash() in src/policy/index.js: .toString() of every
+ * parser function that materially shapes output. The purpose is to
+ * DETECT a change, not enumerate exhaustively.
+ */
+export function parserVersionHash() {
+  if (cachedParserHash) return cachedParserHash;
+  const parts = [
+    parseSession.toString(),
+    isNetworkTool.toString(),
+    extractTarget.toString(),
+    entryTimestamp.toString(),
+    usageIdentity.toString(),
+    digestParams.toString(),
+    digestContent.toString(),
+    digestParamsCanonical.toString()
+  ];
+  cachedParserHash = crypto.createHash('sha256')
+    .update(parts.join(' '))
+    .digest('hex')
+    .slice(0, 16);
+  return cachedParserHash;
 }
 
 export { parseSession };

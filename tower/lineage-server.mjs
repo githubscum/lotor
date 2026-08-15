@@ -1,0 +1,1048 @@
+// lineage-server.mjs - Control Tower v2, the chain-lineage view.
+//
+// Reads the Lotor receipt chain (LOTOR_HOME/receipts/chain.jsonl) and serves a
+// local view of the lineage: the chain as a spine, sessions as branches
+// expanding off it, each branch carrying what actually ran (model, per-model
+// cost, tool sequence, files touched, failures) and the gate events in its
+// window.
+//
+// Local-only, by design. The chain is Isaac's operational record and never
+// leaves the machine; this server binds to localhost and reads a local file.
+// It is a READER: it parses the chain and renders it, it never writes to it.
+//
+// Built 2026-08-09 (TOWER-ONTOLOGY-SPEC feature 6 + Isaac's "the lineage is
+// literally the chain view and the branches that expand out"). Stdlib only,
+// no dependencies, same posture as the legacy tower-server.js.
+//
+// Run:   node tower/lineage-server.mjs        (then open http://localhost:7778)
+//        LINEAGE_PORT=9000 node tower/lineage-server.mjs
+
+import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import os from 'node:os';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.LINEAGE_PORT) || 7778;
+
+function lotorHome() {
+  const o = process.env.LOTOR_HOME;
+  if (o && o.trim() !== '') return o.trim();
+  return join(os.homedir(), '.lotor');
+}
+function chainPath() {
+  return join(lotorHome(), 'receipts', 'chain.jsonl');
+}
+
+// --- chain load + parse ---
+
+function loadChain() {
+  const p = chainPath();
+  if (!existsSync(p)) return { entries: [], error: `no chain at ${p}` };
+  let text;
+  try {
+    text = readFileSync(p, 'utf8');
+  } catch (e) {
+    return { entries: [], error: `cannot read chain: ${e.message}` };
+  }
+  const entries = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try { entries.push(JSON.parse(t)); } catch { /* skip a malformed line */ }
+  }
+  return { entries, error: null };
+}
+
+function newSession(id) {
+  return {
+    id,
+    opens: [],
+    close: null,
+    gateEvents: [],
+    firstTs: Infinity,
+    startedAt: null,
+    endedAt: null
+  };
+}
+
+// Hash-link integrity ONLY. This checks that each entry's prevHash equals the
+// previous entry's hash, which catches truncation and reordering with zero
+// crypto. It is NOT signature verification: it does not prove the entries were
+// signed by the chain key. For that, `npm run verify:bundle` / the MCP
+// verify_chain tool. Labeled honestly in the UI as "hash-link intact", never
+// "signature verified".
+function checkLinks(entries) {
+  const GENESIS = '0'.repeat(64);
+  for (let i = 0; i < entries.length; i++) {
+    const expectedPrev = i === 0 ? GENESIS : entries[i - 1].hash;
+    if (entries[i].prevHash !== expectedPrev) {
+      return { ok: false, brokenAtSeq: entries[i].seq ?? i };
+    }
+  }
+  return { ok: true, brokenAtSeq: null };
+}
+
+// --- control panel: live mode + witness board --------------------------------
+//
+// Reads LOTOR_HOME/policy.json (version 2 with a "modes" map keyed by rule id,
+// each value "gate" | "warn" | "off") and exposes the current state plus a
+// witness board. Three witnesses, ordered by independence:
+//   - harness:    the runtime's own account (self-report).
+//   - chain:      the Lotor receipt chain (host-observed witness).
+//   - outside:    an independent observer. Today: none configured. That
+//                 absence is the point - the loudest element on the page when
+//                 empty, so it cannot be missed.
+//
+// All reads. No writes. Stdlib only, same posture as the rest of the server.
+
+function policyPath() { return join(lotorHome(), 'policy.json'); }
+function witnessesPath() { return join(lotorHome(), 'witnesses.json'); }
+
+function loadPolicy() {
+  const p = policyPath();
+  if (!existsSync(p)) return { ok: false, error: 'no policy.json' };
+  let text;
+  try { text = readFileSync(p, 'utf8'); }
+  catch (e) { return { ok: false, error: `cannot read policy.json: ${e.message}` }; }
+  try { return { ok: true, policy: JSON.parse(text) };
+  } catch (e) { return { ok: false, error: `policy.json invalid: ${e.message}` }; }
+}
+
+function loadWitnesses() {
+  const p = witnessesPath();
+  if (!existsSync(p)) return { ok: true, configured: false, list: [] };
+  let text;
+  try { text = readFileSync(p, 'utf8'); }
+  catch (e) { return { ok: false, error: `cannot read witnesses.json: ${e.message}`, configured: false, list: [] }; }
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (e) { return { ok: false, error: `witnesses.json invalid: ${e.message}`, configured: false, list: [] }; }
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.witnesses) ? parsed.witnesses : []);
+  return { ok: true, configured: list.length > 0, list };
+}
+
+function buildControl() {
+  const polRes = loadPolicy();
+  const wRes = loadWitnesses();
+
+  // Group rule ids by their consequence, same grouping the CLI uses.
+  let rules = { gate: [], warn: [], off: [] };
+  let mode = null;
+  if (polRes.ok && polRes.policy && typeof polRes.policy === 'object') {
+    mode = typeof polRes.policy.mode === 'string' ? polRes.policy.mode : null;
+    const modes = polRes.policy.modes || {};
+    for (const [rid, cons] of Object.entries(modes)) {
+      if (cons === 'gate') rules.gate.push(rid);
+      else if (cons === 'warn') rules.warn.push(rid);
+      else if (cons === 'off') rules.off.push(rid);
+    }
+    for (const k of Object.keys(rules)) rules[k].sort();
+  }
+  const policyReadable = polRes.ok;
+
+  // Harness self-report: was the most recent chain entry younger than 24h?
+  const { entries, error: chainErr } = loadChain();
+  let harnessStatus, harnessDetail;
+  const lastTs = entries.length ? entries[entries.length - 1].timestamp : null;
+  if (chainErr || !entries.length) {
+    harnessStatus = 'quiet';
+    harnessDetail = chainErr
+      ? `chain unreadable: ${chainErr}`
+      : 'no receipts on the chain yet. the runtime has not checked in.';
+  } else {
+    const ageMs = Date.now() - lastTs;
+    const ageH = ageMs / 3_600_000;
+    if (ageH <= 24) {
+      harnessStatus = 'reporting';
+      const ageStr = ageH < 1
+        ? `${Math.round(ageH * 60)}m ago`
+        : `${ageH.toFixed(ageH < 10 ? 1 : 0)}h ago`;
+      harnessDetail = `last receipt ${ageStr}. most recent entry: seq ${entries[entries.length - 1].seq}.`;
+    } else {
+      harnessStatus = 'quiet';
+      const days = (ageH / 24).toFixed(1);
+      harnessDetail = `last receipt ${days}d ago. the runtime has not checked in within 24h.`;
+    }
+  }
+
+  // Chain integrity: same derivation the tower already performs.
+  const links = checkLinks(entries);
+  let chainStatus, chainDetail;
+  if (chainErr) {
+    chainStatus = 'unknown';
+    chainDetail = chainErr;
+  } else if (links.ok) {
+    chainStatus = 'intact';
+    chainDetail = `${entries.length} receipts, hash-link verified. signed at the time of the act, append-only. detects alteration; silent on omission.`;
+  } else {
+    chainStatus = 'broken';
+    chainDetail = `BROKEN at seq ${links.brokenAtSeq}. the record cannot be trusted. run verify_chain now.`;
+  }
+
+  // Outside witness: optional, configured, or absent. The spec says absence
+  // is the loudest element - we mark it UNWITNESSED when the config file
+  // is missing or empty, and "configured (unpolled)" when entries exist.
+  const witnesses = [];
+  if (!wRes.ok) {
+    witnesses.push({
+      id: 'outside',
+      label: 'Outside witness',
+      status: 'unwitnessed',
+      detail: `witnesses.json unreadable: ${wRes.error}. treat as unwitnessed until resolved.`
+    });
+  } else if (wRes.configured) {
+    for (const w of wRes.list) {
+      witnesses.push({
+        id: w.id || 'outside',
+        label: w.label || w.id || 'Outside witness',
+        status: 'configured (unpolled)',
+        detail: `endpoint ${w.endpoint || '(none)'}. polling is out of scope for this view.`
+      });
+    }
+  } else {
+    witnesses.push({
+      id: 'outside',
+      label: 'Outside witness',
+      status: 'unwitnessed',
+      detail: 'No independent party currently observes this system. Everything above is self-custody: honest, tamper-evident, and unwitnessed. This slot is where a second machine, a custodian, or a counterparty plugs in.'
+    });
+  }
+
+  return {
+    mode,
+    rules,
+    policyReadable,
+    policyError: policyReadable ? null : polRes.error,
+    witnesses: [
+      { id: 'harness', label: 'Harness (self-report)', status: harnessStatus, detail: `${harnessDetail} the party being recorded, describing itself. necessary, never sufficient.` },
+      { id: 'chain',   label: 'Receipt chain',          status: chainStatus,   detail: chainDetail },
+      ...witnesses
+    ],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function buildLineage() {
+  const { entries, error } = loadChain();
+  if (error) return { error, stats: null, sessions: [], unattributed: [] };
+
+  const links = checkLinks(entries);
+  const sessions = new Map();
+  const gateEvents = [];
+  const stats = {
+    receipts: entries.length,
+    approved: 0, denied: 0, warn: 0, egress: 0,
+    firstTs: entries.length ? entries[0].timestamp : null,
+    lastTs: entries.length ? entries[entries.length - 1].timestamp : null,
+    linkIntact: links.ok, brokenAtSeq: links.brokenAtSeq
+  };
+
+  for (const e of entries) {
+    const p = e.payload || {};
+    if (p.type === 'session-open') {
+      const s = sessions.get(p.sessionId) || newSession(p.sessionId);
+      s.opens.push({
+        seq: e.seq, ts: e.timestamp, source: p.source, cwd: p.cwd,
+        mode: p.policy?.mode ?? null,
+        transcript: p.transcriptPath ?? null,
+        verifiedAtOpen: p.verifiedAtOpen?.ok ?? null,
+        hooksOk: p.hooks ? (p.hooks.preToolUse && p.hooks.sessionEnd) : null
+      });
+      if (e.timestamp < s.firstTs) s.firstTs = e.timestamp;
+      sessions.set(p.sessionId, s);
+    } else if (p.session && p.session.id) {
+      // session-close summary (no top-level `type`; identified by `session`)
+      const s = sessions.get(p.session.id) || newSession(p.session.id);
+      const byModel = p.cost?.byModel || {};
+      s.close = {
+        seq: e.seq, ts: e.timestamp,
+        model: p.session.model ?? null,
+        startedAt: p.session.startedAt ?? null,
+        endedAt: p.session.endedAt ?? null,
+        subsession: p.session.subsession ?? null,
+        counts: p.counts || {},
+        outputTokens: p.cost?.outputTokens ?? null,
+        byModel: Object.keys(byModel).map(m => ({
+          model: m,
+          outputTokens: byModel[m].outputTokens ?? 0,
+          messages: byModel[m].messages ?? 0
+        })),
+        ran: (p.ran || []).map(r => r.tool),
+        touched: (p.touched || []).map(t => ({ path: t.path, via: t.via })),
+        failed: (p.failed || []).length,
+        sent: (p.sent?.items || []).map(x => x.target)
+      };
+      s.startedAt = p.session.startedAt ?? s.startedAt;
+      s.endedAt = p.session.endedAt ?? s.endedAt;
+      if (e.timestamp < s.firstTs) s.firstTs = e.timestamp;
+      sessions.set(p.session.id, s);
+    } else if (p.type === 'gated-action') {
+      const g = { seq: e.seq, ts: e.timestamp, kind: 'gate', action: p.action ?? '?', decision: p.decision ?? '?', reason: p.reason ?? null };
+      gateEvents.push(g);
+      if (p.decision === 'approved') stats.approved++;
+      else if (p.decision === 'denied') stats.denied++;
+    } else if (p.type === 'policy-warn') {
+      gateEvents.push({ seq: e.seq, ts: e.timestamp, kind: 'warn', ruleId: p.ruleId ?? '?' });
+      stats.warn++;
+    } else if (p.type === 'egress-event') {
+      gateEvents.push({ seq: e.seq, ts: e.timestamp, kind: 'egress', ruleId: p.ruleId ?? '?' });
+      stats.egress++;
+    }
+  }
+
+  // Resolve session time windows.
+  const list = [...sessions.values()].map(s => {
+    const startTs = s.startedAt ? Date.parse(s.startedAt) : (s.firstTs === Infinity ? null : s.firstTs);
+    const endTs = s.endedAt ? Date.parse(s.endedAt) : (s.close ? s.close.ts : null);
+    return Object.assign(s, { startTs, endTs });
+  });
+
+  // Attribute gate events to sessions by ACTIVE-AT-TIME. Gate receipts carry no
+  // session id (a documented Lotor limit), so this is a best-effort time join,
+  // labeled as such in the UI. A session becomes "active" at each of its
+  // session-open receipts (including resumes), so the owning session for a gate
+  // event is the one whose most-recent open precedes the event. This handles
+  // resumes and interleaving correctly, where a fixed [start,end] window does
+  // not: a session that closed and resumed has events after its close receipt,
+  // and those belong to it, not to whatever opened in between.
+  const openMarks = [];
+  for (const s of list) for (const o of s.opens) openMarks.push({ ts: o.ts, id: s.id });
+  openMarks.sort((a, b) => a.ts - b.ts);
+  const byId = new Map(list.map(s => [s.id, s]));
+  const unattributed = [];
+  for (const g of gateEvents) {
+    let id = null;
+    for (const m of openMarks) { if (m.ts <= g.ts) id = m.id; else break; }
+    const s = id ? byId.get(id) : null;
+    if (s) s.gateEvents.push(g);
+    else unattributed.push(g);
+  }
+
+  // Shape sessions for the wire. "active" = did real work (has a close, ran
+  // tools, or has gate events). Quiet opens are counted, not listed.
+  const shaped = [];
+  let quiet = 0;
+  for (const s of list) {
+    const ge = s.gateEvents;
+    const active = !!s.close || ge.length > 0;
+    if (!active) { quiet++; continue; }
+    const approved = ge.filter(g => g.kind === 'gate' && g.decision === 'approved').length;
+    const denied = ge.filter(g => g.kind === 'gate' && g.decision === 'denied').length;
+    const warns = ge.filter(g => g.kind === 'warn' || g.kind === 'egress').length;
+    shaped.push({
+      id: s.id,
+      shortId: s.id.slice(0, 8),
+      startTs: s.startTs, endTs: s.endTs,
+      source: s.opens[0]?.source ?? null,
+      cwd: s.opens[0]?.cwd ?? s.close?.cwd ?? null,
+      transcript: s.opens.find(o => o.transcript)?.transcript ?? null,
+      mode: s.opens[0]?.mode ?? null,
+      model: s.close?.model ?? null,
+      byModel: s.close?.byModel ?? [],
+      counts: s.close?.counts ?? {},
+      touchedCount: s.close?.touched?.length ?? 0,
+      touched: s.close?.touched ?? [],
+      ran: s.close?.ran ?? [],
+      failed: s.close?.failed ?? 0,
+      sent: s.close?.sent ?? [],
+      gate: { approved, denied, warns },
+      gateEvents: ge.sort((a, b) => a.ts - b.ts),
+      hasClose: !!s.close
+    });
+  }
+  // Newest first, by end (or start) time.
+  shaped.sort((a, b) => (b.endTs ?? b.startTs ?? 0) - (a.endTs ?? a.startTs ?? 0));
+
+  stats.sessionsActive = shaped.length;
+  stats.sessionsQuiet = quiet;
+  stats.unattributedGateEvents = unattributed.length;
+
+  return { error: null, stats, sessions: shaped, generatedAt: new Date().toISOString() };
+}
+
+// --- ontology adapters -------------------------------------------------------
+//
+// One engine, many chains (Isaac's spec 2026-08-09): every source normalizes to
+// the same node shape and the client renders left-to-right decision lineage.
+//
+//   { id, label, t0,           when it was initialized (epoch ms)
+//     state,                   current column / state label
+//     ring, owner,             grouping hints
+//     decision,                the decision taken, if recorded
+//     needs,                   what needs delivered NOW (derived, honest)
+//     events: [{at, by, action}],  the decision trail, time-ordered
+//     deps: [ids],             what this depends on (edges draw left->right)
+//     importance }
+//
+// Adapters are READERS of stores owned elsewhere (legacy tower boards, the
+// relationships graph, the Lotor chain). Nothing here writes anything.
+
+const TOWER_DIR = join(os.homedir(), '.openclaw', 'workspace', 'projects', 'control-tower');
+
+function readJsonMaybeBom(p) {
+  let raw = readFileSync(p, 'utf8');
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  return JSON.parse(raw);
+}
+
+function cardNeeds(c) {
+  const col = c.col || c.column || '?';
+  if (col === 'review') return 'Needs review: accept, redirect, or close.';
+  if (col === 'new') return 'Needs triage: decide whether this happens at all.';
+  if (col === 'onhold') return c.reopenTrigger ? `Parked. Reopens on: ${c.reopenTrigger}` : 'Parked. Needs a reopen trigger or a kill.';
+  if (col === 'active') return 'In flight. Needs completion, then review.';
+  return null; // done
+}
+
+function buildCardsOntology() {
+  const p = join(TOWER_DIR, 'boards.json');
+  if (!existsSync(p)) return { error: `no boards.json at ${p}`, nodes: [] };
+  let b;
+  try { b = readJsonMaybeBom(p); } catch (e) { return { error: `boards.json unreadable: ${e.message}`, nodes: [] }; }
+
+  const nodes = [];
+  for (const owner of ['isaac', 'ike']) {
+    const board = b[owner];
+    if (!board) continue;
+    for (const [col, arr] of Object.entries(board)) {
+      if (!Array.isArray(arr)) continue;
+      for (const c of arr) {
+        const t0 = Date.parse(c.createdAt || c.movedAt || 0) || null;
+        const events = [];
+        if (c.createdAt) events.push({ at: Date.parse(c.createdAt), by: c.source || owner, action: 'initialized' });
+        for (const h of (Array.isArray(c.history) ? c.history : [])) {
+          const at = Date.parse(h.at);
+          if (!Number.isNaN(at)) events.push({ at, by: h.by || '?', action: `${h.action || 'moved'}${h.to ? ' -> ' + h.to : ''}` });
+        }
+        if (c.movedAt && events.length < 2) {
+          const at = Date.parse(c.movedAt);
+          if (!Number.isNaN(at) && at !== events[0]?.at) events.push({ at, by: owner, action: `moved to ${col}` });
+        }
+        if (c.doneAt) {
+          const at = Date.parse(c.doneAt);
+          if (!Number.isNaN(at)) events.push({ at, by: owner, action: 'done' });
+        }
+        events.sort((a, z) => a.at - z.at);
+        const deps = [];
+        for (const r of (Array.isArray(c.relationships) ? c.relationships : [])) {
+          if (r && typeof r.with === 'string' && /^c-/.test(r.with)) deps.push(r.with);
+        }
+        nodes.push({
+          id: c.id, label: c.title || c.id, t0, state: col, ring: c.ring || null, owner,
+          decision: c.decision || null, needs: cardNeeds({ ...c, col }),
+          claim: c.claim || null, notes: (c.notes || '').slice(0, 500) || null,
+          importance: c.importance ?? null, events, deps
+        });
+      }
+    }
+  }
+  nodes.sort((a, z) => (a.t0 ?? 0) - (z.t0 ?? 0));
+  return { error: null, nodes, kind: 'cards' };
+}
+
+function buildReceiptsOntology() {
+  const lin = buildLineage();
+  if (lin.error) return { error: lin.error, nodes: [] };
+  const nodes = lin.sessions.slice(0, 60).map(s => {
+    const events = (s.gateEvents || []).map(g => ({
+      at: g.ts,
+      by: 'gate',
+      action: g.kind === 'gate' ? `${g.decision}: ${g.action}` : `${g.kind}: ${g.ruleId}`
+    }));
+    const denied = s.gate.denied;
+    return {
+      id: s.id, label: `${s.shortId} ${s.model || '(open)'}`, t0: s.startTs,
+      state: s.hasClose ? 'closed' : 'open', ring: s.mode || null, owner: 'chain',
+      decision: null,
+      needs: s.hasClose ? null : 'Session open: no close receipt yet.',
+      claim: null,
+      notes: `${s.counts?.toolCalls ?? '?'} tool calls, ${s.touchedCount} files, ${denied} denied / ${s.gate.approved} approved`,
+      importance: null, events, deps: []
+    };
+  });
+  // The chain IS the lineage: each session depends on the one before it.
+  // A receipts chain with no cross-links renders straight, which is the point.
+  nodes.sort((a, z) => (a.t0 ?? 0) - (z.t0 ?? 0));
+  for (let i = 1; i < nodes.length; i++) nodes[i].deps = [nodes[i - 1].id];
+  return { error: null, nodes, kind: 'receipts' };
+}
+
+function buildPeopleOntology() {
+  const p = join(TOWER_DIR, 'relationships.json');
+  if (!existsSync(p)) return { error: `no relationships.json at ${p}`, nodes: [] };
+  let r;
+  try { r = readJsonMaybeBom(p); } catch (e) { return { error: `relationships.json unreadable: ${e.message}`, nodes: [] }; }
+  const CORE_RINGS = new Set(['Personal', 'Family', 'Advisors', 'Community', 'Company', 'Friends']);
+  const keep = (r.nodes || []).filter(n => CORE_RINGS.has(n.ring) || n.kind === 'self' || n.kind === 'org' || n.kind === 'project');
+  const keptIds = new Set(keep.map(n => n.id));
+  const edgesIn = new Map(); // target -> [sources]
+  for (const e of (r.edges || [])) {
+    if (keptIds.has(e.from) && keptIds.has(e.to)) {
+      if (!edgesIn.has(e.to)) edgesIn.set(e.to, []);
+      edgesIn.get(e.to).push(e.from);
+    }
+  }
+  const nodes = keep.map(n => {
+    const t0 = Date.parse(n.firstContact || n.lastContact || '') || null;
+    const events = [];
+    if (n.lastContact) {
+      const at = Date.parse(n.lastContact);
+      if (!Number.isNaN(at)) events.push({ at, by: n.label, action: 'last contact' });
+    }
+    return {
+      id: n.id, label: n.label || n.id, t0, state: n.ring || n.kind || '?',
+      ring: n.ring || null, owner: n.kind || 'person',
+      decision: null,
+      needs: null,
+      claim: n.role || null, notes: (n.note || '').slice(0, 400) || null,
+      importance: null, events, deps: edgesIn.get(n.id) || []
+    };
+  });
+  return { error: null, nodes, kind: 'people' };
+}
+
+// --- the decisions source ---------------------------------------------------
+//
+// Isaac's spec (2026-08-09, late): the chain indexes the conversations, so the
+// decision lineage IS recoverable — "we don't have to go back to the start of
+// time, just how we got to this specific moment and what decisions need to be
+// made." The dataset at tower/decisions.json is that distillation, and every
+// node carries PROVENANCE ("if you wrote it because you inferred it, say so;
+// if I did, then say it"): isaac-stated | ike-inferred | chain-recorded.
+// Editable: notes append, status moves (active/closed/needs-decision). This
+// file is brain-owned and ike-curated; edits land through the endpoints below.
+
+const DECISIONS_PATH = join(HERE, 'decisions.json');
+
+function loadDecisions() {
+  return JSON.parse(readFileSync(DECISIONS_PATH, 'utf8'));
+}
+
+function buildDecisionsOntology() {
+  if (!existsSync(DECISIONS_PATH)) return { error: `no decisions.json at ${DECISIONS_PATH}`, nodes: [] };
+  let d;
+  try { d = loadDecisions(); } catch (e) { return { error: e.message, nodes: [] }; }
+  const nodes = (d.nodes || []).map(n => {
+    const t0 = n.date ? Date.parse(n.date) : null;
+    const events = [];
+    if (t0) events.push({ at: t0, by: n.by, action: 'initialized' });
+    for (const note of (n.notes || [])) {
+      const at = Date.parse(note.at);
+      if (!Number.isNaN(at)) events.push({ at, by: note.by || 'isaac', action: `note: ${note.text}` });
+    }
+    let needs = null;
+    if (n.status === 'needs-decision') needs = 'A decision is owed here. ' + (n.decision || '');
+    else if (n.status === 'active') needs = 'Active thread. Still moving; close it when it lands.';
+    return {
+      id: n.id, label: n.title, t0, state: n.status, ring: n.provenance.split(' ')[0], owner: n.by,
+      decision: n.decision, needs,
+      claim: n.provenance, notes: n.what + (n.notes?.length ? '\n\n' + n.notes.map(x => `[${x.at} ${x.by}] ${x.text}`).join('\n') : ''),
+      importance: null, events, deps: n.deps || [], source: n.source
+    };
+  });
+  return { error: null, nodes, kind: 'decisions' };
+}
+
+function decisionEdit(kind, body) {
+  const d = loadDecisions();
+  const node = (d.nodes || []).find(n => n.id === body.id);
+  if (!node) return { ok: false, error: `unknown node ${body.id}` };
+  if (kind === 'note') {
+    const text = String(body.text || '').trim();
+    if (!text) return { ok: false, error: 'empty note' };
+    node.notes = node.notes || [];
+    node.notes.push({ at: new Date().toISOString(), by: body.by === 'ike' ? 'ike' : 'isaac', text: text.slice(0, 2000) });
+  } else if (kind === 'status') {
+    const s = String(body.status || '');
+    if (!['active', 'closed', 'needs-decision'].includes(s)) return { ok: false, error: `bad status ${s}` };
+    node.status = s;
+  } else return { ok: false, error: 'unknown edit' };
+  d.updatedAt = new Date().toISOString();
+  writeFileSync(DECISIONS_PATH, JSON.stringify(d, null, 2) + '\n', 'utf8');
+  return { ok: true, id: node.id, status: node.status, notes: node.notes?.length ?? 0 };
+}
+
+function buildOntology(source) {
+  if (source === 'receipts') return buildReceiptsOntology();
+  if (source === 'people') return buildPeopleOntology();
+  if (source === 'decisions') return buildDecisionsOntology();
+  return buildCardsOntology();
+}
+
+// --- people buckets ---------------------------------------------------------
+//
+// Isaac's spec (2026-08-09 evening): himself as the nucleus, everyone he knows
+// categorized into buckets ordered by closeness — the guild-ring idea applied
+// to his real network. Drag a person into a bucket; the bucket is a COUNT, not
+// an enforcement (Lotor's thesis: record first, gate later). Eventually the
+// bucket decides how much the bot discloses to them; today it only counts.
+//
+// Assignments persist to a BRAIN-OWNED overlay (tower/people-buckets.json).
+// The legacy relationships.json is read-only here, same posture as the chain:
+// base data stays where it lives, the categorization layer is ours.
+
+const BUCKETS_PATH = join(HERE, 'people-buckets.json');
+const BUCKETS = [
+  { id: 'nucleus',   label: 'Nucleus',        hint: 'Isaac. The point of view.' },
+  { id: 'inner',     label: 'Inner Circle',   hint: 'closest trust; the most disclosure, eventually' },
+  { id: 'family',    label: 'Family',         hint: 'blood and household' },
+  { id: 'advisors',  label: 'Advisors',       hint: 'upstream voices; signals to translate' },
+  { id: 'friends',   label: 'Friends',        hint: 'chosen people' },
+  { id: 'community', label: 'Community',      hint: 'KC, guilds, scenes, peers' },
+  { id: 'work',      label: 'Work',           hint: 'day-job orbit' },
+  { id: 'outer',     label: 'Outer',          hint: 'known, uncategorized, or dormant' }
+];
+const RING_TO_BUCKET = {
+  Personal: 'inner', Family: 'family', Advisors: 'advisors',
+  Friends: 'friends', Community: 'community', Company: 'work', External: 'outer'
+};
+
+function loadBucketOverlay() {
+  try {
+    if (existsSync(BUCKETS_PATH)) return JSON.parse(readFileSync(BUCKETS_PATH, 'utf8'));
+  } catch (e) { /* fall through to fresh */ }
+  return { version: 1, updatedAt: null, assignments: {} };
+}
+
+function buildPeopleBoard() {
+  const p = join(TOWER_DIR, 'relationships.json');
+  if (!existsSync(p)) return { error: `no relationships.json at ${p}`, buckets: BUCKETS, people: [] };
+  let r;
+  try { r = readJsonMaybeBom(p); } catch (e) { return { error: e.message, buckets: BUCKETS, people: [] }; }
+  const overlay = loadBucketOverlay();
+  const people = (r.nodes || []).map(n => {
+    const assigned = overlay.assignments[n.id];
+    const bucket = n.kind === 'self' ? 'nucleus'
+      : (assigned || RING_TO_BUCKET[n.ring] || 'outer');
+    return {
+      id: n.id, label: n.label || n.id, bucket,
+      assigned: !!assigned,
+      ring: n.ring || null, subRing: n.subRing || null,
+      role: n.role || null, org: n.org || null,
+      lastContact: n.lastContact || null,
+      note: (n.note || '').slice(0, 300) || null
+    };
+  });
+  return { error: null, buckets: BUCKETS, people, overlayUpdatedAt: overlay.updatedAt };
+}
+
+function assignBucket(id, bucket) {
+  if (typeof id !== 'string' || !id.trim()) return { ok: false, error: 'missing id' };
+  if (!BUCKETS.some(b => b.id === bucket)) return { ok: false, error: `unknown bucket ${bucket}` };
+  if (bucket === 'nucleus') return { ok: false, error: 'the nucleus is not assignable' };
+  const overlay = loadBucketOverlay();
+  overlay.assignments[id] = bucket;
+  overlay.updatedAt = new Date().toISOString();
+  writeFileSync(BUCKETS_PATH, JSON.stringify(overlay, null, 2) + '\n', 'utf8');
+  return { ok: true, id, bucket };
+}
+
+// --- the Lotor product: everything derived from the receipts -----------------
+//
+// Isaac's directive (2026-08-09, late): the front end "should just come from
+// the receipts so the server portion is literally just a hook that pulls things
+// in. Super lightweight." And: "build AROUND the llm, not into it... you want
+// to add to the car, not be the manufacturer." So this reads ONE source, the
+// chain, and derives the whole product: no boards.json, no relationships.json.
+// Lotor is an aftermarket part bolted to whatever the harness already records.
+//
+// The reframe it serves: not the session-to-session chain (we know it is
+// intact; if not, that is the loud failure). Where did each session LAND? The
+// separated context - the brain. A session completes and rolls into the larger
+// block (the day), and the block shows what was decided and where it landed.
+
+function classifyLanding(path) {
+  const p = String(path || '').replace(/\\/g, '/').toLowerCase();
+  if (p.includes('/.second-brain/')) return 'brain';
+  if (p.includes('/agent-receipts/')) return 'lotor';
+  if (p.includes('/temp/') || p.includes('/scratchpad/') || p.includes('/appdata/local/temp')) return 'scratch';
+  return 'other';
+}
+
+function buildProduct() {
+  const lin = buildLineage();
+  if (lin.error) return { error: lin.error, blocks: [], sessions: [], integrity: null };
+
+  const sessions = lin.sessions.map(s => {
+    const landing = { brain: 0, lotor: 0, scratch: 0, other: 0 };
+    for (const t of (s.touched || [])) landing[classifyLanding(t.path)]++;
+    return {
+      id: s.id, shortId: s.shortId, startTs: s.startTs, endTs: s.endTs,
+      model: s.model, byModel: s.byModel, mode: s.mode, source: s.source,
+      cwd: s.cwd, transcript: s.transcript,
+      turns: s.counts?.turns ?? null, toolCalls: s.counts?.toolCalls ?? (s.ran ? s.ran.length : null),
+      failed: s.failed, touchedCount: s.touchedCount, landing,
+      approved: s.gate.approved, denied: s.gate.denied, warns: s.gate.warns,
+      hasClose: s.hasClose,
+      // Signed decisions are the human ones. Approvals are Isaac's key on the
+      // record; that is the load-bearing decision count for a session.
+      decisions: s.gate.approved
+    };
+  });
+
+  // Roll sessions into day-blocks (the "block" once a session completes). Day
+  // is in the operator's local zone, which is how Isaac reads his own days.
+  const blocks = new Map();
+  for (const s of sessions) {
+    if (!s.startTs) continue;
+    const d = new Date(s.startTs);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!blocks.has(key)) blocks.set(key, {
+      day: key, ts: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+      sessions: [], landing: { brain: 0, lotor: 0, scratch: 0, other: 0 },
+      approved: 0, denied: 0, warns: 0, models: new Set(), toolCalls: 0, files: 0
+    });
+    const b = blocks.get(key);
+    b.sessions.push(s.id);
+    for (const k of Object.keys(b.landing)) b.landing[k] += s.landing[k];
+    b.approved += s.approved; b.denied += s.denied; b.warns += s.warns;
+    b.toolCalls += s.toolCalls || 0; b.files += s.touchedCount || 0;
+    for (const m of (s.byModel || [])) b.models.add(m.model);
+  }
+  const blockList = [...blocks.values()]
+    .map(b => ({ ...b, models: [...b.models], sessionCount: b.sessions.length }))
+    .sort((a, z) => a.ts - z.ts);
+
+  // Chain-wide landing summary: the core reframe, one number set. Where did
+  // the work go? Into the brain, or into Lotor's own source, or scratch.
+  const landingTotal = { brain: 0, lotor: 0, scratch: 0, other: 0 };
+  for (const s of sessions) for (const k of Object.keys(landingTotal)) landingTotal[k] += s.landing[k];
+
+  // Rapid evaluation, receipts-derived: what in the record wants a human look.
+  // Open sessions (started, never closed = crashed or in-flight) and
+  // denial-heavy sessions. No curation, straight from the chain.
+  const needsLook = sessions.filter(s => !s.hasClose || s.denied >= 3)
+    .sort((a, z) => (z.denied - a.denied) || ((z.endTs ?? z.startTs ?? 0) - (a.endTs ?? a.startTs ?? 0)))
+    .slice(0, 12);
+
+  return {
+    error: null,
+    integrity: { ok: lin.stats.linkIntact, brokenAtSeq: lin.stats.brokenAtSeq, receipts: lin.stats.receipts },
+    stats: {
+      receipts: lin.stats.receipts, sessionsActive: lin.stats.sessionsActive,
+      sessionsQuiet: lin.stats.sessionsQuiet, approved: lin.stats.approved,
+      denied: lin.stats.denied, blocks: blockList.length
+    },
+    landingTotal,
+    blocks: blockList,
+    sessions,
+    needsLook,
+    generatedAt: new Date().toISOString()
+  };
+}
+
+// --- PAP: QR export, baked in ------------------------------------------------
+//
+// G3 of the 08-10 frontend review, wired 2026-08-15 on Isaac's ship order.
+// Step 1: /api/pap/context — zero-side-effect read of the chain head so the
+// browser can show what the bundle will bind to. The chain KEY never crosses
+// to the browser; only the head hash, seq, and a pubkey fingerprint do.
+// Step 2: /api/pap/export — spawns the signed exporter in the Lotor repo
+// (bin/pap-export.js, which reads live chain state itself), falls back to the
+// brain's prototype CLI if the repo copy fails. The server forces a leak-grep
+// on the spine BEFORE spawning (the 2026-07-20 self-cancelling-leak-grep
+// lesson: exclude nothing, and never scan your own replacement tokens —
+// here there are none, we scan the raw spine and reject, never rewrite).
+
+const PAP_EXPORTERS = [
+  join(os.homedir(), 'agent-receipts', 'bin', 'pap-export.js'),
+  join(HERE, '..', 'projects', 'spinoff', 'pap-prototype', 'cli', 'pap-export.js')
+];
+
+function papContext() {
+  const { entries, error } = loadChain();
+  if (error) return { error };
+  if (!entries.length) return { error: 'empty chain' };
+  const head = entries[entries.length - 1];
+  const pubPath = join(lotorHome(), 'keys', 'chain.pub');
+  let fp = null;
+  if (existsSync(pubPath)) {
+    fp = createHash('sha256').update(readFileSync(pubPath, 'utf8').trim()).digest('hex');
+  }
+  return {
+    error: null,
+    chainHeadHash: head.hash,
+    seq: head.seq,
+    receipts: entries.length,
+    chainPubkeyFp: fp,
+    fpNote: fp ? null : 'no chain.pub at ' + pubPath + '; exporter derives the fingerprint itself from the keypair'
+  };
+}
+
+// Reject spines that carry obvious secrets. Reject-with-reasons, never rewrite:
+// a redactor that edits introduces the token-matching failure the 07-20 lesson
+// names. The list is honest about being incomplete.
+const PAP_LEAK_PATTERNS = [
+  { re: /\b(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b/, why: 'phone-number-shaped' },
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, why: 'PEM private key material' },
+  { re: /\b1f916_sk_[a-f0-9]{16,}\b/i, why: 'a 1f916 citizen secret' },
+  { re: /\bsk-[A-Za-z0-9]{20,}\b/, why: 'API-key-shaped token' },
+  { re: /\b\d{3}-\d{2}-\d{4}\b/, why: 'SSN-shaped' }
+];
+
+function papLeakCheck(spine) {
+  const hits = [];
+  for (const p of PAP_LEAK_PATTERNS) {
+    const m = spine.match(p.re);
+    if (m) hits.push({ why: p.why, sample: String(m[0]).slice(0, 24) });
+  }
+  return hits;
+}
+
+function papExport(body, cb) {
+  const spine = String(body.spine || '');
+  if (!spine.trim()) return cb({ ok: false, error: 'empty spine' });
+  if (spine.length > 60000) return cb({ ok: false, error: 'spine too large (60k cap)' });
+  const leaks = papLeakCheck(spine);
+  if (leaks.length) return cb({ ok: false, error: 'leak check rejected the spine', leaks });
+
+  const tmp = mkdtempSync(join(os.tmpdir(), 'pap-'));
+  const spinePath = join(tmp, 'spine.txt');
+  const outBase = join(tmp, 'out.pap');
+  writeFileSync(spinePath, spine, 'utf8');
+
+  const args = ['--spine', spinePath, '--out', outBase, '--public'];
+  if (body.memoirUrl) args.push('--memoir-url', String(body.memoirUrl).slice(0, 500));
+
+  const tryOne = (i) => {
+    if (i >= PAP_EXPORTERS.length) {
+      try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+      return cb({ ok: false, error: 'every exporter failed; see server log' });
+    }
+    const exporter = PAP_EXPORTERS[i];
+    if (!existsSync(exporter)) return tryOne(i + 1);
+    execFile('node', [exporter, ...args], { timeout: 30000 }, (err, stdout, stderr) => {
+      if (err) {
+        process.stdout.write(`pap exporter ${exporter} failed: ${(stderr || err.message).slice(0, 400)}\n`);
+        return tryOne(i + 1);
+      }
+      try {
+        const png = readFileSync(outBase + '.png');
+        const svg = readFileSync(outBase + '.svg', 'utf8');
+        const stats = {};
+        for (const line of String(stdout).split('\n')) {
+          let m;
+          if ((m = line.match(/compressed (\d+) B \(([\d.]+)x\)/))) { stats.compressed = Number(m[1]); stats.ratio = Number(m[2]); }
+          if ((m = line.match(/bundle (\d+) B \/ budget (\d+) B \(headroom (\d+) B\)/))) { stats.bundle = Number(m[1]); stats.budget = Number(m[2]); stats.headroom = Number(m[3]); }
+          if ((m = line.match(/chain seq (\d+)/))) stats.seq = Number(m[1]);
+        }
+        cb({ ok: true, dataUrl: 'data:image/png;base64,' + png.toString('base64'), svg, stats, exporter });
+      } catch (e) {
+        cb({ ok: false, error: 'exporter ran but output unreadable: ' + e.message });
+      } finally {
+        try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    });
+  };
+  tryOne(0);
+}
+
+// --- the events browser: their best UI pattern, over an immutable chain -------
+//
+// Meterless's operator control plane (Apache-2.0, meterless.ai) does one thing
+// better than this tower did: a paginated, filterable event-log browser -
+// "always inspectable, always replayable." Adopted here (pattern, not code).
+// The difference that matters: their event store is mutable (Merge/Edit/Repair/
+// Rebuild ARE their features, and their trust ledger admits "the running party
+// could silently rewrite history"). This browser reads the LOTOR chain, which
+// is hash-linked and append-only, so it is inspectable without being editable.
+// That is why their mutate-the-log tabs are deliberately not copied.
+
+function eventKind(p) {
+  if (p.type === 'session-open') return 'session-open';
+  if (p.session) return 'session-close';
+  if (p.type === 'gated-action') {
+    // 4-way enum landed 2026-08-15 (denial-enrichment): approved | denied |
+    // stale_signature | unreachable. Older receipts only ever wrote the
+    // first two; anything unrecognized renders as denied (fail-closed read).
+    if (p.decision === 'approved' || p.decision === 'stale_signature' || p.decision === 'unreachable') return p.decision;
+    return 'denied';
+  }
+  if (p.type === 'policy-warn') return 'warn';
+  if (p.type === 'egress-event') return 'egress';
+  return p.type || 'other';
+}
+
+function buildEvents(q) {
+  const { entries, error } = loadChain();
+  if (error) return { error, events: [], total: 0, counts: {} };
+  const GATE_KINDS = new Set(['approved', 'denied', 'stale_signature', 'unreachable']);
+  const all = entries.map(e => {
+    const p = e.payload || {};
+    const kind = eventKind(p);
+    let label = kind, detail = '', sessionId = null, path = null;
+    if (kind === 'session-open') { label = 'session open'; sessionId = p.sessionId; detail = [p.source, p.cwd].filter(Boolean).join(' · '); }
+    else if (kind === 'session-close') { sessionId = p.session.id; label = 'session close'; detail = [p.session.model, (p.counts?.toolCalls ?? '?') + ' tools', (p.touched?.length ?? 0) + ' files'].filter(Boolean).join(' · '); }
+    else if (GATE_KINDS.has(kind)) {
+      label = kind + ': ' + (p.action || '?'); detail = p.reason || '';
+      // The deterministic decision path: every fact the gate used, in the
+      // order it used them. Enriched receipts (2026-08-15 onward) carry
+      // ruleId / heldMs / paramsDigestCanonical; older ones render the same
+      // path with those steps marked unrecorded.
+      path = {
+        decision: p.decision || 'denied',
+        ruleId: p.ruleId ?? null,
+        heldMs: p.heldMs ?? null,
+        paramsDigest: p.paramsDigestCanonical ?? null,
+        nonce: p.approvalNonce ? String(p.approvalNonce).slice(0, 12) : null,
+        reason: p.reason || null
+      };
+    }
+    else if (kind === 'warn' || kind === 'egress') { label = kind + ': ' + (p.ruleId || '?'); detail = p.tool ? String(p.tool) : ''; path = { decision: kind, ruleId: p.ruleId ?? null, heldMs: null, paramsDigest: p.paramsDigest ?? null, nonce: null, reason: null }; }
+    return { seq: e.seq, ts: e.timestamp, kind, label, detail, sessionId, shortSession: sessionId ? sessionId.slice(0, 8) : null, path };
+  });
+  const counts = {};
+  for (const ev of all) counts[ev.kind] = (counts[ev.kind] || 0) + 1;
+
+  let filtered = all;
+  if (q.kind) { const set = new Set(q.kind.split(',').filter(Boolean)); if (set.size) filtered = filtered.filter(e => set.has(e.kind)); }
+  if (q.since) { const t = Number(q.since); if (!Number.isNaN(t)) filtered = filtered.filter(e => e.ts >= t); }
+  if (q.session) filtered = filtered.filter(e => e.sessionId === q.session);
+  if (q.q) { const s = q.q.toLowerCase(); filtered = filtered.filter(e => (e.label + ' ' + e.detail + ' ' + (e.shortSession || '')).toLowerCase().includes(s)); }
+
+  const total = filtered.length;
+  filtered.sort((a, b) => b.seq - a.seq);
+  const offset = Math.max(0, Number(q.offset) || 0);
+  const limit = Math.min(Math.max(1, Number(q.limit) || 100), 500);
+  return { error: null, total, counts, offset, limit, receipts: entries.length, events: filtered.slice(offset, offset + limit) };
+}
+
+// --- server ---
+
+function send(res, code, body, type) {
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  res.end(body);
+}
+
+const server = createServer((req, res) => {
+  try {
+    const url = (req.url || '/').split('?')[0];
+    if (url === '/' || url === '/index.html') {
+      const htmlPath = join(HERE, 'lineage.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'lineage.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/lineage') {
+      const data = buildLineage();
+      return send(res, 200, JSON.stringify(data), 'application/json');
+    }
+    if (url === '/api/integrity') {
+      // Chain integrity is a background invariant, not a view. Intact is
+      // silent; BROKEN is a first-class, loud failure (Isaac 2026-08-09:
+      // "if not, that's a big failure which should be called out"). This is
+      // the hash-link check (truncation/reorder), honestly not signature
+      // verification - for that, verify_chain. Cheap: parse + link scan only.
+      const { entries, error } = loadChain();
+      if (error) return send(res, 200, JSON.stringify({ ok: false, error, receipts: 0 }), 'application/json');
+      const links = checkLinks(entries);
+      return send(res, 200, JSON.stringify({
+        ok: links.ok, brokenAtSeq: links.brokenAtSeq, receipts: entries.length,
+        head: entries.length ? entries[entries.length - 1].seq : null,
+        checkedAt: new Date().toISOString()
+      }), 'application/json');
+    }
+    if (url === '/lotor' || url === '/lotor.html') {
+      const htmlPath = join(HERE, 'lotor.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'lotor.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/product') {
+      return send(res, 200, JSON.stringify(buildProduct()), 'application/json');
+    }
+    if (url === '/events' || url === '/events.html') {
+      const htmlPath = join(HERE, 'events.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'events.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/events') {
+      const q = Object.fromEntries(new URLSearchParams((req.url || '').split('?')[1] || ''));
+      return send(res, 200, JSON.stringify(buildEvents(q)), 'application/json');
+    }
+    if (url === '/api/pap/context') {
+      return send(res, 200, JSON.stringify(papContext()), 'application/json');
+    }
+    if (url === '/api/pap/export' && req.method === 'POST') {
+      let body = '';
+      req.on('data', c => { body += c; if (body.length > 100000) req.destroy(); });
+      req.on('end', () => {
+        try {
+          papExport(JSON.parse(body || '{}'), result =>
+            send(res, result.ok ? 200 : 400, JSON.stringify(result), 'application/json'));
+        } catch (e) {
+          send(res, 400, JSON.stringify({ ok: false, error: e.message }), 'application/json');
+        }
+      });
+      return;
+    }
+    if (url === '/nav.js') {
+      const navPath = join(HERE, 'nav.js');
+      if (!existsSync(navPath)) return send(res, 404, '// nav.js missing', 'application/javascript');
+      return send(res, 200, readFileSync(navPath, 'utf8'), 'application/javascript; charset=utf-8');
+    }
+    if (url === '/ontology' || url === '/ontology.html') {
+      const htmlPath = join(HERE, 'ontology.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'ontology.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/ontology') {
+      const q = new URLSearchParams((req.url || '').split('?')[1] || '');
+      const data = buildOntology(q.get('source') || 'cards');
+      return send(res, 200, JSON.stringify(data), 'application/json');
+    }
+    if (url === '/control' || url === '/control.html') {
+      const htmlPath = join(HERE, 'control.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'control.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/control') {
+      return send(res, 200, JSON.stringify(buildControl()), 'application/json');
+    }
+    if (url === '/people' || url === '/people.html') {
+      const htmlPath = join(HERE, 'people.html');
+      if (!existsSync(htmlPath)) return send(res, 500, 'people.html missing', 'text/plain');
+      return send(res, 200, readFileSync(htmlPath, 'utf8'), 'text/html; charset=utf-8');
+    }
+    if (url === '/api/people') {
+      return send(res, 200, JSON.stringify(buildPeopleBoard()), 'application/json');
+    }
+    if ((url === '/api/decisions/note' || url === '/api/decisions/status') && req.method === 'POST') {
+      let body = '';
+      req.on('data', c => { body += c; if (body.length > 20000) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const kind = url.endsWith('note') ? 'note' : 'status';
+          const result = decisionEdit(kind, JSON.parse(body || '{}'));
+          send(res, result.ok ? 200 : 400, JSON.stringify(result), 'application/json');
+        } catch (e) {
+          send(res, 400, JSON.stringify({ ok: false, error: e.message }), 'application/json');
+        }
+      });
+      return;
+    }
+    if (url === '/api/people/bucket' && req.method === 'POST') {
+      let body = '';
+      req.on('data', c => { body += c; if (body.length > 10000) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const { id, bucket } = JSON.parse(body || '{}');
+          const result = assignBucket(id, bucket);
+          send(res, result.ok ? 200 : 400, JSON.stringify(result), 'application/json');
+        } catch (e) {
+          send(res, 400, JSON.stringify({ ok: false, error: e.message }), 'application/json');
+        }
+      });
+      return;
+    }
+    return send(res, 404, 'not found', 'text/plain');
+  } catch (e) {
+    return send(res, 500, `lineage error: ${e.message}`, 'text/plain');
+  }
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  process.stdout.write(`lineage tower on http://localhost:${PORT}  (chain: ${chainPath()})\n`);
+});

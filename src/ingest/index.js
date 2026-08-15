@@ -19,10 +19,12 @@ import { resolveHome } from '../home.js';
  * @param {string} jsonlText - Raw JSONL content from a session file
  * @returns {{entry: (Object|null), skipped: boolean, subsession: (number|null), sessionId: string}}
  */
-function ingestSession(jsonlText) {
+function ingestSession(jsonlText, opts = {}) {
   // Parse the session into a ReceiptSummary. The count of successfully
   // parsed entries is the growth marker the no-change guard compares.
-  const receiptSummary = parseSession(jsonlText);
+  // opts is forwarded verbatim (transcriptBytes for the transcriptHash
+  // bind); existing single-arg callers are unchanged.
+  const receiptSummary = parseSession(jsonlText, opts);
   const sessionId = receiptSummary.session.id;
   const thisSize = receiptSummary.counts.transcriptEntries;
 

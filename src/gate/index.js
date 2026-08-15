@@ -21,6 +21,8 @@ import {
   getPaths
 } from './sign.js';
 import { withLock } from '../store/lock.js';
+import { digestParamsCanonical } from '../parser/index.js';
+import { matcherVersionHash } from '../policy/index.js';
 
 const DEFAULT_BASE_DIR = '.';
 
@@ -140,7 +142,10 @@ function verifyApproval(actionRequest, approvalToken, baseDir = DEFAULT_BASE_DIR
  * @param {string} baseDir - Base directory (default: '.')
  * @returns {Object} { decision: 'approved'|'denied', reason?, approvalNonce?, receiptSeq? }
  */
-function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE_DIR) {
+function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE_DIR, meta = {}) {
+  // meta is informational only. It never enters canonicalizeRequest and never
+  // appears in verifyApproval. Fields read from meta today: ruleId, heldMs.
+  // Anything the receipt needs that is NOT part of the signed action lives here.
   const action = actionRequest?.action || 'unknown';
   const timestamp = Date.now();
 
@@ -150,29 +155,51 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       type: 'gated-action',
       decision: 'denied',
       action,
+      ruleId: meta.ruleId || null,
+      paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+      heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
       reason: 'no approval token provided',
       timestamp
     };
     const entry = chain.append(receipt);
-    return { decision: 'denied', reason: 'no approval token provided', receiptSeq: entry.seq };
+    return {
+      decision: 'denied',
+      reason: 'no approval token provided',
+      receiptSeq: entry.seq
+    };
   }
 
   // Verify the token
   const verifyResult = verifyApproval(actionRequest, approvalToken, baseDir);
 
   if (!verifyResult.valid) {
-    // Record nonce if it passed sig check but failed replay (already recorded)
-    // The nonceUsed check inside verifyApproval already handles replay
+    // Classify the reason into the 4-way enum. Today `verifyApproval` returns
+    // reasons that fall into two families: a wrong-action token
+    // ("approval token request mismatch (token was for different action)")
+    // and a stale-token token ("approval token is stale (signed N min ago ...)").
+    // The mismatch case stays plain `denied`. The stale case becomes
+    // `stale_signature` because the token was once valid for this action, the
+    // operator signed it on time, and the gap is a clock thing (or a
+    // staging/retry delay exceeding the 60-min ceiling). `unreachable` is
+    // reserved for engine-side faults and is produced by the hook, not here.
+    const reason = verifyResult.reason || 'verification failed';
+    const isStale = /stale|future/i.test(reason);
+    const decision = isStale ? 'stale_signature' : 'denied';
 
     const receipt = {
       type: 'gated-action',
-      decision: 'denied',
+      decision,
       action,
-      reason: verifyResult.reason,
+      ruleId: meta.ruleId || null,
+      paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+      heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
+      reason,
       timestamp
     };
     const entry = chain.append(receipt);
-    return { decision: 'denied', reason: verifyResult.reason, receiptSeq: entry.seq };
+    return { decision, reason, receiptSeq: entry.seq };
   }
 
   // Valid token. The nonce check-and-record must be atomic across PROCESSES:
@@ -193,6 +220,10 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       type: 'gated-action',
       decision: 'denied',
       action,
+      ruleId: meta.ruleId || null,
+      paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+      heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
       reason: 'approval token nonce already used (replay detected)',
       timestamp
     };
@@ -210,12 +241,23 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
     type: 'gated-action',
     decision: 'approved',
     action,
+    ruleId: meta.ruleId || null,
+    paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+    heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+    matcherHash: matcherVersionHash(),
     approvalNonce: nonce,
     timestamp
   };
   const entry = chain.append(receipt);
 
-  return { decision: 'approved', approvalNonce: nonce, receiptSeq: entry.seq };
+  return {
+    decision: 'approved',
+    approvalNonce: nonce,
+    receiptSeq: entry.seq,
+    ruleId: meta.ruleId || null,
+    paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+    heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null
+  };
 }
 
 /**

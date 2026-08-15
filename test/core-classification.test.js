@@ -69,7 +69,9 @@ const GRANTABLE = Object.freeze({
   // never touches chain or gate. Same class as views: it can render badly, it
   // cannot widen authority. Added 2026-07-29 as part of the colour convention
   // rollout; the deliberate classification is the whole point of this file.
-  term: 'colour and TTY detection for the terminal surface; reads env only, cannot widen authority'
+  term: 'colour and TTY detection for the terminal surface; reads env only, cannot widen authority',
+  // Added 2026-08-15 (tool-pinning, item 2 of the 08-13 signing stack).
+  toolpins: 'pure functions over tool definitions; no authority over enforcement'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */

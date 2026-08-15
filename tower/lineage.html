@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotor Lineage</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --card: #141414; --mid: #1C1C1C; --border: #2A2A2A;
+    --red: #C41E3A; --gold: #D4A017; --teal: #1A9B8A;
+    --red-dim: rgba(196,30,58,.22); --gold-dim: rgba(212,160,23,.20); --teal-dim: rgba(26,155,138,.20);
+    --ink: #EDEDED; --ink-mid: #A6A6A6; --ink-low: #6A6A6A;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --disp: "Syne", var(--sans);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  body { min-height: 100vh; }
+  .sig { height: 3px; background: linear-gradient(90deg, var(--gold), var(--teal), var(--red)); }
+
+  header { padding: 22px 28px 16px; border-bottom: 1px solid var(--border); }
+  .title { font-family: var(--disp); font-weight: 700; font-size: 26px; letter-spacing: .01em; margin: 0; }
+  .title .dim { color: var(--ink-low); font-weight: 400; }
+  .sub { color: var(--ink-mid); font-size: 13px; margin-top: 4px; }
+  .sub code { font-family: var(--mono); color: var(--ink-low); }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; min-width: 84px; }
+  .stat .n { font-family: var(--mono); font-size: 19px; font-weight: 600; line-height: 1; }
+  .stat .l { color: var(--ink-low); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-top: 5px; }
+  .stat.ok .n { color: var(--teal); } .stat.warn .n { color: var(--gold); } .stat.bad .n { color: var(--red); }
+  .intact { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .dot.teal { background: var(--teal); } .dot.red { background: var(--red); } .dot.gold { background: var(--gold); }
+
+  .wrap { display: grid; grid-template-columns: minmax(0,1fr) minmax(0, 460px); gap: 0; align-items: start; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } .inspector { border-left: none; border-top: 1px solid var(--border); } }
+
+  /* the spine + branches */
+  .lineage { padding: 20px 12px 60px 28px; }
+  .legend { color: var(--ink-low); font-size: 11.5px; margin: 0 0 14px 6px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .spine { position: relative; padding-left: 22px; }
+  .spine::before { content: ""; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px;
+    background: linear-gradient(180deg, var(--border), var(--mid)); }
+  .node { position: relative; margin: 0 0 12px 0; }
+  .node::before { content: ""; position: absolute; left: -16px; top: 20px; width: 14px; height: 2px; background: var(--border); }
+  .node::after { content: ""; position: absolute; left: -18px; top: 15px; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--card); border: 2px solid var(--ink-low); }
+  .node.sel::after { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-dim); }
+  .node.has-denied::after { border-color: var(--red); }
+
+  .branch { width: 100%; text-align: left; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; cursor: pointer; color: inherit; font: inherit; transition: border-color .12s, background .12s; }
+  .branch:hover { border-color: #3a3a3a; background: #171717; }
+  .node.sel .branch { border-color: var(--gold); background: #17150e; }
+  .brow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sid { font-family: var(--mono); font-size: 13px; color: var(--ink); font-weight: 600; }
+  .when { color: var(--ink-low); font-size: 12px; margin-left: auto; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+  .badge { font-family: var(--mono); font-size: 11px; padding: 3px 7px; border-radius: 5px; border: 1px solid var(--border); color: var(--ink-mid); }
+  .badge.cloud { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
+  .badge.local { color: var(--teal); border-color: var(--teal-dim); background: var(--teal-dim); }
+  .chips { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; color: var(--ink-mid); font-size: 12px; }
+  .chip b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+  .chip.bad b { color: var(--red); }
+  .gates { display: flex; align-items: center; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+  .gates .gd { width: 8px; height: 8px; border-radius: 2px; }
+  .gates .more { color: var(--ink-low); font-size: 11px; font-family: var(--mono); margin-left: 4px; }
+  .mode-tag { font-family: var(--mono); font-size: 10.5px; color: var(--ink-low); text-transform: uppercase; letter-spacing: .05em; }
+
+  /* inspector */
+  .inspector { position: sticky; top: 0; border-left: 1px solid var(--border); min-height: 100vh; padding: 22px 24px 60px; background: #101010; }
+  .ins-empty { color: var(--ink-low); font-size: 13px; margin-top: 40px; text-align: center; }
+  .ins-empty .rac { font-size: 40px; opacity: .5; }
+  .ins h2 { font-family: var(--mono); font-size: 15px; margin: 0 0 2px; color: var(--ink); word-break: break-all; }
+  .ins .meta { color: var(--ink-low); font-size: 12px; margin-bottom: 16px; }
+  .sect { margin: 18px 0 0; }
+  .sect h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); margin: 0 0 8px; font-weight: 600; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12.5px; }
+  .kv .k { color: var(--ink-low); } .kv .v { font-family: var(--mono); color: var(--ink); text-align: right; }
+  .model-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--mid); }
+  .model-row .m { font-family: var(--mono); } .model-row .m.cloud { color: var(--gold); } .model-row .m.local { color: var(--teal); }
+  .model-row .t { font-family: var(--mono); color: var(--ink-mid); }
+  .runline { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tok { font-family: var(--mono); font-size: 10.5px; padding: 2px 6px; background: var(--mid); border-radius: 4px; color: var(--ink-mid); }
+  .tok b { color: var(--ink); font-weight: 600; }
+  .files { font-family: var(--mono); font-size: 11.5px; color: var(--ink-mid); }
+  .files div { padding: 2px 0; border-bottom: 1px solid var(--mid); word-break: break-all; }
+  .files .via { color: var(--ink-low); }
+  .gevents { font-family: var(--mono); font-size: 11.5px; }
+  .gevents .ge { display: flex; gap: 8px; padding: 3px 0; align-items: baseline; }
+  .gevents .ge .s { color: var(--ink-low); min-width: 44px; }
+  .ge .approved { color: var(--teal); } .ge .denied { color: var(--red); } .ge .warn { color: var(--gold); } .ge .egress { color: var(--gold); }
+  .refresh { background: var(--mid); color: var(--ink-mid); border: 1px solid var(--border); border-radius: 7px;
+    padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  .refresh:hover { border-color: #3a3a3a; color: var(--ink); }
+  .note { color: var(--ink-low); font-size: 11px; margin-top: 8px; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="sig"></div>
+<header>
+  <h1 class="title">LOTOR <span class="dim">/ lineage</span></h1>
+  <div class="sub">The chain as a spine, sessions as branches. Source: <code id="chainpath">loading</code>
+    &nbsp;&middot;&nbsp; <button class="refresh" id="refresh">refresh</button></div>
+  <div class="stats" id="stats"></div>
+</header>
+<div class="wrap">
+  <main class="lineage">
+    <div class="legend">
+      <span><i class="dot teal"></i> approved / done</span>
+      <span><i class="dot red"></i> denied / gate-stop</span>
+      <span><i class="dot gold"></i> warn / egress</span>
+      <span><span class="badge cloud" style="padding:1px 6px">cloud</span> on-meter</span>
+      <span><span class="badge local" style="padding:1px 6px">local</span> off-meter</span>
+    </div>
+    <div class="spine" id="spine"></div>
+  </main>
+  <aside class="inspector" id="inspector">
+    <div class="ins-empty"><div class="rac">&#129437;</div>Select a session branch to inspect its lineage.</div>
+  </aside>
+</div>
+
+<script>
+const CLOUD = /^claude-|^gpt-|^o[0-9]|^gemini/i;
+const isLocal = m => m && !CLOUD.test(m);
+const fmtTime = ts => ts ? new Date(ts).toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '--';
+const ktok = n => n == null ? '--' : (n >= 1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : String(n));
+let DATA = null, selId = null;
+
+async function load() {
+  const r = await fetch('/api/lineage');
+  DATA = await r.json();
+  render();
+}
+
+function render() {
+  if (!DATA) return;
+  if (DATA.error) { document.getElementById('spine').innerHTML = '<div class="note">'+DATA.error+'</div>'; return; }
+  const s = DATA.stats;
+  document.getElementById('chainpath').textContent = 'lotor chain';
+  document.getElementById('stats').innerHTML = [
+    stat(s.receipts, 'receipts'),
+    stat(s.sessionsActive, 'active sessions'),
+    stat(s.sessionsQuiet, 'quiet', 'muted'),
+    stat(s.approved, 'approved', 'ok'),
+    stat(s.denied, 'denied', s.denied ? 'bad' : ''),
+    stat(s.warn + s.egress, 'warn / egress', (s.warn+s.egress) ? 'warn' : ''),
+    intactStat(s)
+  ].join('');
+  const spine = document.getElementById('spine');
+  spine.innerHTML = DATA.sessions.map(nodeHtml).join('') ||
+    '<div class="note">No active sessions recorded yet.</div>';
+  [...spine.querySelectorAll('.branch')].forEach(b => b.onclick = () => selectSession(b.dataset.id));
+  if (selId) { const n = spine.querySelector('.node[data-id="'+cssId(selId)+'"]'); if (n) n.classList.add('sel'); }
+}
+
+function stat(n, l, cls='') { return '<div class="stat '+cls+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>'; }
+function intactStat(s) {
+  const ok = s.linkIntact;
+  return '<div class="stat '+(ok?'ok':'bad')+'"><div class="n intact"><span class="dot '+(ok?'teal':'red')+'"></span>'+
+    (ok?'linked':'BROKEN')+'</div><div class="l">hash-link'+(ok?'':' @'+s.brokenAtSeq)+'</div></div>';
+}
+
+function nodeHtml(s) {
+  const models = (s.byModel && s.byModel.length ? s.byModel : (s.model ? [{model:s.model, outputTokens:null}] : []));
+  const badges = models.map(m => '<span class="badge '+(isLocal(m.model)?'local':'cloud')+'">'+esc(m.model)+
+    (m.outputTokens!=null? ' &middot; '+ktok(m.outputTokens):'')+'</span>').join('');
+  const c = s.counts || {};
+  const chips = [
+    chip('turns', c.turns), chip('tools', c.toolCalls ?? (s.ran?s.ran.length:null)),
+    chip('fails', s.failed, s.failed>0), chip('touched', s.touchedCount)
+  ].join('');
+  const dots = gateDots(s);
+  const mode = s.mode ? '<span class="mode-tag">'+esc(s.mode)+'</span>' : '';
+  return '<div class="node'+(s.gate.denied? ' has-denied':'')+'" data-id="'+cssId(s.id)+'">'+
+    '<button class="branch" data-id="'+esc(s.id)+'">'+
+      '<div class="brow"><span class="sid">'+esc(s.shortId)+'</span>'+mode+'<span class="when">'+fmtTime(s.endTs||s.startTs)+'</span></div>'+
+      (badges? '<div class="badges">'+badges+'</div>':'')+
+      '<div class="chips">'+chips+'</div>'+
+      (dots? '<div class="gates">'+dots+'</div>':'')+
+    '</button></div>';
+}
+function chip(label, v, bad=false) {
+  if (v == null) return '';
+  return '<span class="chip'+(bad?' bad':'')+'">'+label+' <b>'+v+'</b></span>';
+}
+function gateDots(s) {
+  const ev = s.gateEvents || [];
+  if (!ev.length) return '';
+  const cap = 28;
+  let out = ev.slice(0, cap).map(g => {
+    const cls = g.kind==='gate' ? (g.decision==='approved'?'teal':'red') : 'gold';
+    return '<span class="gd" style="background:var(--'+cls+')"></span>';
+  }).join('');
+  if (ev.length > cap) out += '<span class="more">+'+(ev.length-cap)+'</span>';
+  return out;
+}
+
+function selectSession(id) {
+  selId = id;
+  [...document.querySelectorAll('.node')].forEach(n => n.classList.toggle('sel', n.dataset.id === cssId(id)));
+  const s = DATA.sessions.find(x => x.id === id);
+  const el = document.getElementById('inspector');
+  if (!s) { el.innerHTML = ''; return; }
+  el.innerHTML = inspectorHtml(s);
+}
+
+function inspectorHtml(s) {
+  const c = s.counts || {};
+  const models = (s.byModel && s.byModel.length) ? s.byModel : (s.model? [{model:s.model, outputTokens:null, messages:null}]:[]);
+  const modelRows = models.map(m =>
+    '<div class="model-row"><span class="m '+(isLocal(m.model)?'local':'cloud')+'">'+esc(m.model)+'</span>'+
+    '<span class="t">'+ktok(m.outputTokens)+' out'+(m.messages?(' &middot; '+m.messages+' msg'):'')+'</span></div>').join('') || '<div class="note">no model recorded</div>';
+  const runCounts = tally(s.ran || []);
+  const runline = Object.entries(runCounts).sort((a,b)=>b[1]-a[1]).map(([t,n]) =>
+    '<span class="tok">'+esc(t)+' <b>'+n+'</b></span>').join('') || '<span class="note">no tool runs recorded</span>';
+  const files = (s.touched||[]).length ? (s.touched.map(f =>
+    '<div>'+esc(f.path)+' <span class="via">('+esc(f.via)+')</span></div>').join('')) : '<div class="note">none</div>';
+  const gev = (s.gateEvents||[]).length ? s.gateEvents.map(g => {
+    const label = g.kind==='gate' ? g.decision : g.kind;
+    const detail = g.kind==='gate' ? (g.action + (g.reason? ' &middot; '+esc(g.reason):'')) : g.ruleId;
+    return '<div class="ge"><span class="s">#'+g.seq+'</span><span class="'+(g.kind==='gate'?g.decision:g.kind)+'">'+label+'</span><span>'+esc(detail)+'</span></div>';
+  }).join('') : '<div class="note">no gate events in window</div>';
+  const sent = (s.sent||[]).length ? '<div class="sect"><h3>Outbound (self-attested)</h3><div class="files">'+
+    s.sent.map(t=>'<div>'+esc(t)+'</div>').join('')+'</div></div>' : '';
+
+  return '<div class="ins">'+
+    '<h2>'+esc(s.shortId)+'<span style="color:var(--ink-low)">'+esc(s.id.slice(8))+'</span></h2>'+
+    '<div class="meta">'+fmtTime(s.startTs)+' &rarr; '+fmtTime(s.endTs)+(s.source?' &middot; '+esc(s.source):'')+(s.hasClose?'':' &middot; open (no close receipt)')+'</div>'+
+    '<div class="sect"><h3>Session</h3><div class="kv">'+
+      kv('mode at open', s.mode||'--')+kv('cwd', shortPath(s.cwd))+
+      kv('turns', c.turns??'--')+kv('tool calls', c.toolCalls??'--')+
+      kv('failures', s.failed||0)+kv('files touched', s.touchedCount)+
+    '</div></div>'+
+    '<div class="sect"><h3>Models (the ladder)</h3>'+modelRows+'</div>'+
+    '<div class="sect"><h3>Gate events in window <span class="note" style="text-transform:none">(time-attributed)</span></h3><div class="gevents">'+gev+'</div>'+
+      '<div class="note">Gate receipts carry no session id, so these are joined by timestamp, not recorded ownership.</div></div>'+
+    '<div class="sect"><h3>Tool lineage ('+(s.ran?s.ran.length:0)+')</h3><div class="runline">'+runline+'</div></div>'+
+    '<div class="sect"><h3>Files touched</h3><div class="files">'+files+'</div></div>'+
+    sent+
+  '</div>';
+}
+
+function tally(arr) { const m = {}; for (const x of arr) m[x] = (m[x]||0)+1; return m; }
+function kv(k, v) { return '<span class="k">'+k+'</span><span class="v">'+esc(v)+'</span>'; }
+function shortPath(p) { if (!p) return '--'; return p.length>34? '...'+p.slice(-31) : p; }
+function esc(x) { return String(x==null?'':x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function cssId(id) { return id; }
+
+document.getElementById('refresh').onclick = load;
+load();
+</script>
+<script src="/nav.js"></script>
+</body>
+</html>

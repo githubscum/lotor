@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotor</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --card: #141414; --mid: #1C1C1C; --border: #2A2A2A;
+    --red: #C41E3A; --gold: #D4A017; --teal: #1A9B8A;
+    --red-dim: rgba(196,30,58,.22); --gold-dim: rgba(212,160,23,.20); --teal-dim: rgba(26,155,138,.20);
+    --ink: #EDEDED; --ink-mid: #A6A6A6; --ink-low: #6A6A6A;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --disp: "Syne", var(--sans);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  .sig { height: 3px; background: linear-gradient(90deg, var(--gold), var(--teal), var(--red)); }
+
+  header { padding: 18px 26px 14px; border-bottom: 1px solid var(--border); }
+  .toprow { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .title { font-family: var(--disp); font-weight: 700; font-size: 25px; margin: 0; }
+  .title .dim { color: var(--ink-low); font-weight: 400; }
+  .tag { color: var(--ink-low); font-size: 12px; }
+  .nav { margin-left: auto; font-size: 12px; }
+  .nav a { color: var(--ink-mid); margin-left: 12px; }
+  .nav button { background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 7px; cursor: pointer; }
+
+  /* integrity invariant */
+  .integ-ok { font-family: var(--mono); font-size: 10.5px; color: var(--ink-low); padding: 8px 0 0; display: flex; align-items: center; gap: 7px; }
+  .integ-ok .d { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+  .integ-bad { background: var(--red); color: #fff; padding: 14px 18px; border-radius: 10px; margin-top: 10px; display: flex; gap: 14px; align-items: center; animation: pulse 1.4s ease-in-out infinite; }
+  .integ-bad .big { font-family: var(--disp); font-weight: 700; font-size: 17px; }
+  .integ-bad .seq { font-family: var(--mono); background: rgba(0,0,0,.3); padding: 2px 8px; border-radius: 5px; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .82 } }
+
+  /* landing summary: where the work went */
+  .landing { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: stretch; }
+  .land { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 130px; }
+  .land .n { font-family: var(--mono); font-size: 20px; font-weight: 600; }
+  .land .l { color: var(--ink-low); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 4px; }
+  .land.brain { border-left: 3px solid var(--teal); } .land.brain .n { color: var(--teal); }
+  .land.lotor { border-left: 3px solid var(--gold); } .land.lotor .n { color: var(--gold); }
+  .land.scratch .n, .land.other .n { color: var(--ink-mid); }
+  .land .bar { height: 4px; border-radius: 2px; margin-top: 8px; background: var(--mid); overflow: hidden; }
+  .land .bar i { display: block; height: 100%; }
+
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 340px; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } .rail { border-left: none; border-top: 1px solid var(--border); } }
+
+  /* the block lineage */
+  .stream { padding: 20px 22px 60px; overflow-x: auto; }
+  .caption { color: var(--ink-low); font-size: 12px; margin: 0 0 14px; }
+  .blocks { display: flex; gap: 14px; align-items: flex-start; }
+  .block { min-width: 210px; width: 210px; flex-shrink: 0; background: #101010; border: 1px solid var(--border); border-radius: 12px; }
+  .block .bh { padding: 11px 13px 9px; border-bottom: 1px solid var(--mid); }
+  .block .day { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .block .bmeta { color: var(--ink-low); font-size: 11px; margin-top: 3px; }
+  .block .agg { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .pill { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border); color: var(--ink-mid); }
+  .pill.teal { color: var(--teal); border-color: var(--teal-dim); } .pill.red { color: var(--red); border-color: var(--red-dim); } .pill.gold { color: var(--gold); border-color: var(--gold-dim); }
+  .landbar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; margin-top: 9px; background: var(--mid); }
+  .landbar i.brain { background: var(--teal); } .landbar i.lotor { background: var(--gold); } .landbar i.scratch { background: #3a3a3a; } .landbar i.other { background: #555; }
+  .sesslist { padding: 8px; }
+  .sess { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; }
+  .sess:hover { border-color: #3a3a3a; }
+  .sess.denied { border-left: 3px solid var(--red); } .sess.open { border-left: 3px solid var(--gold); }
+  .sess .sid { font-family: var(--mono); font-size: 11.5px; }
+  .sess .sm { color: var(--ink-low); font-size: 10px; font-family: var(--mono); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .sess .sm .a { color: var(--teal); } .sess .sm .d { color: var(--red); }
+  .badge { font-family: var(--mono); font-size: 9.5px; padding: 1px 5px; border-radius: 4px; }
+  .badge.cloud { color: var(--gold); background: var(--gold-dim); } .badge.local { color: var(--teal); background: var(--teal-dim); }
+
+  .rail { border-left: 1px solid var(--border); background: #101010; padding: 18px 18px 60px; min-height: calc(100vh - 200px); }
+  .rail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); margin: 0 0 4px; }
+  .rail .rsub { color: var(--ink-low); font-size: 11px; margin-bottom: 12px; }
+  .look { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--gold); border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; cursor: pointer; }
+  .look.denied { border-left-color: var(--red); }
+  .look .t { font-family: var(--mono); font-size: 12px; }
+  .look .m { color: var(--ink-low); font-size: 10.5px; margin-top: 3px; }
+  .rail .empty { color: var(--ink-low); font-size: 12px; }
+
+  /* session popup - the recall index */
+  .popup { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .popup.show { display: flex; }
+  .pop { width: min(640px, 92vw); max-height: 84vh; overflow: auto; background: #131313; border: 1px solid var(--border); border-top: 3px solid var(--gold); border-radius: 12px; padding: 22px 24px; }
+  .pop h2 { font-family: var(--mono); font-size: 15px; margin: 0 0 2px; word-break: break-all; }
+  .pop .meta { color: var(--ink-low); font-size: 12px; margin-bottom: 14px; }
+  .pop .sect { margin-top: 16px; } .pop .sect h4 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); margin: 0 0 6px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12.5px; } .kv .k { color: var(--ink-low); } .kv .v { font-family: var(--mono); text-align: right; }
+  .model-row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--mid); }
+  .model-row .m.cloud { color: var(--gold); } .model-row .m.local { color: var(--teal); } .model-row .m { font-family: var(--mono); } .model-row .t { font-family: var(--mono); color: var(--ink-mid); }
+  .recall { font-family: var(--mono); font-size: 11px; color: var(--ink-mid); background: var(--mid); border-radius: 7px; padding: 9px 11px; word-break: break-all; }
+  .recall b { color: var(--teal); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+  .pop-close { float: right; background: none; border: 1px solid var(--border); color: var(--ink-mid); border-radius: 6px; font: inherit; padding: 3px 10px; cursor: pointer; }
+  .disc { color: var(--ink-low); font-size: 10.5px; font-style: italic; margin-top: 8px; }
+
+  /* PAP export modal */
+  .pap textarea { width: 100%; min-height: 180px; background: var(--mid); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; resize: vertical; }
+  .pap .ctx { font-family: var(--mono); font-size: 11px; color: var(--ink-mid); background: var(--mid); border-radius: 7px; padding: 9px 11px; margin: 10px 0; word-break: break-all; }
+  .pap .ctx b { color: var(--gold); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+  .pap .warnline { color: var(--gold); font-size: 12px; margin: 10px 0; }
+  .pap .btnrow { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+  .pap button.go { background: var(--red); border: none; color: #fff; font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .pap button.go:disabled { opacity: .5; cursor: default; }
+  .pap button.alt { background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); font: inherit; padding: 7px 13px; border-radius: 8px; cursor: pointer; }
+  .pap .qrwrap { text-align: center; margin-top: 14px; }
+  .pap .qrwrap img { max-width: 320px; width: 100%; background: #fff; border-radius: 10px; padding: 10px; }
+  .pap .stats { font-family: var(--mono); font-size: 11px; color: var(--ink-mid); margin-top: 8px; }
+  .pap .err { color: var(--red); font-family: var(--mono); font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="sig"></div>
+<header>
+  <div class="toprow">
+    <h1 class="title">LOTOR</h1>
+    <span class="tag">your record, derived from the receipts. it landed in the brain. nothing here is inferred - the chain says it.</span>
+    <span class="nav"><button id="exportBtn" title="Personal Agent Publishing - take your spine to another LLM">export &#9633; QR</button><a href="/ontology">decisions</a><a href="/">detail</a></span>
+  </div>
+  <div id="integrity"></div>
+  <div class="landing" id="landing"></div>
+</header>
+<div class="layout">
+  <main class="stream">
+    <p class="caption" id="caption">Each day is a block. A session completes and rolls into its block. Teal landed in the brain, gold in Lotor. Click a session to recall it.</p>
+    <div class="blocks" id="blocks"></div>
+  </main>
+  <aside class="rail">
+    <h3>Rapid evaluation</h3>
+    <div class="rsub">Open or denial-heavy sessions - what wants a look. Straight from the chain.</div>
+    <div id="rail"></div>
+  </aside>
+</div>
+<div class="popup" id="popup"><div class="pop" id="popBody"></div></div>
+
+<script>
+const CLOUD = /^claude-|^gpt-|^o[0-9]|^gemini/i;
+const isLocal = m => m && !CLOUD.test(m);
+const fmtDay = ts => new Date(ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const fmtT = ts => ts ? new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '--';
+const ktok = n => n == null ? '--' : (n >= 1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : String(n));
+let DATA = null, BYID = new Map();
+
+async function load() {
+  const r = await fetch('/api/product');
+  DATA = await r.json();
+  BYID = new Map((DATA.sessions || []).map(s => [s.id, s]));
+  renderIntegrity();
+  renderLanding();
+  renderBlocks();
+  renderRail();
+}
+
+function renderIntegrity() {
+  const el = document.getElementById('integrity');
+  const j = DATA.integrity;
+  if (!j) { el.innerHTML = ''; return; }
+  if (j.ok) el.innerHTML = '<div class="integ-ok"><span class="d"></span>chain intact &middot; ' + j.receipts + ' receipts &middot; hash-link verified. if this ever reads BROKEN, stop and trust nothing downstream.</div>';
+  else { el.innerHTML = '<div class="integ-bad"><span class="big">CHAIN INTEGRITY FAILURE</span><span>The receipt chain is broken' + (j.brokenAtSeq!=null?' at <span class="seq">seq '+j.brokenAtSeq+'</span>':'') + '. The record cannot be trusted. Run verify_chain now.</span></div>'; document.title='(!) BROKEN - Lotor'; }
+}
+
+function renderLanding() {
+  const t = DATA.landingTotal; if (!t) return;
+  const total = Math.max(1, t.brain + t.lotor + t.scratch + t.other);
+  const pct = n => Math.round(n / total * 100);
+  const cell = (k, label) => '<div class="land ' + k + '"><div class="n">' + t[k] + '</div><div class="l">' + label + '</div>' +
+    '<div class="bar"><i style="width:' + pct(t[k]) + '%;background:' + ({brain:'var(--teal)',lotor:'var(--gold)',scratch:'#3a3a3a',other:'#555'}[k]) + '"></i></div></div>';
+  document.getElementById('landing').innerHTML =
+    cell('brain', 'landed in the brain') + cell('lotor', 'into Lotor') + cell('scratch', 'scratch') + cell('other', 'elsewhere');
+}
+
+function renderBlocks() {
+  const el = document.getElementById('blocks');
+  const blocks = DATA.blocks || [];
+  if (!blocks.length) { el.innerHTML = '<div class="empty" style="color:var(--ink-low)">No sessions in the chain yet.</div>'; return; }
+  el.innerHTML = blocks.map(b => {
+    const lt = b.landing, sum = Math.max(1, lt.brain+lt.lotor+lt.scratch+lt.other);
+    const seg = k => '<i class="' + k + '" style="width:' + (lt[k]/sum*100) + '%"></i>';
+    const models = b.models.map(m => '<span class="badge ' + (isLocal(m)?'local':'cloud') + '">' + esc(m.replace(/^claude-/,'')) + '</span>').join(' ');
+    const sess = b.sessions.map(id => BYID.get(id)).filter(Boolean)
+      .sort((a,z) => (a.startTs||0)-(z.startTs||0)).map(sessHtml).join('');
+    return '<div class="block"><div class="bh"><div class="day">' + fmtDay(b.ts) + '</div>' +
+      '<div class="bmeta">' + b.sessionCount + ' session' + (b.sessionCount>1?'s':'') + ' &middot; ' + b.toolCalls + ' tools &middot; ' + b.files + ' files</div>' +
+      '<div class="agg">' + (b.approved?'<span class="pill teal">' + b.approved + ' signed</span>':'') +
+        (b.denied?'<span class="pill red">' + b.denied + ' denied</span>':'') + '<span style="flex:1"></span>' + models + '</div>' +
+      '<div class="landbar">' + seg('brain')+seg('lotor')+seg('scratch')+seg('other') + '</div></div>' +
+      '<div class="sesslist">' + sess + '</div></div>';
+  }).join('');
+  [...el.querySelectorAll('.sess')].forEach(s => s.onclick = () => openSession(s.dataset.id));
+}
+
+function sessHtml(s) {
+  const cls = 'sess' + (s.denied ? ' denied' : '') + (!s.hasClose ? ' open' : '');
+  const topModel = (s.byModel && s.byModel.length) ? s.byModel.slice().sort((a,b)=>b.outputTokens-a.outputTokens)[0].model : s.model;
+  const badge = topModel ? '<span class="badge ' + (isLocal(topModel)?'local':'cloud') + '">' + esc(topModel.replace(/^claude-/,'')) + '</span>' : '';
+  const land = s.landing.brain ? '<span style="color:var(--teal)">brain ' + s.landing.brain + '</span>' :
+               s.landing.lotor ? '<span style="color:var(--gold)">lotor ' + s.landing.lotor + '</span>' : '';
+  return '<div class="' + cls + '" data-id="' + esc(s.id) + '">' +
+    '<div class="sid">' + esc(s.shortId) + ' ' + badge + '</div>' +
+    '<div class="sm">' + (s.toolCalls!=null?'<span>' + s.toolCalls + ' tools</span>':'') +
+      (s.approved?'<span class="a">' + s.approved + ' signed</span>':'') +
+      (s.denied?'<span class="d">' + s.denied + ' denied</span>':'') +
+      (land?'<span>' + land + '</span>':'') +
+      (!s.hasClose?'<span style="color:var(--gold)">open</span>':'') + '</div></div>';
+}
+
+function renderRail() {
+  const el = document.getElementById('rail');
+  const items = DATA.needsLook || [];
+  el.innerHTML = items.length ? items.map(s =>
+    '<div class="look' + (s.denied?' denied':'') + '" data-id="' + esc(s.id) + '">' +
+    '<div class="t">' + esc(s.shortId) + (s.model?' &middot; ' + esc(s.model.replace(/^claude-/,'')):'') + '</div>' +
+    '<div class="m">' + (!s.hasClose?'open, no close receipt':'') + (s.denied?(!s.hasClose?' &middot; ':'') + s.denied + ' denied':'') + ' &middot; ' + fmtT(s.endTs||s.startTs) + '</div></div>'
+  ).join('') : '<div class="empty">Nothing open or denial-heavy. Clean.</div>';
+  [...el.querySelectorAll('.look')].forEach(l => l.onclick = () => openSession(l.dataset.id));
+}
+
+function openSession(id) {
+  const s = BYID.get(id); if (!s) return;
+  const pop = document.getElementById('popup'), body = document.getElementById('popBody');
+  const models = (s.byModel && s.byModel.length) ? s.byModel : (s.model?[{model:s.model,outputTokens:null,messages:null}]:[]);
+  const modelRows = models.map(m => '<div class="model-row"><span class="m ' + (isLocal(m.model)?'local':'cloud') + '">' + esc(m.model) + '</span><span class="t">' + ktok(m.outputTokens) + ' out' + (m.messages?' &middot; ' + m.messages + ' msg':'') + '</span></div>').join('') || '<div class="disc">no model recorded</div>';
+  const land = s.landing;
+  body.innerHTML =
+    '<button class="pop-close" id="pc">close</button>' +
+    '<h2>' + esc(s.shortId) + '<span style="color:var(--ink-low)">' + esc(s.id.slice(8)) + '</span></h2>' +
+    '<div class="meta">' + fmtT(s.startTs) + ' &rarr; ' + fmtT(s.endTs) + (s.source?' &middot; ' + esc(s.source):'') + (s.hasClose?'':' &middot; open, no close receipt') + '</div>' +
+    '<div class="sect"><h4>Signed decisions</h4><div class="kv">' +
+      '<span class="k">approved (your key)</span><span class="v" style="color:var(--teal)">' + s.approved + '</span>' +
+      '<span class="k">denied at the gate</span><span class="v" style="color:' + (s.denied?'var(--red)':'var(--ink)') + '">' + s.denied + '</span>' +
+      '<span class="k">warns</span><span class="v">' + s.warns + '</span></div></div>' +
+    '<div class="sect"><h4>Where it landed</h4><div class="kv">' +
+      '<span class="k">the brain</span><span class="v" style="color:var(--teal)">' + land.brain + ' files</span>' +
+      '<span class="k">Lotor source</span><span class="v" style="color:var(--gold)">' + land.lotor + '</span>' +
+      '<span class="k">scratch / other</span><span class="v">' + (land.scratch + land.other) + '</span>' +
+      '<span class="k">tool calls</span><span class="v">' + (s.toolCalls ?? '--') + '</span>' +
+      '<span class="k">failures</span><span class="v">' + (s.failed || 0) + '</span>' +
+      (s.cwd?'<span class="k">cwd</span><span class="v">' + esc(shortPath(s.cwd)) + '</span>':'') + '</div></div>' +
+    '<div class="sect"><h4>Models</h4>' + modelRows + '</div>' +
+    (s.transcript ? '<div class="sect"><h4>Recall</h4><div class="recall"><b>the conversation lives here</b>' + esc(s.transcript) + '</div>' +
+      '<div class="disc">The chain indexes where every context lives. This is the transcript to dive into the thought process behind this session.</div></div>' : '') +
+    '<div class="disc">Receipts carry which tools ran and where files landed, never intent. Silence is not proof of absence.</div>';
+  pop.classList.add('show');
+  document.getElementById('pc').onclick = () => pop.classList.remove('show');
+  pop.onclick = e => { if (e.target === pop) pop.classList.remove('show'); };
+}
+
+// PAP export: spine -> signed QR bundle, via the Lotor exporter server-side.
+// The chain key never reaches this page; the server derives context and signs.
+document.getElementById('exportBtn').onclick = async () => {
+  const pop = document.getElementById('popup'), body = document.getElementById('popBody');
+  let ctx = { error: 'context unavailable' };
+  try { ctx = await (await fetch('/api/pap/context')).json(); } catch (e) { ctx = { error: e.message }; }
+  const ctxHtml = ctx.error
+    ? '<div class="ctx"><b>chain context</b>unavailable: ' + esc(ctx.error) + ' (exporter will derive its own)</div>'
+    : '<div class="ctx"><b>this bundle binds to</b>head ' + esc(String(ctx.chainHeadHash).slice(0, 16)) + '&hellip; &middot; seq ' + ctx.seq + ' &middot; ' + ctx.receipts + ' receipts' + (ctx.chainPubkeyFp ? ' &middot; key fp ' + esc(ctx.chainPubkeyFp.slice(0, 12)) + '&hellip;' : '') + '</div>';
+  body.innerHTML =
+    '<button class="pop-close" id="pc">close</button>' +
+    '<h2 style="font-family:var(--disp)">Export spine &rarr; QR</h2>' +
+    '<div class="meta">Personal Agent Publishing. The bundle is signed with the chain key and binds to the head below.</div>' +
+    '<div class="pap">' + ctxHtml +
+    '<textarea id="papSpine" placeholder="Paste the spine to publish. Keep it public-safe: the server rejects key material, phone numbers, and secret-shaped strings, and lists what it matched."></textarea>' +
+    '<div class="warnline">&#9888; A QR is a broadcast. Anyone who scans it reads the spine. Publishing is the act.</div>' +
+    '<div class="btnrow"><button class="go" id="papGo">publish &mdash; this QR is a broadcast anyone can scan</button><span id="papBusy" style="display:none;color:var(--ink-low);font-size:12px">signing&hellip;</span></div>' +
+    '<div id="papOut"></div></div>';
+  pop.classList.add('show');
+  document.getElementById('pc').onclick = () => pop.classList.remove('show');
+  pop.onclick = e => { if (e.target === pop) pop.classList.remove('show'); };
+  document.getElementById('papGo').onclick = async () => {
+    const spine = document.getElementById('papSpine').value;
+    const out = document.getElementById('papOut'), busy = document.getElementById('papBusy'), go = document.getElementById('papGo');
+    out.innerHTML = ''; go.disabled = true; busy.style.display = '';
+    try {
+      const r = await fetch('/api/pap/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spine }) });
+      const j = await r.json();
+      if (!j.ok) {
+        out.innerHTML = '<div class="err">' + esc(j.error) + (j.leaks ? '\n' + j.leaks.map(l => '  - ' + esc(l.why) + ' (' + esc(l.sample) + '&hellip;)').join('\n') : '') + '</div>';
+      } else {
+        const s = j.stats || {};
+        out.innerHTML = '<div class="qrwrap"><img id="papImg" src="' + j.dataUrl + '" alt="PAP QR bundle">' +
+          '<div class="stats">' + (s.bundle ? s.bundle + ' B of ' + s.budget + ' B (headroom ' + s.headroom + ' B) &middot; ' : '') + (s.ratio ? s.ratio.toFixed(2) + 'x compressed &middot; ' : '') + 'bound to seq ' + (s.seq ?? '?') + '</div>' +
+          '<div class="btnrow" style="justify-content:center"><a class="alt" style="text-decoration:none;padding:7px 13px;border:1px solid var(--border);border-radius:8px;color:var(--ink-mid)" download="spine.pap.png" href="' + j.dataUrl + '">save PNG</a></div></div>';
+      }
+    } catch (e) {
+      out.innerHTML = '<div class="err">' + esc(e.message) + '</div>';
+    } finally { go.disabled = false; busy.style.display = 'none'; }
+  };
+};
+
+function shortPath(p) { if (!p) return '--'; return p.length>36?'...'+p.slice(-33):p; }
+function esc(x) { return String(x==null?'':x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+load();
+</script>
+<script src="/nav.js"></script>
+</body>
+</html>

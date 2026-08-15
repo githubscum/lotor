@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotor Events</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --card: #141414; --mid: #1C1C1C; --border: #2A2A2A;
+    --red: #C41E3A; --gold: #D4A017; --teal: #1A9B8A;
+    --red-dim: rgba(196,30,58,.22); --gold-dim: rgba(212,160,23,.20); --teal-dim: rgba(26,155,138,.20);
+    --ink: #EDEDED; --ink-mid: #A6A6A6; --ink-low: #6A6A6A;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --disp: "Syne", var(--sans);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  .sig { height: 3px; background: linear-gradient(90deg, var(--gold), var(--teal), var(--red)); }
+  header { padding: 16px 24px 12px; border-bottom: 1px solid var(--border); }
+  .title { font-family: var(--disp); font-weight: 700; font-size: 23px; margin: 0; }
+  .title .dim { color: var(--ink-low); font-weight: 400; }
+  .sub { color: var(--ink-low); font-size: 12px; margin-top: 3px; }
+  .sub b { color: var(--teal); }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: #0c0c0c; z-index: 5; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-family: var(--mono); font-size: 11.5px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); color: var(--ink-mid); background: var(--mid); cursor: pointer; user-select: none; }
+  .chip .c { color: var(--ink-low); margin-left: 5px; }
+  .chip.on { color: var(--ink); border-color: currentColor; }
+  .chip.on.approved { color: var(--teal); border-color: var(--teal); } .chip.on.denied { color: var(--red); border-color: var(--red); }
+  .chip.on.warn, .chip.on.egress { color: var(--gold); border-color: var(--gold); }
+  .chip.on.session-open, .chip.on.session-close { color: var(--ink); border-color: var(--ink-mid); }
+  .time-sel { display: flex; gap: 4px; margin-left: auto; }
+  .time-sel button { font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 7px; border: 1px solid var(--border); background: var(--mid); color: var(--ink-mid); cursor: pointer; }
+  .time-sel button.on { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
+  input.search { background: var(--mid); border: 1px solid var(--border); color: var(--ink); font: inherit; font-size: 13px; padding: 6px 11px; border-radius: 8px; width: 200px; }
+  input.search:focus { outline: none; border-color: var(--gold); }
+
+  .meta { padding: 8px 24px; color: var(--ink-low); font-size: 12px; font-family: var(--mono); display: flex; align-items: center; gap: 14px; }
+  .pager button { font: inherit; font-size: 12px; background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .pager button:disabled { opacity: .4; cursor: default; }
+
+  table { width: 100%; border-collapse: collapse; }
+  tbody tr { border-bottom: 1px solid var(--mid); cursor: pointer; }
+  tbody tr:hover { background: #131313; }
+  td { padding: 8px 12px; font-size: 12.5px; vertical-align: top; }
+  td.seq { font-family: var(--mono); color: var(--ink-low); width: 64px; }
+  td.when { font-family: var(--mono); color: var(--ink-mid); white-space: nowrap; width: 150px; }
+  td.kind { width: 118px; }
+  .k { font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--border); }
+  .k.approved { color: var(--teal); border-color: var(--teal-dim); background: var(--teal-dim); }
+  .k.denied { color: var(--red); border-color: var(--red-dim); background: var(--red-dim); }
+  .k.warn, .k.egress { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
+  .k.session-open, .k.session-close { color: var(--ink-mid); }
+  td.label { color: var(--ink); }
+  td.label .d { color: var(--ink-low); font-size: 11.5px; margin-top: 2px; }
+  td.sess { font-family: var(--mono); color: var(--ink-low); width: 92px; }
+  td.sess a { color: var(--teal); text-decoration: none; }
+  .empty { padding: 40px 24px; color: var(--ink-low); }
+  .foot { padding: 18px 24px 40px; color: var(--ink-low); font-size: 11px; font-style: italic; }
+
+  .k.stale_signature { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
+  .k.unreachable { color: #b06fd8; border-color: rgba(176,111,216,.25); background: rgba(176,111,216,.15); }
+  .chip.on.stale_signature { color: var(--gold); border-color: var(--gold); }
+  .chip.on.unreachable { color: #b06fd8; border-color: #b06fd8; }
+
+  /* the decision path: the gate's deterministic evaluation, drawn as it ran.
+     Rainbird-style: every verdict expands into the evidence chain that
+     produced it, because a deterministic process is exactly a path. */
+  tr.pathrow { cursor: default; }
+  tr.pathrow:hover { background: transparent; }
+  tr.pathrow td { padding: 4px 12px 16px; }
+  .path { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 10px 2px 6px; }
+  .pnode { min-width: 128px; background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px; flex-shrink: 0; }
+  .pnode .pl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); }
+  .pnode .pv { font-family: var(--mono); font-size: 11.5px; margin-top: 4px; word-break: break-all; }
+  .pnode .ps { color: var(--ink-low); font-size: 10px; margin-top: 3px; }
+  .pnode.dim { opacity: .55; } .pnode.dim .pv { color: var(--ink-low); font-style: italic; }
+  .pnode.verdict { border-width: 2px; }
+  .pnode.verdict.approved { border-color: var(--teal); } .pnode.verdict.approved .pv { color: var(--teal); }
+  .pnode.verdict.denied { border-color: var(--red); } .pnode.verdict.denied .pv { color: var(--red); }
+  .pnode.verdict.stale_signature { border-color: var(--gold); } .pnode.verdict.stale_signature .pv { color: var(--gold); }
+  .pnode.verdict.unreachable { border-color: #b06fd8; } .pnode.verdict.unreachable .pv { color: #b06fd8; }
+  .pnode.verdict.warn, .pnode.verdict.egress { border-color: var(--gold); } .pnode.verdict.warn .pv, .pnode.verdict.egress .pv { color: var(--gold); }
+  .parrow { display: flex; align-items: center; color: var(--ink-low); padding: 0 5px; font-family: var(--mono); flex-shrink: 0; }
+  .pathdisc { color: var(--ink-low); font-size: 10.5px; font-style: italic; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="sig"></div>
+<header>
+  <h1 class="title">LOTOR <span class="dim">/ events</span></h1>
+  <div class="sub">Every receipt on the chain, filterable and replayable. The log is <b>append-only and hash-linked</b>, so this browses it but cannot edit it.</div>
+</header>
+<div class="controls">
+  <div class="chips" id="chips"></div>
+  <input class="search" id="search" placeholder="filter text / session...">
+  <div class="time-sel" id="timeSel">
+    <button data-d="1">24h</button><button data-d="7" class="on">7d</button><button data-d="30">30d</button><button data-d="0">all</button>
+  </div>
+</div>
+<div class="meta" id="meta"></div>
+<table><tbody id="rows"></tbody></table>
+<div class="foot">Adopted from Meterless's operator control plane (Apache-2.0) — the one UI pattern worth taking. Their event store is mutable by design; this one is not, which is the point.</div>
+
+<script>
+const KINDS = ['approved','denied','stale_signature','unreachable','warn','egress','session-open','session-close'];
+let ACTIVE = new Set(), SINCE_DAYS = 7, SEARCH = '', OFFSET = 0, LIMIT = 100, COUNTS = {}, TOTAL = 0;
+const DAY = 86400000;
+const fmt = ts => new Date(ts).toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit' });
+
+async function load() {
+  const params = new URLSearchParams();
+  if (ACTIVE.size) params.set('kind', [...ACTIVE].join(','));
+  if (SINCE_DAYS > 0) params.set('since', String(Date.now() - SINCE_DAYS * DAY));
+  if (SEARCH) params.set('q', SEARCH);
+  params.set('offset', String(OFFSET)); params.set('limit', String(LIMIT));
+  const r = await fetch('/api/events?' + params.toString());
+  const j = await r.json();
+  COUNTS = j.counts || {}; TOTAL = j.total || 0;
+  renderChips(); renderMeta(j); renderRows(j.events || []);
+}
+
+function renderChips() {
+  document.getElementById('chips').innerHTML = KINDS.map(k =>
+    '<span class="chip ' + k + (ACTIVE.has(k) ? ' on' : '') + '" data-k="' + k + '">' + k + '<span class="c">' + (COUNTS[k] || 0) + '</span></span>'
+  ).join('');
+  [...document.querySelectorAll('.chip')].forEach(c => c.onclick = () => {
+    const k = c.dataset.k; ACTIVE.has(k) ? ACTIVE.delete(k) : ACTIVE.add(k); OFFSET = 0; load();
+  });
+}
+function renderMeta(j) {
+  const shown = Math.min(OFFSET + LIMIT, TOTAL);
+  document.getElementById('meta').innerHTML =
+    '<span>' + (TOTAL ? (OFFSET + 1) : 0) + '–' + shown + ' of ' + TOTAL + ' events' + (ACTIVE.size ? ' (filtered)' : '') + ' · chain has ' + j.receipts + '</span>' +
+    '<span class="pager"><button id="prev"' + (OFFSET === 0 ? ' disabled' : '') + '>‹ newer</button> ' +
+    '<button id="next"' + (shown >= TOTAL ? ' disabled' : '') + '>older ›</button></span>';
+  const prev = document.getElementById('prev'), next = document.getElementById('next');
+  if (prev) prev.onclick = () => { OFFSET = Math.max(0, OFFSET - LIMIT); load(); };
+  if (next) next.onclick = () => { OFFSET += LIMIT; load(); };
+}
+let EVENTS = [];
+function renderRows(events) {
+  EVENTS = events;
+  const tb = document.getElementById('rows');
+  if (!events.length) { tb.innerHTML = '<tr><td colspan="5"><div class="empty">No events match. Widen the filter or the time window.</div></td></tr>'; return; }
+  tb.innerHTML = events.map((e, i) =>
+    '<tr data-sess="' + (e.sessionId || '') + '"' + (e.path ? ' data-path="' + i + '" title="click: show the decision path"' : '') + '>' +
+    '<td class="seq">#' + e.seq + '</td>' +
+    '<td class="when">' + fmt(e.ts) + '</td>' +
+    '<td class="kind"><span class="k ' + e.kind + '">' + e.kind + '</span></td>' +
+    '<td class="label">' + esc(e.label) + (e.detail ? '<div class="d">' + esc(e.detail) + '</div>' : '') + '</td>' +
+    '<td class="sess">' + (e.shortSession ? '<a data-jump="' + esc(e.sessionId) + '">' + esc(e.shortSession) + '</a>' : '') + '</td>' +
+    '</tr>'
+  ).join('');
+  [...tb.querySelectorAll('a[data-jump]')].forEach(a => a.onclick = ev => {
+    ev.stopPropagation(); SEARCH = a.dataset.jump.slice(0, 8); document.getElementById('search').value = SEARCH; OFFSET = 0; load();
+  });
+  [...tb.querySelectorAll('tr[data-path]')].forEach(tr => tr.onclick = () => togglePath(tr));
+}
+
+// The decision path. A gate verdict is a deterministic evaluation: the same
+// recorded facts always produce the same verdict. So the honest visualization
+// is the pipeline itself, each node a fact the receipt carries, ending at the
+// verdict. Facts a pre-enrichment receipt never recorded render dimmed as
+// "unrecorded" rather than guessed at.
+function togglePath(tr) {
+  const open = tr.nextElementSibling && tr.nextElementSibling.classList.contains('pathrow');
+  [...document.querySelectorAll('tr.pathrow')].forEach(r => r.remove());
+  if (open) return;
+  const e = EVENTS[Number(tr.dataset.path)]; if (!e || !e.path) return;
+  const p = e.path;
+  const node = (label, value, sub, dim) =>
+    '<div class="pnode' + (dim ? ' dim' : '') + '"><div class="pl">' + label + '</div><div class="pv">' + esc(value) + '</div>' + (sub ? '<div class="ps">' + esc(sub) + '</div>' : '') + '</div>';
+  const arrow = '<div class="parrow">&rarr;</div>';
+  const isGate = ['approved','denied','stale_signature','unreachable'].includes(p.decision);
+  const held = p.heldMs != null ? (p.heldMs >= 60000 ? Math.round(p.heldMs / 60000) + 'm' : Math.round(p.heldMs / 1000) + 's') : null;
+  const steps = [];
+  steps.push(node('tool call', e.label.replace(/^[a-z_]+: /, ''), 'the action as attempted'));
+  steps.push(p.ruleId ? node('rule matched', p.ruleId, 'the policy line that fired')
+                      : node('rule matched', 'unrecorded', 'pre-enrichment receipt', true));
+  steps.push(p.paramsDigest ? node('params', String(p.paramsDigest).slice(0, 16) + '…', 'canonical digest, order-stable')
+                            : node('params', 'unrecorded', 'pre-enrichment receipt', true));
+  if (isGate) {
+    steps.push(held != null ? node('signature wait', held, 'staged → verdict')
+                            : node('signature wait', 'unrecorded', p.decision === 'approved' ? 'token presented' : 'no token or pre-enrichment', true));
+    steps.push(p.nonce ? node('nonce', p.nonce + '…', 'single-use, now spent')
+                       : node('nonce', p.decision === 'approved' ? 'unrecorded' : 'none', p.decision === 'approved' ? '' : 'no signature reached the gate', p.decision !== 'approved'));
+  }
+  steps.push('<div class="pnode verdict ' + p.decision + '"><div class="pl">verdict</div><div class="pv">' + esc(p.decision) + '</div>' + (p.reason ? '<div class="ps">' + esc(p.reason) + '</div>' : '') + '</div>');
+  const row = document.createElement('tr');
+  row.className = 'pathrow';
+  row.innerHTML = '<td colspan="5"><div class="path">' + steps.join(arrow) + '</div>' +
+    '<div class="pathdisc">Deterministic: these recorded facts always produce this verdict. The path shows what the gate used, never why the agent asked. Dimmed steps were not recorded by receipts from before the 2026-08-15 enrichment.</div></td>';
+  tr.after(row);
+}
+
+document.getElementById('search').addEventListener('input', e => { SEARCH = e.target.value.trim(); OFFSET = 0; clearTimeout(window._t); window._t = setTimeout(load, 200); });
+[...document.querySelectorAll('#timeSel button')].forEach(b => b.onclick = () => {
+  [...document.querySelectorAll('#timeSel button')].forEach(x => x.classList.toggle('on', x === b));
+  SINCE_DAYS = Number(b.dataset.d); OFFSET = 0; load();
+});
+function esc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+load();
+</script>
+<script src="/nav.js"></script>
+</body>
+</html>

@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
+import { loadPolicy, evaluate, RULE_INFO, matcherVersionHash } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
 import { resolveGrant } from '../src/grant/check.js';
@@ -172,6 +172,25 @@ function deleteTokenFile(tokenPath) {
     fs.unlinkSync(tokenPath);
   } catch (e) {
     // best-effort
+  }
+}
+
+/**
+ * Read the `stagedAt` field from a previously staged request's purpose
+ * sidecar. Returns null if the request, the sidecar, or the field is
+ * absent. Used to compute `heldMs` (how long the staged request sat
+ * waiting for a signature). See stageRequest() which writes this field
+ * in the purposes/<id>.json sidecar.
+ */
+function readStagedAt(home, requestId) {
+  if (!requestId) return null;
+  try {
+    const file = path.join(home, 'pending-approvals', 'purposes', `${requestId}.json`);
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const ts = parsed?.stagedAt;
+    return typeof ts === 'number' && Number.isFinite(ts) ? ts : null;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -688,6 +707,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -705,6 +725,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -752,6 +773,7 @@ async function main() {
           tool: toolName,
           lotorMode: policy.mode,
           harnessMode: parsed.permissionMode,
+          matcherHash: matcherVersionHash(),
           timestamp: Date.now()
         });
       }
@@ -774,6 +796,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -793,6 +816,7 @@ async function main() {
       ruleId,
       tool: toolName,
       paramsDigest,
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     note(`warn: ${ruleId} (${toolName})`);
@@ -866,6 +890,7 @@ async function main() {
             ruleId,
             tool: toolName,
             paramsDigest,
+            matcherHash: matcherVersionHash(),
             timestamp: Date.now()
           };
         });
@@ -888,8 +913,11 @@ async function main() {
         entries: store.entries,
         append: store.appendReceipt.bind(store)
       };
+      const stagedAt = readStagedAt(home, requestId);
+      const heldMs = stagedAt ? Date.now() - stagedAt : null;
+      const meta = { ruleId, heldMs };
       try {
-        gatedAction(actionRequest, null, chain, home);
+        gatedAction(actionRequest, null, chain, home, meta);
       } catch (e) {
         note(`denial receipt failed (${e.message}); still denying`);
       }
@@ -899,26 +927,43 @@ async function main() {
     }
 
     if (tokenResult.rejected) {
-      // Token was presented but failed verification (e.g. replay, signature
-      // failure). Fail closed: pass the token to gatedAction so the denial
-      // receipt records the specific reason.
+      // Token was presented but failed verification. The reason from
+      // findValidToken is the cheap local pre-screen result, not the
+      // full verifyApproval outcome; the receipt classification comes
+      // from gatedAction (which calls verifyApproval again). The cheap
+      // pre-screen is good enough to decide whether this is a stale-
+      // signature (operator signed, time ran out) or a token-was-for-
+      // something-else (operator signed the wrong action).
+      //
+      // We classify here only for the operator-facing message; the
+      // receipt decision is gatedAction's call so the two never drift.
+      const token = readTokenFile(tokenResult.rejected.tokenFile);
+      const reason = tokenResult.rejected.reason || 'token invalid';
+      const stagedAt = readStagedAt(home, requestId);
+      const heldMs = stagedAt ? Date.now() - stagedAt : null;
+      const meta = { ruleId, heldMs };
+
       const store = createStore(home);
       const chain = {
         entries: store.entries,
         append: store.appendReceipt.bind(store)
       };
+
+      let result;
       try {
-        // We need the token object to pass to gatedAction. The file is
-        // still on disk; re-read it.
-        const token = readTokenFile(tokenResult.rejected.tokenFile);
-        gatedAction(actionRequest, token || null, chain, home);
+        result = gatedAction(actionRequest, token || null, chain, home, meta);
       } catch (e) {
+        // Engine-side fault (chain append threw, etc). The deny still
+        // happens, but the receipt was not written. Surface as
+        // unreachable so a reader of the chain sees the operator-facing
+        // denial but does not falsely claim a verified outcome.
         note(`denial receipt failed (${e.message}); still denying`);
+        result = { decision: 'unreachable', reason: `denial receipt failed: ${e.message}` };
       }
       // Delete the bad token so it does not get re-evaluated on every
       // subsequent tool call.
       try { fs.unlinkSync(tokenResult.rejected.tokenFile); } catch (_) { /* best-effort */ }
-      note(`BLOCKED: ${ruleId} (${toolName}) — ${tokenResult.rejected.reason}`);
+      note(`BLOCKED: ${ruleId} (${toolName}) — ${reason}`);
       process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
       process.exit(2);
     }
@@ -931,9 +976,12 @@ async function main() {
       entries: store.entries,
       append: store.appendReceipt.bind(store)
     };
+    const stagedAt = readStagedAt(home, requestId);
+    const heldMs = stagedAt ? Date.now() - stagedAt : null;
+    const meta = { ruleId, heldMs };
     let result;
     try {
-      result = gatedAction(actionRequest, tokenResult.token, chain, home);
+      result = gatedAction(actionRequest, tokenResult.token, chain, home, meta);
     } catch (e) {
       note(`gate check crashed (${e.message}); denying`);
       process.stderr.write(buildDenialMessage(ruleId, actionRequest, home, requestId) + '\n');
@@ -957,6 +1005,7 @@ async function main() {
     ruleId,
     tool: toolName,
     paramsDigest,
+    matcherHash: matcherVersionHash(),
     timestamp: Date.now()
   });
   process.exit(0);
