@@ -22,6 +22,7 @@ import {
 } from './sign.js';
 import { withLock } from '../store/lock.js';
 import { digestParamsCanonical } from '../parser/index.js';
+import { matcherVersionHash } from '../policy/index.js';
 
 const DEFAULT_BASE_DIR = '.';
 
@@ -157,6 +158,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       ruleId: meta.ruleId || null,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
       reason: 'no approval token provided',
       timestamp
     };
@@ -192,6 +194,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       ruleId: meta.ruleId || null,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
       reason,
       timestamp
     };
@@ -220,6 +223,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       ruleId: meta.ruleId || null,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+      matcherHash: matcherVersionHash(),
       reason: 'approval token nonce already used (replay detected)',
       timestamp
     };
@@ -240,6 +244,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
     ruleId: meta.ruleId || null,
     paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
     heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+    matcherHash: matcherVersionHash(),
     approvalNonce: nonce,
     timestamp
   };
