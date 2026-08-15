@@ -58,6 +58,8 @@
   td.sess { font-family: var(--mono); color: var(--ink-low); width: 92px; }
   td.sess a { color: var(--teal); text-decoration: none; }
   .empty { padding: 40px 24px; color: var(--ink-low); }
+  .demo-banner { background: var(--gold-dim); border: 1px solid var(--gold); color: var(--gold); border-radius: 10px; padding: 9px 14px; margin: 10px 24px 0; font-size: 12.5px; }
+  .demo-banner a { color: var(--ink); }
   .foot { padding: 18px 24px 40px; color: var(--ink-low); font-size: 11px; font-style: italic; }
 
   .k.stale_signature { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
@@ -93,6 +95,7 @@
   <h1 class="title">LOTOR <span class="dim">/ events</span></h1>
   <div class="sub">Every receipt on the chain, filterable and replayable. The log is <b>append-only and hash-linked</b>, so this browses it but cannot edit it.</div>
 </header>
+<div id="demoBanner"></div>
 <div class="controls">
   <div class="chips" id="chips"></div>
   <input class="search" id="search" placeholder="filter text / session...">
@@ -119,6 +122,9 @@ async function load() {
   const r = await fetch('/api/events?' + params.toString());
   const j = await r.json();
   COUNTS = j.counts || {}; TOTAL = j.total || 0;
+  document.getElementById('demoBanner').innerHTML = j.demo
+    ? '<div class="demo-banner"><b>DEMO DATA.</b> These receipts are a synthetic sample; your chain has none yet. <a href="/welcome">Start here</a> to write your first real one.</div>'
+    : '';
   renderChips(); renderMeta(j); renderRows(j.events || []);
 }
 

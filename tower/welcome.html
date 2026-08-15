@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotor — start here</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --card: #141414; --mid: #1C1C1C; --border: #2A2A2A;
+    --red: #C41E3A; --gold: #D4A017; --teal: #1A9B8A;
+    --red-dim: rgba(196,30,58,.22); --gold-dim: rgba(212,160,23,.20); --teal-dim: rgba(26,155,138,.20);
+    --ink: #EDEDED; --ink-mid: #A6A6A6; --ink-low: #6A6A6A;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --disp: "Syne", var(--sans);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  .sig { height: 3px; background: linear-gradient(90deg, var(--gold), var(--teal), var(--red)); }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 34px 24px 80px; }
+  h1 { font-family: var(--disp); font-weight: 700; font-size: 30px; margin: 0 0 6px; }
+  .lede { color: var(--ink-mid); font-size: 15px; line-height: 1.55; margin-bottom: 26px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
+  .toc a { font-family: var(--mono); font-size: 11.5px; color: var(--ink-mid); border: 1px solid var(--border); border-radius: 7px; padding: 5px 11px; text-decoration: none; }
+  .toc a:hover { color: var(--gold); border-color: var(--gold-dim); }
+  section { margin-bottom: 34px; }
+  h2 { font-family: var(--disp); font-size: 18px; margin: 0 0 4px; scroll-margin-top: 20px; }
+  h2 .n { color: var(--gold); font-family: var(--mono); font-size: 13px; margin-right: 8px; }
+  p { color: var(--ink-mid); font-size: 14px; line-height: 1.6; margin: 10px 0; }
+  p b, p strong { color: var(--ink); }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--mid); border-radius: 5px; padding: 1px 6px; }
+  pre { background: var(--mid); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  .go { display: inline-block; margin-top: 4px; font-size: 13px; color: var(--teal); text-decoration: none; border-bottom: 1px dotted var(--teal); }
+  .honest { border-left: 3px solid var(--red); background: var(--card); border-radius: 0 9px 9px 0; padding: 12px 16px; }
+  .honest p { margin: 6px 0; }
+  .faqnote { color: var(--ink-low); font-size: 12px; font-style: italic; border-top: 1px solid var(--border); padding-top: 16px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="sig"></div>
+<div class="wrap">
+  <h1>Start here.</h1>
+  <p class="lede">Lotor is a witness layer for AI agent sessions: every tool call your
+  agent makes is recorded into a hash-linked, append-only chain of receipts,
+  signed at the time of the act, held by <b>you</b> and not by a vendor. This
+  page is the walkthrough. It is also the beginning of the FAQ, and it grows
+  the way the rest of this project does: by questions that actually got asked.</p>
+
+  <div class="toc">
+    <a href="#s1">1 · what am I looking at</a>
+    <a href="#s2">2 · why is there data already</a>
+    <a href="#s3">3 · your first real receipt</a>
+    <a href="#s4">4 · the gate and the three modes</a>
+    <a href="#s5">5 · reading a receipt</a>
+    <a href="#s6">6 · the QR export</a>
+    <a href="#s7">7 · what none of this proves</a>
+  </div>
+
+  <section id="s1">
+    <h2><span class="n">1</span>What am I looking at?</h2>
+    <p>Three pages, one record. <a class="go" href="/lotor">/lotor</a> is the
+    product view: your days as blocks, each session showing <b>where its work
+    landed</b>. <a class="go" href="/events">/events</a> is every receipt on
+    the chain, filterable. <a class="go" href="/control">/control</a> is the
+    mode panel and the witness board. Everything on all three pages is derived
+    from one file: the receipt chain. Nothing here is inferred, and nothing
+    here can be edited from a browser, because the chain is append-only and
+    this server is a reader.</p>
+  </section>
+
+  <section id="s2">
+    <h2><span class="n">2</span>Why is there data here already?</h2>
+    <p>Because a blank page teaches nothing. Until your own chain writes its
+    first receipt, the UI serves a <b>synthetic sample</b> shaped after the
+    double-blind experiment behind "The Bones Do Remember": three sessions
+    across three days, a gate that denies and then approves under a
+    signature, a warn-mode day, a loose day, and one session that opened and
+    never closed, because the crash you cannot see is the one worth
+    recording. Every page shows a DEMO banner while this data is up. Every
+    path in it is under <code>C:\demo\</code>. The moment your real chain has
+    one receipt, the sample disappears and never comes back.</p>
+  </section>
+
+  <section id="s3">
+    <h2><span class="n">3</span>Your first real receipt</h2>
+    <p>From the repo root:</p>
+    <pre>npm install
+npm run setup      # sets your signing passphrase; the private key is never on disk
+# then register the four hooks in your Claude Code settings (README, "Install")</pre>
+    <p>Open any Claude Code session and close it. That is the whole
+    hydration: the SessionStart hook writes a session-open receipt, the
+    SessionEnd hook parses the transcript into a session receipt with a
+    <code>transcriptHash</code> binding it to the exact bytes it summarizes.
+    Refresh <a class="go" href="/lotor">/lotor</a> and the demo banner is
+    gone. Your record has begun.</p>
+  </section>
+
+  <section id="s4">
+    <h2><span class="n">4</span>The gate, and the three modes</h2>
+    <p>Recording is half the product. The other half is the gate: actions
+    matching your policy rules stop and stage a request, and nothing proceeds
+    without a signature only the operator can produce. The passphrase-derived
+    key never sits on disk, so the agent being gated cannot sign its own way
+    through. Modes set the temperature: <b>herded</b> gates, <b>grazing</b>
+    warns, <b>loose</b> only records. Editing the gate's own source gates in
+    every mode, including loose, because the one thing an agent must never
+    quietly change is the thing that stops it.
+    See <a class="go" href="/control">/control</a> for what is currently
+    gating, warning, and off.</p>
+  </section>
+
+  <section id="s5">
+    <h2><span class="n">5</span>Reading a receipt</h2>
+    <p>On <a class="go" href="/events">/events</a>, click any gate event. It
+    expands into its <b>decision path</b>: tool call, rule matched, canonical
+    params digest, how long the request waited for a signature, the
+    single-use nonce, the verdict. A gate verdict is deterministic: the same
+    recorded facts always produce the same outcome, so the path IS the
+    explanation. Receipts written before a given instrumentation upgrade
+    render their missing fields dimmed as "unrecorded" rather than guessed
+    at, and each verdict carries the hash of the matcher build that produced
+    it, so "the rules changed since then" is a readable fact instead of a
+    suspicion.</p>
+  </section>
+
+  <section id="s6">
+    <h2><span class="n">6</span>The QR export</h2>
+    <p>The <b>export &rarr; QR</b> button on <a class="go" href="/lotor">/lotor</a>
+    turns a spine (a short self-description you write) into a signed,
+    scannable bundle bound to your chain head. Another LLM can boot from it.
+    Two guardrails: the server rejects spines carrying key material or
+    secret-shaped strings and tells you what it matched, and the publish
+    button says what it means: a QR is a broadcast, and anyone who scans it
+    reads the spine. The chain key signs server-side and never reaches the
+    browser.</p>
+  </section>
+
+  <section id="s7">
+    <h2><span class="n">7</span>What none of this proves</h2>
+    <div class="honest">
+      <p><b>Capture is self-attested.</b> The chain proves tamper-evidence,
+      not completeness: what was never recorded is not proven absent.
+      Silence is not safety.</p>
+      <p><b>Receipts carry behavior, never intent.</b> Which tools ran, with
+      what parameter digests. Not why. Captured thinking digests are
+      self-report: the stated reasoning is on the record, which is never the
+      same claim as "we can tell what it was thinking."</p>
+      <p><b>A record you hold alone is an alarm, not a proof.</b> Convincing
+      a second party requires a second party: a head hash written down off
+      this machine. The witness board on <a class="go" href="/control">/control</a>
+      shows UNWITNESSED until one exists, on purpose.</p>
+      <p>The full inventory lives in <code>KNOWN-LIMITS.md</code>, which is
+      the most load-bearing file in the repo: defects disclosed by the party
+      the disclosure costs.</p>
+    </div>
+  </section>
+
+  <p class="faqnote">This page is the seed of the FAQ. When a question earns
+  a section, it gets one, dated. Questions that expose a gap go to
+  KNOWN-LIMITS first and get their section second, in that order, because
+  discovery is the product and closure is the byproduct.</p>
+</div>
+<script src="/nav.js"></script>
+</body>
+</html>

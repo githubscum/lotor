@@ -27,6 +27,10 @@
   .nav a { color: var(--ink-mid); margin-left: 12px; }
   .nav button { background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 7px; cursor: pointer; }
 
+  /* demo banner: loud on purpose. Sample data must never pass as record. */
+  .demo-banner { background: var(--gold-dim); border: 1px solid var(--gold); color: var(--gold); border-radius: 10px; padding: 10px 16px; margin-top: 10px; font-size: 12.5px; }
+  .demo-banner a { color: var(--ink); }
+
   /* integrity invariant */
   .integ-ok { font-family: var(--mono); font-size: 10.5px; color: var(--ink-low); padding: 8px 0 0; display: flex; align-items: center; gap: 7px; }
   .integ-ok .d { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
@@ -117,7 +121,7 @@
   <div class="toprow">
     <h1 class="title">LOTOR</h1>
     <span class="tag">your record, derived from the receipts. it landed in the brain. nothing here is inferred - the chain says it.</span>
-    <span class="nav"><button id="exportBtn" title="Personal Agent Publishing - take your spine to another LLM">export &#9633; QR</button><a href="/ontology">decisions</a><a href="/">detail</a></span>
+    <span class="nav"><button id="exportBtn" title="Personal Agent Publishing - take your spine to another LLM">export &#9633; QR</button><a href="/welcome">start here</a><a href="/ontology">decisions</a><a href="/">detail</a></span>
   </div>
   <div id="integrity"></div>
   <div class="landing" id="landing"></div>
@@ -157,8 +161,11 @@ function renderIntegrity() {
   const el = document.getElementById('integrity');
   const j = DATA.integrity;
   if (!j) { el.innerHTML = ''; return; }
-  if (j.ok) el.innerHTML = '<div class="integ-ok"><span class="d"></span>chain intact &middot; ' + j.receipts + ' receipts &middot; hash-link verified. if this ever reads BROKEN, stop and trust nothing downstream.</div>';
-  else { el.innerHTML = '<div class="integ-bad"><span class="big">CHAIN INTEGRITY FAILURE</span><span>The receipt chain is broken' + (j.brokenAtSeq!=null?' at <span class="seq">seq '+j.brokenAtSeq+'</span>':'') + '. The record cannot be trusted. Run verify_chain now.</span></div>'; document.title='(!) BROKEN - Lotor'; }
+  const demoBanner = DATA.demo
+    ? '<div class="demo-banner"><b>DEMO DATA.</b> No receipts of yours exist yet, so this is a synthetic sample (shaped after the Bones double-blind test) so the page has something to teach with. Nothing here happened. <a href="/welcome">Start here</a> to write your first real receipt; the sample disappears the moment you do.</div>'
+    : '';
+  if (j.ok) el.innerHTML = demoBanner + '<div class="integ-ok"><span class="d"></span>chain intact &middot; ' + j.receipts + ' receipts &middot; hash-link verified. if this ever reads BROKEN, stop and trust nothing downstream.</div>';
+  else { el.innerHTML = demoBanner + '<div class="integ-bad"><span class="big">CHAIN INTEGRITY FAILURE</span><span>The receipt chain is broken' + (j.brokenAtSeq!=null?' at <span class="seq">seq '+j.brokenAtSeq+'</span>':'') + '. The record cannot be trusted. Run verify_chain now.</span></div>'; document.title='(!) BROKEN - Lotor'; }
 }
 
 function renderLanding() {
