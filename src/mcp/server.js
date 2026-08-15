@@ -180,11 +180,12 @@ function handleSessionsSince(args) {
  * Awareness, not evidence: unsigned, not in the chain, and changing as you read.
  */
 function handleSessionsLive(args) {
-  const { excludeSessionId, staleAfterMinutes, withinHours } = args || {};
+  const { excludeSessionId, staleAfterMinutes, withinHours, orphanAfterMinutes } = args || {};
   return liveReport(resolveHome(), {
     excludeSessionId,
     ...(typeof staleAfterMinutes === 'number' ? { staleAfterMs: staleAfterMinutes * 60000 } : {}),
-    ...(typeof withinHours === 'number' ? { withinMs: withinHours * 3600000 } : {})
+    ...(typeof withinHours === 'number' ? { withinMs: withinHours * 3600000 } : {}),
+    ...(typeof orphanAfterMinutes === 'number' ? { orphanAfterMs: orphanAfterMinutes * 60000 } : {})
   });
 }
 
@@ -409,6 +410,10 @@ function createMcpServer() {
               withinHours: {
                 type: 'number',
                 description: 'Only consider sessions opened within this many hours. Default 24. Older transcripts are cleaned up and their absence is expected.'
+              },
+              orphanAfterMinutes: {
+                type: 'number',
+                description: 'Minutes after a session\'s last real event (transcript timestamp, never file mtime) that it reads as orphaned rather than live/stale. Default 360 (6h). Orphaned and bridge-ephemeral readings are derived, not chain evidence.'
               }
             }
           }

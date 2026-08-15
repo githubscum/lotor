@@ -63,15 +63,59 @@ function opensBySession(entries) {
 }
 
 /**
+ * The last real event timestamp in a transcript: the max `timestamp` across
+ * non-queue-operation lines. Queue-operations (e.g. the bridge's /clear) touch
+ * the transcript but are not activity, so they must not count as last events.
+ * Returns null when no usable timestamp exists.
+ * (WO-RC-REPAIR-01, 2026-08-15: file mtime is NOT a last-activity signal; the
+ * RC bridge touches transcripts for resume/clear and 27h of drift was observed.)
+ */
+function lastEventTimestamp(jsonlText) {
+  let max = null;
+  for (const line of jsonlText.split('\n')) {
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type === 'queue-operation') continue;
+    const ts = entry?.timestamp || entry?.createdAt;
+    let ms = null;
+    if (typeof ts === 'string' && ts.trim() !== '') ms = Date.parse(ts);
+    else if (typeof ts === 'number' && Number.isFinite(ts)) ms = ts;
+    if (ms != null && !Number.isNaN(ms) && (max === null || ms > max)) max = ms;
+  }
+  return max;
+}
+
+/**
+ * How many chain entries reference a session id. Used to distinguish a phantom
+ * open (the id appears only as this one open) from a session that was resumed
+ * or closed (the id appears again).
+ */
+function sessionIdOccurrences(entries, sessionId) {
+  let n = 0;
+  for (const e of entries) {
+    const p = e.payload || {};
+    if (p.sessionId === sessionId || p.session?.id === sessionId) n++;
+  }
+  return n;
+}
+
+/**
  * @param {string} baseDir            LOTOR_HOME
  * @param {object} opts
  * @param {string} [opts.excludeSessionId]  usually your own
  * @param {number} [opts.staleAfterMs]      a transcript untouched for longer
  *                                          than this is reported as stale
  *                                          rather than live. Default 30 min.
+ * @param {number} [opts.orphanAfterMs]     a session whose last real event is
+ *                                          older than this reads as orphaned:
+ *                                          the chain has no close and the
+ *                                          reading is transcript-derived.
+ *                                          Default 6h.
  */
 export function liveReport(baseDir, opts = {}) {
   const staleAfter = opts.staleAfterMs ?? 30 * 60 * 1000;
+  const orphanAfter = opts.orphanAfterMs ?? 6 * 60 * 60 * 1000;
   const now = opts.now ?? Date.now();
   // Transcripts get cleaned up, so an old session with no file on disk is
   // expected and uninteresting. The first run reported 275 of them and buried
@@ -86,6 +130,7 @@ export function liveReport(baseDir, opts = {}) {
   const opens = opensBySession(entries);
 
   const sessions = [];
+  const bridgeEphemeral = [];
   const unreadable = [];
   let agedOut = 0;
 
@@ -97,15 +142,37 @@ export function liveReport(baseDir, opts = {}) {
 
     let stat;
     try { stat = fs.statSync(o.transcriptPath); }
-    catch { unreadable.push({ ...o, why: 'transcript not on disk' }); continue; }
+    catch {
+      // No transcript on disk. If the id never appears again in the chain, this
+      // is a bridge-side ephemeral open (RC daemon warmup), not a real session.
+      // Reported as its own state, never as an open session and never in the
+      // quiet count. Derived, unsigned, not chain evidence.
+      if (sessionIdOccurrences(entries, o.sessionId) <= 1) {
+        bridgeEphemeral.push({
+          sessionId: o.sessionId,
+          at: o.at,
+          cwd: o.cwd,
+          source: o.source,
+          transcriptPath: o.transcriptPath,
+          state: 'bridge-ephemeral',
+          derived: true,
+          note: 'no transcript on disk and the id never appears again in the chain; this is a bridge-side ephemeral open, not a real session'
+        });
+      } else {
+        unreadable.push({ ...o, why: 'transcript not on disk' });
+      }
+      continue;
+    }
 
     // A session that opened and never wrote anything is not interesting and
     // there are a great many of them. 134 in one day.
     if (stat.size === 0) continue;
 
     let parsed = null;
+    let text = '';
     try {
-      parsed = parseSession(fs.readFileSync(o.transcriptPath, 'utf-8'));
+      text = fs.readFileSync(o.transcriptPath, 'utf-8');
+      parsed = parseSession(text);
     } catch (e) {
       unreadable.push({ ...o, why: `parse failed: ${e.message}` });
       continue;
@@ -116,12 +183,16 @@ export function liveReport(baseDir, opts = {}) {
     // No work recorded yet is the same nothing-to-say as an empty transcript.
     if (!counts.toolCalls && touched.length === 0) continue;
 
-    const idleMs = now - stat.mtimeMs;
-    sessions.push({
+    // The last event timestamp is the reliable last-activity signal. File mtime
+    // is NOT: the bridge touches transcripts for resume/clear, so mtime can be
+    // far newer than the last real event (27h drift observed 2026-08-15).
+    const lastEventAt = lastEventTimestamp(text) ?? stat.mtimeMs;
+    const idleMs = now - lastEventAt;
+
+    const s = {
       sessionId: o.sessionId,
-      state: idleMs > staleAfter ? 'stale' : 'live',
       openedAt: o.at,
-      lastActivity: stat.mtimeMs,
+      lastActivity: lastEventAt,
       idleMinutes: Math.round(idleMs / 60000),
       cwd: o.cwd,
       model: parsed?.session?.model ?? null,
@@ -131,7 +202,21 @@ export function liveReport(baseDir, opts = {}) {
       touchedCount: touched.length,
       touched: touched.map(t => (typeof t === 'string' ? t : t?.path)).filter(Boolean).slice(0, 12),
       transcriptBytes: stat.size
-    });
+    };
+
+    if (idleMs > orphanAfter) {
+      // The chain has no close for this session and its last real event is
+      // older than the threshold. This is a transcript-derived reconciliation,
+      // NOT a receipt: the close was never written.
+      s.state = 'orphaned';
+      s.lastEventAt = lastEventAt;
+      s.derived = true;
+      s.note = 'the chain has no close for this session; this is a transcript-derived reconciliation';
+    } else {
+      s.state = idleMs > staleAfter ? 'stale' : 'live';
+    }
+
+    sessions.push(s);
   }
 
   sessions.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -139,12 +224,14 @@ export function liveReport(baseDir, opts = {}) {
   return {
     at: now,
     sessions,
+    bridgeEphemeral,
     unreadable,
     agedOut,
     caveats: [
       'AWARENESS, NOT EVIDENCE. These readings come from live transcripts, not from the chain. They are unsigned, they are not receipts, and they change as the sessions run.',
       'A session appears here only until it writes its close receipt. After that it is in the chain and belongs to sessions_since.',
-      'Absence means no open receipt, no transcript, or no work yet. It does not mean no session is running.'
+      'Absence means no open receipt, no transcript, or no work yet. It does not mean no session is running.',
+      'bridge-ephemeral and orphaned readings are DERIVED, not chain evidence: no close receipt exists for them, and the state is inferred from the transcript, not recorded.'
     ]
   };
 }
@@ -164,16 +251,29 @@ export function renderLive(r) {
   }
 
   for (const s of r.sessions) {
-    const tag = s.state === 'live' ? 'LIVE' : `stale ${s.idleMinutes}m`;
+    let tag;
+    if (s.state === 'live') tag = 'LIVE';
+    else if (s.state === 'orphaned') tag = `ORPHANED ${s.idleMinutes}m`;
+    else tag = `stale ${s.idleMinutes}m`;
     L.push(`  ${s.sessionId}   ${tag}`);
     if (s.cwd) L.push(`    cwd         ${s.cwd}`);
     if (s.model) L.push(`    model       ${s.model}`);
     L.push(`    work        ${s.toolCalls ?? 0} tool calls, ${s.touchedCount} files, last active ${clock(s.lastActivity)}`);
+    if (s.state === 'orphaned') {
+      L.push(`    note        ${s.note}`);
+    }
     if (s.touched.length) {
       L.push(`    touched     ${s.touched[0]}`);
       for (const t of s.touched.slice(1, 5)) L.push(`                ${t}`);
       if (s.touched.length > 5) L.push(`                ... and ${s.touchedCount - 5} more`);
     }
+    L.push('');
+  }
+
+  // bridge-ephemeral opens are reported distinctly, never in the quiet count.
+  if (r.bridgeEphemeral && r.bridgeEphemeral.length) {
+    L.push(`  ${r.bridgeEphemeral.length} bridge-ephemeral open(s): phantom startup sessions, no transcript, id never seen again in the chain.`);
+    L.push('    Derived, unsigned, not chain evidence.');
     L.push('');
   }
 
