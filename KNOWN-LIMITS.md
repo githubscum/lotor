@@ -1458,3 +1458,21 @@ is attacker-writable by anything that can shape a tool call. The echo proves
 an id was PRESENT at call time, never that the authorising system named by it
 actually issued it. Binding the id to its issuer is the authorising system's
 job (signature over its own decision record), not the witness's.
+
+## 51. Receipts before the 2026-08-15 enrichment fold three outcomes into one label
+
+Before the denial-enrichment seam (landed 2026-08-15, five signatures), every
+gate outcome that was not `approved` wrote `decision: 'denied'`. The 4-way
+enum (`approved` / `denied` / `stale_signature` / `unreachable`) refines
+forward only: a signature-burn (token valid but stale or byte-mismatched on
+retry) and an engine fault (the gate failing to reach a verdict) were both
+indistinguishable from a deliberate deny on every receipt written before that
+seam, and cannot be retroactively split — the chain is append-only and the
+information was never recorded. A reader counting "blocked" across the seam
+counts `denied` + `stale_signature` + `unreachable` after it and plain
+`denied` before it; the pre-seam figure therefore UNDERCOUNTS nothing but
+cannot be decomposed. The same applies to `ruleId`, `paramsDigestCanonical`,
+and `heldMs`: absent on a receipt means written-before-the-seam, never
+not-applicable. This is disclosure, not a defect: no historical receipt's
+meaning changed, which was the load-bearing design constraint (Isaac's
+Option A call, 2026-08-13).

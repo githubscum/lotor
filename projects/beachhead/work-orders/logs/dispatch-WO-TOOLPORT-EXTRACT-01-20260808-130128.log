@@ -1,0 +1,13 @@
+﻿I cannot read the work order file. The session's allowed working directory is restricted to `C:\Users\liemi\agent-receipts`, and the work order lives at `C:\Users\liemi\.second-brain\projects\spinoff\work-orders\WO-TOOLPORT-EXTRACT-01.md`, which is outside that boundary.
+
+This is the scope gate you asked me to hold. Per the work order's instruction: "Hold its scope gate, run its verification steps, and report back with the results." The gate is failing on the very first step — I cannot read the artifact that defines what work to do.
+
+To proceed, the work order file needs to be brought into an accessible location. Options:
+
+1. **Copy or move `WO-TOOLPORT-EXTRACT-01.md` into `C:\Users\liemi\agent-receipts\`** (or a subdirectory like `work-orders/`) so I can read it from the allowed working directory.
+2. **Relax the session's directory restriction** to include `C:\Users\liemi\.second-brain\projects\spinoff\work-orders\`.
+3. **Paste the work order contents** directly into this conversation.
+
+Without seeing the work order, I cannot know its scope, its verification steps, its commit instructions, or the tools it expects me to invoke. I won't guess at any of those — particularly the self-mod-protected paths it may target, where I need to follow the four-beat protocol from the repo's `CLAUDE.md` (stage first, give the path, relay the gate's stderr verbatim, wait).
+
+Please tell me which of the three options above you prefer, or relocate the work order into the allowed working directory and I'll execute it.
