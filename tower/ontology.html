@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotor Ontology</title>
+<style>
+  :root {
+    --bg: #0D0D0D; --card: #141414; --mid: #1C1C1C; --border: #2A2A2A;
+    --red: #C41E3A; --gold: #D4A017; --teal: #1A9B8A;
+    --red-dim: rgba(196,30,58,.22); --gold-dim: rgba(212,160,23,.20); --teal-dim: rgba(26,155,138,.20);
+    --ink: #EDEDED; --ink-mid: #A6A6A6; --ink-low: #6A6A6A;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --disp: "Syne", var(--sans);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  .sig { height: 3px; background: linear-gradient(90deg, var(--gold), var(--teal), var(--red)); }
+  header { padding: 18px 26px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  .title { font-family: var(--disp); font-weight: 700; font-size: 24px; margin: 0; }
+  .title .dim { color: var(--ink-low); font-weight: 400; }
+  .src { display: flex; gap: 6px; }
+  .src button { background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); font: inherit; font-size: 12.5px;
+    padding: 6px 14px; border-radius: 7px; cursor: pointer; }
+  .src button.on { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-dim); }
+  .hint { color: var(--ink-low); font-size: 12px; margin-left: auto; }
+  .hint a { color: var(--ink-mid); }
+
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+  /* canvas */
+  .canvas-wrap { overflow: hidden; position: relative; height: calc(100vh - 220px); min-height: 440px; cursor: grab; touch-action: none; }
+  .canvas-wrap.grabbing { cursor: grabbing; }
+  .canvas-wrap svg { display: block; width: 100%; height: 100%; }
+  .zoom-ctl { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 6px; z-index: 6; }
+  .zoom-ctl button { width: 34px; height: 34px; background: var(--card); border: 1px solid var(--border); color: var(--ink-mid); border-radius: 8px; font-size: 15px; cursor: pointer; font-family: var(--mono); line-height: 1; }
+  .zoom-ctl button:hover { border-color: var(--gold); color: var(--ink); }
+  .zoom-hint { position: absolute; left: 14px; bottom: 12px; color: var(--ink-low); font-size: 10.5px; font-family: var(--mono); z-index: 6; pointer-events: none; }
+  .axis text { fill: var(--ink-low); font-family: var(--mono); font-size: 10px; }
+  .axis line { stroke: var(--mid); }
+  .today-line { stroke: var(--gold); stroke-dasharray: 4 5; opacity: .6; }
+  .today-label { fill: var(--gold); font-family: var(--mono); font-size: 10px; }
+
+  .edge { stroke: #3A3A3A; stroke-width: 1.3; fill: none; opacity: .7; }
+  .edge.hl-up { stroke: var(--gold); opacity: 1; stroke-width: 2; }
+  .edge.hl-down { stroke: var(--teal); opacity: 1; stroke-width: 2; }
+  .edge.faded { opacity: .12; }
+
+  .node-g { cursor: pointer; }
+  .node-box { fill: var(--card); stroke: var(--border); stroke-width: 1.2; rx: 7; }
+  .node-g:hover .node-box { stroke: #4a4a4a; }
+  .node-g.needs .node-box { stroke: var(--red); stroke-width: 1.4; }
+  .node-g.parked .node-box { stroke: var(--gold); }
+  .node-g.donefine .node-box { stroke: var(--teal); opacity: .8; }
+  .node-g.sel .node-box { stroke: var(--gold); stroke-width: 2.2; filter: drop-shadow(0 0 6px rgba(212,160,23,.45)); }
+  .node-g.faded { opacity: .16; }
+  .node-label { fill: var(--ink); font-size: 11.5px; font-family: var(--sans); }
+  .node-sub { fill: var(--ink-low); font-size: 9.5px; font-family: var(--mono); }
+  .ev-dot { r: 2.4; }
+  .ev-line { stroke: var(--mid); stroke-width: 1; }
+
+  /* needs-decision rail */
+  .rail { border-left: 1px solid var(--border); background: #101010; padding: 18px 18px 60px; min-height: calc(100vh - 120px); }
+  .rail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); margin: 0 0 10px; }
+  .need { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: 8px;
+    padding: 9px 11px; margin-bottom: 8px; cursor: pointer; }
+  .need:hover { border-color: #3a3a3a; }
+  .need.gold { border-left-color: var(--gold); }
+  .need .t { font-size: 12.5px; }
+  .need .m { color: var(--ink-low); font-size: 11px; font-family: var(--mono); margin-top: 3px; }
+  .rail .empty { color: var(--ink-low); font-size: 12px; }
+
+  /* popup */
+  .popup { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .popup.show { display: flex; }
+  .pop-card { width: min(660px, 92vw); max-height: 84vh; overflow: auto; background: #131313; border: 1px solid var(--border);
+    border-top: 3px solid var(--gold); border-radius: 12px; padding: 22px 24px; }
+  .pop-card h2 { font-family: var(--disp); font-size: 18px; margin: 0 0 2px; }
+  .pop-id { font-family: var(--mono); font-size: 11px; color: var(--ink-low); margin-bottom: 12px; }
+  .pop-needs { background: var(--red-dim); border: 1px solid var(--red); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 10px 0; }
+  .pop-needs.gold { background: var(--gold-dim); border-color: var(--gold); }
+  .pop-needs.teal { background: var(--teal-dim); border-color: var(--teal); }
+  .pop-needs b { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+  .pop-sect { margin-top: 14px; }
+  .pop-sect h4 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-low); margin: 0 0 6px; }
+  .trail { font-size: 12px; }
+  .trail .step { display: grid; grid-template-columns: 118px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--mid); }
+  .trail .at { font-family: var(--mono); color: var(--ink-low); font-size: 10.5px; }
+  .trail .by { color: var(--gold); font-family: var(--mono); font-size: 10.5px; }
+  .pop-notes { color: var(--ink-mid); font-size: 12.5px; white-space: pre-wrap; }
+  .pop-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12px; }
+  .pop-kv .k { color: var(--ink-low); } .pop-kv .v { font-family: var(--mono); text-align: right; }
+  .pop-close { float: right; background: none; border: 1px solid var(--border); color: var(--ink-mid); border-radius: 6px;
+    font: inherit; padding: 3px 10px; cursor: pointer; }
+  .deps-list { font-family: var(--mono); font-size: 11.5px; color: var(--ink-mid); }
+  .deps-list span { cursor: pointer; text-decoration: underline dotted; }
+  .refreshb { background: var(--mid); border: 1px solid var(--border); color: var(--ink-mid); font: inherit;
+    font-size: 12px; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  .refreshb:hover { border-color: var(--gold); color: var(--ink); }
+
+  /* chain integrity: silent when whole, alarm when broken */
+  .integ-ok { font-family: var(--mono); font-size: 10.5px; color: var(--ink-low);
+    padding: 4px 26px; display: flex; align-items: center; gap: 7px; }
+  .integ-ok .d { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+  .integ-bad { background: var(--red); color: #fff; padding: 14px 26px; font-family: var(--sans);
+    display: flex; align-items: center; gap: 14px; animation: pulse 1.4s ease-in-out infinite; }
+  .integ-bad .big { font-family: var(--disp); font-weight: 700; font-size: 16px; letter-spacing: .02em; }
+  .integ-bad .sub { font-size: 12.5px; opacity: .92; }
+  .integ-bad .seq { font-family: var(--mono); background: rgba(0,0,0,.28); padding: 2px 8px; border-radius: 5px; }
+  @keyframes pulse { 0%,100% { box-shadow: inset 0 0 0 0 rgba(0,0,0,0); } 50% { box-shadow: inset 0 -3px 0 0 rgba(0,0,0,.35); } }
+</style>
+</head>
+<body>
+<div class="sig"></div>
+<div id="integrity"></div>
+<header>
+  <h1 class="title">LOTOR <span class="dim">/ ontology</span></h1>
+  <div class="src" id="src">
+    <button data-s="decisions" class="on">Decisions</button>
+    <button data-s="cards">Cards</button>
+    <button data-s="receipts">Receipts</button>
+    <button data-s="people">People</button>
+  </div>
+  <div class="hint">time flows left to right &middot; click a card to trace its chain &middot; <a href="/">lineage view</a></div>
+</header>
+<div class="layout">
+  <div class="canvas-wrap" id="canvasWrap"></div>
+  <aside class="rail">
+    <h3 id="railTitle">Needs a decision, by need</h3>
+    <div id="rail"></div>
+  </aside>
+</div>
+
+<div class="popup" id="popup"><div class="pop-card" id="popCard"></div></div>
+
+<script>
+const NW = 168, NH = 44, LANE_H = 62, PAD_L = 70, PAD_T = 46, PAD_R = 200;
+let SOURCE = 'decisions', DATA = null, SEL = null;
+let NODES = [], BYID = new Map();
+let VIEW = null, CONTENT = { w: 0, h: 0 }, VIEW_SOURCE = null, PZ_WIRED = false;
+
+function graphEl() { return document.getElementById('graph'); }
+function applyView() { const g = graphEl(); if (g && VIEW) g.setAttribute('viewBox', VIEW.x + ' ' + VIEW.y + ' ' + VIEW.w + ' ' + VIEW.h); }
+function fitView() {
+  const wrap = document.getElementById('canvasWrap'); const r = wrap.getBoundingClientRect();
+  const A = r.width / Math.max(1, r.height);
+  let w = CONTENT.w * 1.06, h = CONTENT.h * 1.06;
+  if (w / h < A) w = h * A; else h = w / A;   // match container aspect so no letterbox, mapping stays exact
+  VIEW = { x: CONTENT.w / 2 - w / 2, y: CONTENT.h / 2 - h / 2, w, h };
+  applyView();
+}
+function zoomAt(px, py, f) {
+  if (!VIEW) return;
+  const wrap = document.getElementById('canvasWrap'); const r = wrap.getBoundingClientRect();
+  const vx = VIEW.x + (px / r.width) * VIEW.w, vy = VIEW.y + (py / r.height) * VIEW.h;
+  VIEW.w = Math.max(60, Math.min(CONTENT.w * 4, VIEW.w * f));
+  VIEW.h = Math.max(40, Math.min(CONTENT.h * 4, VIEW.h * f));
+  VIEW.x = vx - (px / r.width) * VIEW.w; VIEW.y = vy - (py / r.height) * VIEW.h;
+  applyView();
+}
+function zoomCenter(f) { const r = document.getElementById('canvasWrap').getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, f); }
+function ensureZoomControls(wrap) {
+  const parent = wrap.parentElement; if (parent.querySelector('.zoom-ctl')) return;
+  parent.style.position = 'relative';
+  const ctl = document.createElement('div'); ctl.className = 'zoom-ctl';
+  ctl.innerHTML = '<button data-z="in" title="zoom in">+</button><button data-z="out" title="zoom out">&minus;</button><button data-z="fit" title="fit to view">&#9635;</button>';
+  parent.appendChild(ctl);
+  ctl.querySelector('[data-z=in]').onclick = () => zoomCenter(0.8);
+  ctl.querySelector('[data-z=out]').onclick = () => zoomCenter(1.25);
+  ctl.querySelector('[data-z=fit]').onclick = () => fitView();
+  const hint = document.createElement('div'); hint.className = 'zoom-hint'; hint.textContent = 'scroll to zoom · drag to pan · click a card to trace'; parent.appendChild(hint);
+}
+function wirePanZoom(wrap) {
+  if (PZ_WIRED) return; PZ_WIRED = true;
+  wrap.addEventListener('wheel', e => { e.preventDefault(); const r = wrap.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 0.88 : 1.14); }, { passive: false });
+  let dragging = false, lastX = 0, lastY = 0, moved = false;
+  wrap.addEventListener('pointerdown', e => {
+    if (e.target.closest && e.target.closest('.node-g')) return;   // let node clicks through
+    dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
+    wrap.classList.add('grabbing'); try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  wrap.addEventListener('pointermove', e => {
+    if (!dragging || !VIEW) return;
+    const r = wrap.getBoundingClientRect(); const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+    VIEW.x -= dx * (VIEW.w / r.width); VIEW.y -= dy * (VIEW.h / r.height);
+    lastX = e.clientX; lastY = e.clientY; applyView();
+  });
+  const end = () => { if (!dragging) return; dragging = false; wrap.classList.remove('grabbing'); if (!moved) { SEL = null; render(); } };
+  wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', end);
+}
+
+async function load() {
+  const r = await fetch('/api/ontology?source=' + SOURCE);
+  DATA = await r.json();
+  NODES = (DATA.nodes || []);
+  // Undated nodes anchor at the dataset's start rather than being dropped:
+  // for the people network most nodes carry no date, and the map should show
+  // the network, not only the dated slice. Approximation, labeled by absence.
+  const dated = NODES.filter(n => n.t0);
+  const dataMin = dated.length ? Math.min(...dated.map(n => n.t0)) : Date.now();
+  for (const n of NODES) n.tx = n.t0 || dataMin;
+  BYID = new Map(NODES.map(n => [n.id, n]));
+  SEL = null;
+  layout();
+  render();
+  renderRail();
+}
+
+// --- layout: X by time, Y by lane with a straightness bias -----------------
+// A node tries to sit in the lane of its most recent dependency, so a clean
+// single-dependency chain runs straight. A node whose lane is taken, or whose
+// deps live in multiple lanes, shifts down - and its edges visibly cross.
+// The crossings are the mess made legible, per the spec.
+function layout() {
+  if (!NODES.length) return;
+  const GAP = 14;
+  const t0 = Math.min(...NODES.map(n => n.tx));
+  const t1 = Math.max(Date.now(), ...NODES.map(n => n.tx));
+  const span = Math.max(t1 - t0, 1);
+  const width = Math.max(1100, Math.min(2600, NODES.length * 46));
+  const usable = width - PAD_L - PAD_R;
+  const timeX = ts => PAD_L + (ts - t0) / span * usable;
+
+  // Lane assignment, straightness first. A node with a dependency STAYS in
+  // that dependency's lane, pushed right past whatever occupies it - so a
+  // linear chain is literally one straight line even when time is crowded.
+  // A second dependent of the same node (a real branch) would land far right
+  // of its time position, so past a threshold it takes a new lane instead:
+  // branches spread, chains hold straight. Crossings then only appear where
+  // dependencies genuinely cross lanes, which is the mess made visible.
+  const sorted = [...NODES].sort((a, b) => a.tx - b.tx);
+  const laneLastX = [];   // rightmost x per lane
+  const laneLastId = [];  // who occupies that rightmost slot
+  let maxX = 0;
+  for (const n of sorted) {
+    const tX = timeX(n.tx);
+    let lane = null, x = tX;
+    // Stay in a dependency's lane when that dependency is still the lane's
+    // last occupant: the chain holds straight no matter how crowded time is,
+    // because the node just pushes right. If a SIBLING already extended the
+    // lane (last occupant is not our dep), this is a genuine branch: take a
+    // new lane and let the edge visibly fork.
+    for (const d of n.deps) {
+      const dn = BYID.get(d);
+      if (dn && dn.lane != null && laneLastId[dn.lane] === d) {
+        lane = dn.lane;
+        x = Math.max(tX, (laneLastX[lane] ?? -Infinity) + NW + GAP);
+        break;
+      }
+    }
+    if (lane == null) {
+      for (let i = 0; i < laneLastX.length + 1; i++) {
+        if (laneLastX[i] == null || laneLastX[i] + NW + GAP <= tX) { lane = i; x = tX; break; }
+      }
+      if (lane == null) { lane = laneLastX.length; x = tX; }
+    }
+    n.lane = lane; n.x = x;
+    laneLastX[lane] = x;
+    laneLastId[lane] = n.id;
+    if (x > maxX) maxX = x;
+    n.y = PAD_T + lane * LANE_H;
+  }
+  DATA._dims = {
+    width: Math.max(width, maxX + NW + PAD_R / 2),
+    height: PAD_T + (laneLastX.length + 1) * LANE_H + 60, t0, t1, span, usable
+  };
+}
+
+function classFor(n) {
+  if (SOURCE === 'cards') {
+    if (n.state === 'review' || n.state === 'new') return 'needs';
+    if (n.state === 'onhold') return 'parked';
+    if (n.state === 'done') return 'donefine';
+    return '';
+  }
+  if (SOURCE === 'receipts') return n.state === 'open' ? 'parked' : 'donefine';
+  if (SOURCE === 'decisions') {
+    if (n.state === 'needs-decision') return 'needs';
+    if (n.state === 'active') return 'parked';
+    return 'donefine';
+  }
+  return '';
+}
+
+function render() {
+  const d = DATA._dims;
+  const wrap = document.getElementById('canvasWrap');
+  if (!NODES.length) { wrap.innerHTML = '<div style="padding:30px;color:var(--ink-low)">' + (DATA.error || 'No dated nodes in this source.') + '</div>'; return; }
+
+  // ancestry/descendants of selection
+  const up = new Set(), down = new Set();
+  if (SEL) {
+    const walkUp = id => { const n = BYID.get(id); if (!n) return; for (const dep of n.deps) if (!up.has(dep)) { up.add(dep); walkUp(dep); } };
+    const walkDown = id => { for (const n of NODES) if (n.deps.includes(id) && !down.has(n.id)) { down.add(n.id); walkDown(n.id); } };
+    walkUp(SEL); walkDown(SEL);
+  }
+  const inChain = id => !SEL || id === SEL || up.has(id) || down.has(id);
+
+  let svg = '<svg id="graph" width="100%" height="100%" viewBox="0 0 ' + d.width + ' ' + d.height + '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
+
+  // time axis: month ticks
+  svg += '<g class="axis">';
+  const start = new Date(d.t0); start.setDate(1); start.setHours(0,0,0,0);
+  for (let m = new Date(start); m.getTime() <= d.t1; m.setMonth(m.getMonth() + 1)) {
+    const x = PAD_L + (m.getTime() - d.t0) / d.span * d.usable;
+    if (x < PAD_L - 10) continue;
+    svg += '<line x1="' + x + '" y1="28" x2="' + x + '" y2="' + (d.height - 20) + '"/>';
+    svg += '<text x="' + (x + 4) + '" y="22">' + m.toLocaleString(undefined, { month: 'short', year: '2-digit' }) + '</text>';
+  }
+  const todayX = PAD_L + (Date.now() - d.t0) / d.span * d.usable;
+  svg += '<line class="today-line" x1="' + todayX + '" y1="28" x2="' + todayX + '" y2="' + (d.height - 20) + '"/>';
+  svg += '<text class="today-label" x="' + (todayX + 5) + '" y="' + (d.height - 26) + '">today</text>';
+  svg += '</g>';
+
+  // edges: dependency -> dependent, left to right
+  for (const n of NODES) {
+    for (const depId of n.deps) {
+      const a = BYID.get(depId); if (!a) continue;
+      const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = n.x, y2 = n.y + NH / 2;
+      const midx = (x1 + x2) / 2;
+      let cls = 'edge';
+      if (SEL) {
+        const onUp = (up.has(depId) || depId === SEL) && (up.has(n.id) || n.id === SEL);
+        const onDown = (down.has(n.id) || n.id === SEL) && (down.has(depId) || depId === SEL);
+        cls += onUp ? ' hl-up' : onDown ? ' hl-down' : ' faded';
+      }
+      svg += '<path class="' + cls + '" d="M' + x1 + ',' + y1 + ' C' + midx + ',' + y1 + ' ' + midx + ',' + y2 + ' ' + x2 + ',' + y2 + '"/>';
+    }
+  }
+
+  // nodes with their event trails
+  for (const n of NODES) {
+    const cls = 'node-g ' + classFor(n) + (SEL === n.id ? ' sel' : '') + (SEL && !inChain(n.id) ? ' faded' : '');
+    svg += '<g class="' + cls + '" data-id="' + esc(n.id) + '" transform="translate(' + n.x + ',' + n.y + ')">';
+    svg += '<rect class="node-box" width="' + NW + '" height="' + NH + '" rx="7"/>';
+    svg += '<text class="node-label" x="9" y="18">' + esc(trunc(n.label, 24)) + '</text>';
+    const sub = SOURCE === 'decisions'
+      ? (n.state || '') + ' · ' + (n.owner || '') + ' · ' + (n.ring || '')
+      : (n.state || '') + (n.ring ? ' · ' + n.ring : '');
+    svg += '<text class="node-sub" x="9" y="33">' + esc(trunc(sub, 30)) + '</text>';
+    // decision-trail dots flowing right from the node toward today
+    const evs = (n.events || []).filter(e => e.at > n.t0);
+    if (evs.length) {
+      const lastAt = Math.max(...evs.map(e => e.at));
+      const endX = Math.min(PAD_L + (lastAt - d.t0) / d.span * d.usable - n.x, d.width - n.x - 10);
+      if (endX > NW + 8) svg += '<line class="ev-line" x1="' + NW + '" y1="' + (NH/2) + '" x2="' + endX + '" y2="' + (NH/2) + '"/>';
+      for (const e of evs.slice(0, 12)) {
+        const ex = PAD_L + (e.at - d.t0) / d.span * d.usable - n.x;
+        if (ex <= NW + 4) continue;
+        const col = /denied|blocked/i.test(e.action) ? 'var(--red)' : /done|approved|closed/i.test(e.action) ? 'var(--teal)' : 'var(--gold)';
+        svg += '<circle class="ev-dot" cx="' + ex + '" cy="' + (NH/2) + '" r="2.6" fill="' + col + '"><title>' + esc(new Date(e.at).toLocaleString()) + ' — ' + esc(e.by) + ': ' + esc(e.action) + '</title></circle>';
+      }
+    }
+    svg += '</g>';
+  }
+  svg += '</svg>';
+  wrap.innerHTML = svg;
+  [...wrap.querySelectorAll('.node-g')].forEach(g => {
+    g.addEventListener('click', () => { const id = g.dataset.id; if (SEL === id) openPopup(id); else { SEL = id; render(); } });
+    g.addEventListener('dblclick', () => openPopup(g.dataset.id));
+  });
+  CONTENT = { w: d.width, h: d.height };
+  ensureZoomControls(wrap);
+  if (VIEW_SOURCE !== SOURCE || !VIEW) { VIEW_SOURCE = SOURCE; fitView(); } else applyView();
+  wirePanZoom(wrap);
+}
+
+function renderRail() {
+  const rail = document.getElementById('rail');
+  const title = document.getElementById('railTitle');
+  if (SOURCE === 'decisions') {
+    title.textContent = 'Rapid evaluation: what needs Isaac';
+    const order = { 'needs-decision': 0, active: 1 };
+    const items = NODES.filter(n => n.state === 'needs-decision' || n.state === 'active')
+      .sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9) || (a.t0 ?? 0) - (b.t0 ?? 0));
+    rail.innerHTML = items.length ? items.map(needHtml).join('') : '<div class="empty">Every decision is closed. Suspicious.</div>';
+  } else if (SOURCE !== 'cards') {
+    title.textContent = SOURCE === 'receipts' ? 'Open sessions' : 'Network (core rings)';
+    const items = NODES.filter(n => n.needs);
+    rail.innerHTML = items.length ? items.map(needHtml).join('') : '<div class="empty">Nothing pending in this source.</div>';
+  } else {
+    title.textContent = 'Needs a decision, by need';
+    const order = { review: 0, new: 1, onhold: 2, active: 3 };
+    const items = NODES.filter(n => n.needs && n.state !== 'done')
+      .sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9) || (a.t0 - b.t0));
+    rail.innerHTML = items.length ? items.map(needHtml).join('') : '<div class="empty">Nothing needs you. Rare. Enjoy it.</div>';
+  }
+  [...rail.querySelectorAll('.need')].forEach(el => el.onclick = () => { SEL = el.dataset.id; render(); openPopup(el.dataset.id); });
+}
+function needHtml(n) {
+  const gold = n.state === 'onhold' || n.state === 'active' || n.state === 'open';
+  return '<div class="need' + (gold ? ' gold' : '') + '" data-id="' + esc(n.id) + '">' +
+    '<div class="t">' + esc(trunc(n.label, 46)) + '</div>' +
+    '<div class="m">' + esc(n.state) + ' · since ' + (n.t0 ? new Date(n.t0).toLocaleDateString() : '?') + '</div></div>';
+}
+
+function openPopup(id) {
+  const n = BYID.get(id); if (!n) return;
+  const pop = document.getElementById('popup'), card = document.getElementById('popCard');
+  const needCls = n.state === 'review' || n.state === 'new' ? '' : (n.state === 'done' || n.state === 'closed') ? ' teal' : ' gold';
+  const trail = (n.events || []).map(e =>
+    '<div class="step"><div><div class="at">' + new Date(e.at).toLocaleString() + '</div><div class="by">' + esc(e.by) + '</div></div>' +
+    '<div>' + esc(e.action) + '</div></div>').join('') || '<div class="empty" style="color:var(--ink-low);font-size:12px">no recorded steps</div>';
+  const deps = n.deps.length ? n.deps.map(d => '<span data-d="' + esc(d) + '">' + esc(BYID.get(d)?.label || d) + '</span>').join(' &middot; ') : 'none - this chain is straight';
+  const dependents = NODES.filter(x => x.deps.includes(n.id));
+  const isDecisions = SOURCE === 'decisions';
+  const provenance = isDecisions
+    ? '<div class="pop-sect"><h4>Who says so</h4><div class="pop-kv">' +
+      '<span class="k">authored by</span><span class="v">' + esc(n.owner || '?') + '</span>' +
+      '<span class="k">provenance</span><span class="v">' + esc(n.claim || '?') + '</span>' +
+      (n.source ? '<span class="k">context lives at</span><span class="v">' + esc(trunc(n.source, 52)) + '</span>' : '') +
+      '</div></div>'
+    : '';
+  const editor = isDecisions
+    ? '<div class="pop-sect"><h4>Add a note</h4>' +
+      '<textarea id="noteText" rows="2" style="width:100%;background:var(--mid);border:1px solid var(--border);border-radius:7px;color:var(--ink);font:inherit;font-size:12.5px;padding:8px;resize:vertical"></textarea>' +
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">' +
+      '<button class="refreshb" id="noteSave">save note (as Isaac)</button>' +
+      '<span style="flex:1"></span>' +
+      (n.state !== 'closed' ? '<button class="refreshb" id="stClose">close card</button>' : '<button class="refreshb" id="stReopen">reopen (active)</button>') +
+      (n.state !== 'needs-decision' ? '<button class="refreshb" id="stNeeds">mark needs-decision</button>' : '') +
+      '</div></div>'
+    : '';
+  card.innerHTML =
+    '<button class="pop-close" id="popClose">close</button>' +
+    '<h2>' + esc(n.label) + '</h2>' +
+    '<div class="pop-id">' + esc(n.id) + ' &middot; ' + esc(n.state) + (n.ring ? ' &middot; ' + esc(n.ring) : '') + (n.owner ? ' &middot; ' + esc(n.owner) : '') + '</div>' +
+    (n.needs ? '<div class="pop-needs' + needCls + '"><b>What needs delivered</b>' + esc(n.needs) + '</div>' : '') +
+    (n.decision ? '<div class="pop-sect"><h4>Decision on record</h4><div class="pop-notes">' + esc(n.decision) + '</div></div>' : '') +
+    provenance +
+    '<div class="pop-sect"><h4>Initialized</h4><div class="pop-kv"><span class="k">when</span><span class="v">' + (n.t0 ? new Date(n.t0).toLocaleString() : 'date unknown, anchored at start') + '</span>' +
+      (!isDecisions && n.claim ? '<span class="k">claim / role</span><span class="v">' + esc(trunc(n.claim, 60)) + '</span>' : '') + '</div></div>' +
+    '<div class="pop-sect"><h4>Decision trail</h4><div class="trail">' + trail + '</div></div>' +
+    '<div class="pop-sect"><h4>Depends on</h4><div class="deps-list">' + deps + '</div></div>' +
+    (dependents.length ? '<div class="pop-sect"><h4>Feeds into</h4><div class="deps-list">' + dependents.map(x => '<span data-d="' + esc(x.id) + '">' + esc(x.label) + '</span>').join(' &middot; ') + '</div></div>' : '') +
+    (n.notes ? '<div class="pop-sect"><h4>What happened</h4><div class="pop-notes">' + esc(n.notes) + '</div></div>' : '') +
+    editor;
+  pop.classList.add('show');
+  document.getElementById('popClose').onclick = () => pop.classList.remove('show');
+  pop.onclick = e => { if (e.target === pop) pop.classList.remove('show'); };
+  [...card.querySelectorAll('.deps-list span')].forEach(s => s.onclick = () => { pop.classList.remove('show'); SEL = s.dataset.d; render(); openPopup(s.dataset.d); });
+  if (isDecisions) {
+    const post = async (path, body) => {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return r.json();
+    };
+    const refreshAfter = async () => { pop.classList.remove('show'); await load(); SEL = id; render(); openPopup(id); };
+    document.getElementById('noteSave').onclick = async () => {
+      const text = document.getElementById('noteText').value.trim();
+      if (!text) return;
+      const j = await post('/api/decisions/note', { id, text, by: 'isaac' });
+      if (j.ok) refreshAfter();
+    };
+    const st = document.getElementById('stClose');
+    if (st) st.onclick = async () => { const j = await post('/api/decisions/status', { id, status: 'closed' }); if (j.ok) refreshAfter(); };
+    const sr = document.getElementById('stReopen');
+    if (sr) sr.onclick = async () => { const j = await post('/api/decisions/status', { id, status: 'active' }); if (j.ok) refreshAfter(); };
+    const sn = document.getElementById('stNeeds');
+    if (sn) sn.onclick = async () => { const j = await post('/api/decisions/status', { id, status: 'needs-decision' }); if (j.ok) refreshAfter(); };
+  }
+}
+
+function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function esc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+async function checkIntegrity() {
+  const el = document.getElementById('integrity');
+  try {
+    const r = await fetch('/api/integrity');
+    const j = await r.json();
+    if (j.ok) {
+      el.innerHTML = '<div class="integ-ok"><span class="d"></span>chain intact &middot; ' + j.receipts + ' receipts &middot; head #' + (j.head ?? '?') + ' &middot; hash-link verified</div>';
+    } else {
+      el.innerHTML = '<div class="integ-bad"><span class="big">CHAIN INTEGRITY FAILURE</span>' +
+        '<span class="sub">The receipt chain is broken' + (j.brokenAtSeq != null ? ' at <span class="seq">seq ' + j.brokenAtSeq + '</span>' : '') +
+        '. The record cannot be trusted until this is resolved. ' + (j.error ? esc(j.error) : 'Run verify_chain and stop relying on downstream views.') + '</span></div>';
+      document.title = '(!) BROKEN CHAIN - Lotor';
+    }
+  } catch (e) { el.innerHTML = ''; }
+}
+
+document.getElementById('src').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  SOURCE = b.dataset.s;
+  [...document.querySelectorAll('.src button')].forEach(x => x.classList.toggle('on', x === b));
+  load();
+});
+load();
+checkIntegrity();
+</script>
+<script src="/nav.js"></script>
+</body>
+</html>

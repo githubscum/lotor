@@ -1476,3 +1476,50 @@ and `heldMs`: absent on a receipt means written-before-the-seam, never
 not-applicable. This is disclosure, not a defect: no historical receipt's
 meaning changed, which was the load-bearing design constraint (Isaac's
 Option A call, 2026-08-13).
+
+## 52. Tool-definition pinning is listing-time only, and this harness lists nothing
+
+The pin diff compares what the harness exposes when a tool listing is
+handed to session-open. A mid-session mutation between listings is unseen;
+the next listing is the next comparison point. A change that persists for
+less than one listing window escapes the diff entirely. Sharper on the
+harness this runs on today: Claude Code's SessionStart payload carries NO
+tool listing, so on this harness `toolPins` is null and the receipt says
+"harness exposed no tool listing at session-open" — the mechanism is live,
+the feed is absent until a wrapper or a future harness provides `tools`.
+Also: a `tp/1`→`tp/2` scheme bump tags the whole map `rebaselined`
+(severity low), so for one session after a bump, content diffs are not
+surfaced. The pin catches what the harness reports; it does not catch what
+the harness withholds.
+
+## 53. `matcherHash` proves the code was different, not what changed
+
+Two receipts with different `matcherHash` values tell a reader the matcher
+changed between them, not what changed. Recovering the "what" still means
+reading the git history of `src/policy/index.js` for that time range. A
+hash detects, it does not explain. Same for `observer.parser.hash` on
+session-open receipts.
+
+## 54. Captured thinking is self-report, and a quiet thought channel is unrecorded, not empty
+
+`thinkingBlocks` on a session-end receipt is a list of digests of text the
+model emitted. The receipt records that emission; it never records that
+the emitted text faithfully describes what the model computed. The honest
+wording is "the stated reasoning is on the record," never "we can tell
+what it was thinking." And a harness that emits no thinking blocks (or a
+model that does not produce them) yields a receipt with no
+`thinkingBlocks` field at all — the parser never writes an empty array. A
+reader cannot tell from one receipt whether the model had zero thoughts or
+the channel was omitted. The honest reading of an absent thought layer is
+"unrecorded," never "no thoughts."
+
+## 55. `transcriptHash` binds the receipt to a file, not the file to the whole session
+
+The digest proves which transcript bytes the session-end receipt was made
+from, so a missing or altered transcript is a visible gap. It does not
+prove every byte the session produced made it into the file: a harness
+that truncates or drops before the file-write is invisible to this bind
+(limit 1's completeness caveat, applied to the thought channel). And if an
+attacker writes the transcript too, the hash matches — the bind is against
+accidental loss and honest logging errors, not against a hostile harness
+that controls the file.

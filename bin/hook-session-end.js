@@ -106,8 +106,13 @@ async function main() {
   }
 
   let text;
+  let bytes;
   try {
-    text = fs.readFileSync(transcriptPath, 'utf-8');
+    // Read as bytes first: the transcriptHash bind (thought-capture tier 1)
+    // hashes the raw file bytes, not a round-trip through the JS string
+    // type. The string view feeds the parser walker exactly as before.
+    bytes = fs.readFileSync(transcriptPath);
+    text = bytes.toString('utf-8');
   } catch (e) {
     note(`could not read transcript (${e.code || e.message}); nothing ingested`);
     return;
@@ -119,7 +124,7 @@ async function main() {
   resolveHome();
 
   try {
-    const result = ingestSession(text);
+    const result = ingestSession(text, { transcriptBytes: bytes });
     if (result.skipped) {
       note(`no new activity for session ${result.sessionId}; nothing appended`);
     } else {

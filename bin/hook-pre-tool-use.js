@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy, evaluate, RULE_INFO } from '../src/policy/index.js';
+import { loadPolicy, evaluate, RULE_INFO, matcherVersionHash } from '../src/policy/index.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
 import { resolveGrant } from '../src/grant/check.js';
@@ -707,6 +707,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -724,6 +725,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -771,6 +773,7 @@ async function main() {
           tool: toolName,
           lotorMode: policy.mode,
           harnessMode: parsed.permissionMode,
+          matcherHash: matcherVersionHash(),
           timestamp: Date.now()
         });
       }
@@ -793,6 +796,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     process.exit(0);
@@ -812,6 +816,7 @@ async function main() {
       ruleId,
       tool: toolName,
       paramsDigest,
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     note(`warn: ${ruleId} (${toolName})`);
@@ -885,6 +890,7 @@ async function main() {
             ruleId,
             tool: toolName,
             paramsDigest,
+            matcherHash: matcherVersionHash(),
             timestamp: Date.now()
           };
         });
@@ -999,6 +1005,7 @@ async function main() {
     ruleId,
     tool: toolName,
     paramsDigest,
+    matcherHash: matcherVersionHash(),
     timestamp: Date.now()
   });
   process.exit(0);

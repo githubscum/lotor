@@ -41,7 +41,8 @@ import {
   isEgressOther,
   isPushForce,
   isPushProtected,
-  isPublish
+  isPublish,
+  matcherVersionHash
 } from '../src/policy/index.js';
 
 const STDIN_TIMEOUT_MS = 5000;
@@ -251,6 +252,7 @@ async function main() {
       ruleId: 'engine-error',
       tool: toolName,
       paramsDigest: digestParams(toolInput),
+      matcherHash: matcherVersionHash(),
       timestamp: Date.now()
     });
     return;
@@ -263,6 +265,7 @@ async function main() {
     paramsDigest: digestParams(toolInput),
     responseDigest: digestResponse(toolResponse),
     responseOk: responseOk(toolResponse),
+    matcherHash: matcherVersionHash(),
     timestamp: Date.now()
   };
 

@@ -61,12 +61,99 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy } from '../src/policy/index.js';
+import { loadPolicy, MATCHER_SCHEMA, matcherVersionHash } from '../src/policy/index.js';
+import { PARSER_SCHEMA, parserVersionHash } from '../src/parser/index.js';
 import { verifyChain } from '../src/chain/index.js';
+
+/**
+ * Read this package's own version. Best-effort: an unreadable
+ * package.json must not stop the session from opening. Returns null on
+ * any failure (file missing, malformed JSON, no version field).
+ */
+function readPackageVersion() {
+  try {
+    const pkgPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..', 'package.json'
+    );
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    return typeof pkg.version === 'string' ? pkg.version : null;
+  } catch (e) {
+    return null;
+  }
+}
 import { snapshotHookRegistration } from '../src/registration.js';
 import { resolveHarness } from '../src/harness.js';
+import { fingerprintTool, diffPins, summaryDiff } from '../src/toolpins/tool-pin.js';
+
+/**
+ * Read the most recent session-open that carried toolPins, walking the
+ * chain from the tail. Best-effort: a missing chain, a malformed entry,
+ * or a store that throws all become "no prior pins" so a fresh install
+ * never wedges session-open.
+ */
+function readPriorToolPins(entries) {
+  try {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e && e.payload
+          && e.payload.type === 'session-open'
+          && e.payload.toolPins) {
+        return {
+          pins: e.payload.toolPins,
+          defs: e.payload.toolDefs || {},
+          schemaVersion: e.payload.toolPinSchemaVersion || null
+        };
+      }
+    }
+    return { pins: {}, defs: {}, schemaVersion: null };
+  } catch (e) {
+    return { pins: {}, defs: {}, schemaVersion: null };
+  }
+}
+
+/**
+ * Pin the tool listing the harness handed us, if it handed one at all.
+ * Claude Code's SessionStart payload carries NO tool listing today
+ * (verified against the live payload shape 2026-08-15), so on this
+ * harness the receipt records that absence honestly instead of
+ * pretending an empty listing was observed. A harness (or wrapper)
+ * that provides `tools: [...]` gets the full pin/diff flow.
+ * KNOWN-LIMITS: the diff is listing-time only either way.
+ */
+function buildToolPins(payload, entries) {
+  const listing = Array.isArray(payload.tools) ? payload.tools : null;
+  if (!listing) {
+    return {
+      toolPins: null,
+      toolDefs: null,
+      toolPinDiff: null,
+      toolPinDiffSummary: 'harness exposed no tool listing at session-open',
+      toolPinSchemaVersion: 'tp/1'
+    };
+  }
+  const currentPins = {};
+  const currentDefsMap = {};
+  for (const def of listing) {
+    if (!def || typeof def.name !== 'string') continue;
+    try {
+      currentPins[def.name] = fingerprintTool(def);
+      currentDefsMap[def.name] = def;
+    } catch (e) { /* a malformed def is skipped, not fatal */ }
+  }
+  const prior = readPriorToolPins(entries);
+  const pinDiff = diffPins(prior.pins, currentPins, prior.defs, currentDefsMap);
+  return {
+    toolPins: currentPins,
+    toolDefs: currentDefsMap,
+    toolPinDiff: pinDiff,
+    toolPinDiffSummary: summaryDiff(pinDiff),
+    toolPinSchemaVersion: 'tp/1'
+  };
+}
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -212,9 +299,11 @@ async function main() {
 
       const head = current.length > 0 ? current[current.length - 1] : null;
       const verified = verifyAtOpen(current, home);
+      const pins = buildToolPins(payload, current);
 
       return {
         type: 'session-open',
+        ...pins,
         // Deliberately NOT nested under a `session` key: the view layer treats
         // any payload carrying `session` as a full session receipt, and an
         // open is not one.
@@ -239,6 +328,17 @@ async function main() {
         // This has to exist BEFORE a second harness starts writing. The chain
         // is append-only, so an entry written without the field can never
         // acquire it.
+        // Answers "what was the witness capable of seeing at this moment",
+        // distinct from `policy` above (which versions the user's policy.json,
+        // not the matcher CODE). Absence on an older entry means "before
+        // instrumentation was versioned", not an error: additive field on a
+        // payload the chain hashes as-is, so old entries verify unchanged.
+        observer: {
+          schema: 'observer/1',
+          packageVersion: readPackageVersion(),
+          matcher: { schema: MATCHER_SCHEMA, hash: matcherVersionHash() },
+          parser: { schema: PARSER_SCHEMA, hash: parserVersionHash() }
+        },
         harness,
         lotorVersion: 1,
         timestamp: Date.now()
