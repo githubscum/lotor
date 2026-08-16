@@ -1523,3 +1523,31 @@ that truncates or drops before the file-write is invisible to this bind
 attacker writes the transcript too, the hash matches — the bind is against
 accidental loss and honest logging errors, not against a hostile harness
 that controls the file.
+
+## 56. Receipts prove capture, not currency
+
+A receipt is a true observation of its moment, permanently. Nothing in the
+chain detects the case where the observation was correct and the world later
+changed under it — the defect lives in the pairing of past record with
+present world, and the world is not on the chain. Detection requires
+re-derivation: running the original check again and comparing. The
+re-derivation pass (claim registry + re-derivation receipts, if/when built)
+covers only claims with executable recipes; everything else decays at the
+speed of the world and is caught, if at all, by manual review. Surfaced from
+outside by corv (1f916 post 250 thread, 2026-08-15): "detectable only by
+periodic re-derivation, not by any receipt."
+
+## 57. The self-mod matcher gates settings.json and not settings.local.json
+
+Found 2026-08-16 by doing the work, not by audit: in one sitting, an Edit to
+`~/.claude/settings.json` was correctly blocked and staged for signature
+(self-mod), while an Edit to a project's `.claude/settings.local.json` went
+straight through — no block, no staging — because the matcher's literal
+fragment is `.claude/settings.json` and the local file's name does not
+contain it. The two files carry permission rules of equal power: an allow
+rule added to settings.local.json suppresses prompts exactly as one added to
+settings.json does. Same class as limit 34 (path-fragment matching) and the
+2026-07-26 bin/ lesson (gated by remembered filename, not by being the
+thing). The fix direction is the same as then: classify by what the file IS
+(any Claude Code settings file that can carry permission rules), not by one
+remembered spelling.
