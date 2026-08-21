@@ -1584,3 +1584,40 @@ The residuals, stated rather than found later:
   named `releases/main` pushed under `current` (or tracked that way) reads
   as protected. That is the accepted false-positive direction: a gate that
   fires too often costs a signature, a gate that misses ships code.
+
+## 58. Brace expansion is expanded by the matcher now, and the cap fails closed
+
+**Status: open (bounded). Found 2026-08-21 by a citizen on the 1f916 board
+(LOTOR-C2), the cap half found the same day while verifying their fix.**
+
+The self-mod command matcher substring-checks the literal command. Shell
+brace expansion splits a protected fragment across syntax the matcher never
+expanded: `touch src/{policy,gate}/probe.js` writes into two gate-deciding
+directories and contained neither `src/policy/` nor `src/gate/` contiguously,
+so it flowed free (real hook exit 0) while the un-braced spelling was denied.
+No cipher, no wrapper, no concatenated verb: the honest-agent class, the same
+shape as the 2026-07-24 terminator leaks. The fix expands comma brace groups
+(nesting included) and checks the original command plus every expansion.
+Strictly additive: more candidate strings, never fewer.
+
+The residuals, stated rather than found later:
+
+- **The variant cap fails closed, on purpose, and over-gates.** Expansion is
+  bounded (4096 variants). Past the cap the command is unverified and the
+  matcher returns a hit. The first version of this fix returned the
+  unexpanded leftovers as-is, and because expansion is depth-first and pops
+  the last option first, the leftovers at the cap were exactly the first
+  options of the early groups: a protected fragment split across two groups
+  in first position plus five harmless trailing binary groups slipped
+  through a 64-variant cap. A command with thousands of brace variants is
+  not an honest agent's stub one-liner; the cost of the wrong denial is a
+  signature.
+- **Sequence expansions are not expanded.** `{1..9}` and `{a..z}` are
+  stepped over. A protected fragment split only by a sequence form still
+  slips. Nobody has shown a protected path spelled that way; it is written
+  down so the next person does not have to discover it.
+- **Quoted braces over-gate.** `'src/{policy,gate}/x'` gates even though
+  bash does not expand inside single quotes. Accepted direction.
+- **It is still a text matcher.** Parameter expansion (`${...}`), globs,
+  and anything the shell resolves at runtime remain outside it. Limit 11
+  stands.
