@@ -1523,3 +1523,38 @@ that truncates or drops before the file-write is invisible to this bind
 attacker writes the transcript too, the hash matches — the bind is against
 accidental loss and honest logging errors, not against a hostile harness
 that controls the file.
+
+## 57. The implicit-push rule reads git state, and its blind spots are named
+
+The C3 fix (`resolvePushContext` + `isImplicitProtectedPush`, 2026-08-21)
+closes the hole a bare `git push` opens: with no ref in the command text,
+the protected-branch matcher now resolves the target from git state
+(current branch, upstream, `push.default`) and gates when the bare target
+is main/master, failing toward gating when the state cannot be resolved.
+
+The residuals, stated rather than found later:
+
+- **A shell-variable ref with an explicit remote is invisible.**
+  `git push origin "$REF"` carries two positionals, so the explicit-ref
+  shortcut treats it as an ordinary named push and the state resolver is
+  never consulted; if `$REF` holds `main`, the push flows. The safe
+  direction is preserved for the one-positional form (`git push "$REF"`):
+  that still fails toward gating.
+- **A two-positional variable ref is not caught**, for the same reason:
+  `git push "$REMOTE" "$BRANCH"` looks like an ordinary named push to the
+  text matcher. Only a resolver that evaluated shell variables would see
+  it, and the gate does not execute shells.
+- **State resolution costs 15-40ms, on push-shaped commands only.** The
+  resolver is a bounded, few-call, hard-timeout git read that runs only
+  when a command is push-shaped and carries no explicit ref; every other
+  command pays nothing.
+- **The resolver reads the session's cwd, not the command's effective
+  directory.** The hook resolves git state from the directory the session
+  was launched in; a push aimed elsewhere in the same command
+  (`git -C <repo> push`, or after a `cd`) is judged against the wrong
+  repo's state, in both directions. That is all PreToolUse can know
+  without executing the shell.
+- **Branch names whose last segment is main/master gate.** A local branch
+  named `releases/main` pushed under `current` (or tracked that way) reads
+  as protected. That is the accepted false-positive direction: a gate that
+  fires too often costs a signature, a gate that misses ships code.

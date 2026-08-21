@@ -205,13 +205,14 @@ describe('policy: isPushProtected', () => {
   });
   it('does NOT match when `main` is only message prose (false positive removed 2026-07-24)', () => {
     // The old matcher read the raw string, so message text saying "main"
-    // tripped the protected-branch rule; the previous version of this test
-    // documented that as a known false positive. Inert-prose stripping
-    // (matchableCommand) removes it. The command is still a push, so it
-    // still gates — as egress-other, the same rule a bare `git push` gets.
+    // tripped the protected-branch rule; inert-prose stripping
+    // (matchableCommand) removes it. The push still gates: under C3 the
+    // stripped command is a bare `git push`, and with no resolved context
+    // the implicit-target rule fails toward gating, so it reports as
+    // push-protected (the same rule a bare `git push` gets).
     assert.strictEqual(isPushProtected({ command: 'git push --message "main"' }), false);
     const r = evaluate('Bash', { command: 'git push --message "main"' }, DEFAULT_POLICY, makeTempDir());
-    assert.strictEqual(r && r.ruleId, 'egress-other');
+    assert.strictEqual(r && r.ruleId, 'push-protected');
   });
 });
 

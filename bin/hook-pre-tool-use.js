@@ -47,7 +47,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
-import { loadPolicy, evaluate, RULE_INFO, matcherVersionHash } from '../src/policy/index.js';
+import { loadPolicy, evaluate, RULE_INFO, matcherVersionHash, matchableCommand } from '../src/policy/index.js';
+import { resolvePushContext, hasExplicitPushRef } from '../src/policy/git-context.js';
 import { verifyApproval, gatedAction } from '../src/gate/index.js';
 import { canonicalizeRequest } from '../src/gate/sign.js';
 import { resolveGrant } from '../src/grant/check.js';
@@ -788,7 +789,20 @@ async function main() {
   // Evaluate. evaluate() itself shouldn't throw, but wrap for fail-open.
   let match;
   try {
-    match = evaluate(toolName, toolInput, policy, home);
+    // C3: a bare git push names no ref in its text, but its target lives in
+    // git state. Resolve that state only for push-shaped commands (bounded,
+    // never wedging - see src/policy/git-context.js), and pass it through.
+    // The shape test runs on the SAME prose-stripped text every matcher
+    // reads (matchableCommand), so message prose like `--message "main"`
+    // can neither hide a real push nor skip resolution for a bare one.
+    let gitContext;
+    if (toolName === 'Bash' || toolName === 'PowerShell') {
+      const cmd = matchableCommand(toolInput);
+      if (/\bgit\s+push\b/.test(cmd) && !hasExplicitPushRef(cmd)) {
+        gitContext = resolvePushContext(process.cwd());
+      }
+    }
+    match = evaluate(toolName, toolInput, policy, home, gitContext);
   } catch (e) {
     note(`evaluator crashed (${e.message}); allowing`);
     tryAppendReceipt(home, {
