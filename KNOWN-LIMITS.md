@@ -1524,7 +1524,6 @@ attacker writes the transcript too, the hash matches — the bind is against
 accidental loss and honest logging errors, not against a hostile harness
 that controls the file.
 
-# append-56.md
 ## 56. The GET-query-string matcher is a fence, not a proof, and it knows which side it over-gates
 
 The C1 fix (`hasDataCarryingQuery`, 2026-08-21) closes the hole in limit 2's
@@ -1538,7 +1537,7 @@ The residual, stated rather than found later:
 - **Presigned URLs (X-Amz-*, X-Goog-*) are exempted by name-prefix.** A
   signed GET is an ordinary read, and the exemption list is explicit. A
   signer that uses a different prefix (custom `sig=`, `auth=`, `token=`
-  query names) is NOT exempt and will gate or warn â€” which is the safe
+  query names) is NOT exempt and will gate or warn — which is the safe
   direction, and it costs a signature.
 - **Long cursor/continuation tokens and long percent-encoded search terms
   (>64 chars) are NOT exempted.** They are data-shaped by construction; the
@@ -1548,5 +1547,5 @@ The residual, stated rather than found later:
   parameter to a short innocent name and shipping a short encoded blob, or
   by chunking. That is limit 11's ceiling applied to this rule: the gate
   matches patterns, and patterns are evadable. The fix defends the honest
-  agent making a consequential move without sign-off â€” the threat model of
-  the whole table â€” not an adversary engineering around it.
+  agent making a consequential move without sign-off — the threat model of
+  the whole table — not an adversary engineering around it.
