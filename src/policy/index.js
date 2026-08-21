@@ -533,7 +533,7 @@ function firstBraceGroup(s) {
 // [`src/policy/x`, `src/gate/x`], nesting included. Bounded by `cap`: on
 // overflow, remaining partially-expanded strings are returned as-is (still
 // substring-checked, never crashed). Sequence forms ({1..9}) are not expanded.
-function expandBraces(str, cap = 64) {
+function expandBraces(str, cap = 4096) {
   const out = [];
   const stack = [str];
   while (stack.length && out.length < cap) {
@@ -542,7 +542,14 @@ function expandBraces(str, cap = 64) {
     if (!g) { out.push(s); continue; }
     for (const opt of g.options) stack.push(g.pre + opt + g.post);
   }
-  return out.concat(stack);
+  // Anything still on the stack is a string we did not finish expanding. The
+  // first version returned those as-is and the cap FAILED OPEN: depth-first
+  // pops the last option first, so at the cap the leftovers are exactly the
+  // first options of the early groups, unexpanded, and five harmless trailing
+  // binary groups were enough to push a split protected fragment past it
+  // (found 2026-08-21 while verifying LOTOR-C2). Report the overflow instead;
+  // the caller treats it as a hit. Unverified must not mean allowed.
+  return { variants: out, overflow: stack.length > 0 };
 }
 
 function isSelfModCommand(toolInput, baseDir) {
@@ -561,7 +568,13 @@ function isSelfModCommand(toolInput, baseDir) {
   // can only gate MORE, never make the gate quieter. RESIDUAL, stated honestly:
   // sequence expansions ({1..9}, {a..z}) and anything past the variant cap are
   // not expanded; a protected fragment split only by those forms still slips.
-  for (const variant of [cmd, ...expandBraces(cmd)]) {
+  const { variants, overflow } = expandBraces(cmd);
+  // Past the cap the expansion is incomplete, so the command is unverified.
+  // Fail closed: a command with thousands of brace variants is not an honest
+  // agent's stub-creation one-liner, and the cost of a wrong denial is one
+  // signature while the cost of a wrong allow is an unsigned edit to the gate.
+  if (overflow) return true;
+  for (const variant of [cmd, ...variants]) {
     if (selfModCommandHit(variant, baseDir)) return true;
   }
   return false;
