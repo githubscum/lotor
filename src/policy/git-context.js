@@ -87,14 +87,16 @@ export function hasExplicitPushRef(cmd) {
   if (/\b(main|master)\b/.test(cmd)) return true; // the old matcher's class
   if (/:[^\s"'|&;]+/.test(cmd)) return true;      // refspec colon: local:remote
   const after = cmd.split(/\bgit\s+push\b/)[1] || '';
-  const tokens = after.split(/\s+/).filter(Boolean);
+  // Only the first simple-command segment counts. Shell decorations must
+  // not read as refs: `git push 2>err.log; echo done` is still a bare
+  // push. Stop at the first shell operator after the push.
+  const seg = after.split(/(?:;|\|\||&&|\||\n)/)[0];
+  const tokens = seg.split(/\s+/).filter(Boolean);
   let positional = 0;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
-    if (t.startsWith('-')) {
-      if (t === '-u' || t === '--set-upstream' || t === '--set-upstream-to') i++; // consumes the next token as the branch
-      continue;
-    }
+    if (/^\d*[<>]/.test(t) || t === '&' || t === '--') continue; // redirection (2>err, >out, 2>&1), background, end-of-options
+    if (t.startsWith('-')) continue; // flags: -u's ARGUMENT is the remote and still counts as a positional
     positional++;
   }
   return positional >= 2; // `git push <remote> <branch>` names the ref

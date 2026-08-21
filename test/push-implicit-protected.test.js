@@ -19,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isPushProtected, isImplicitProtectedPush, evaluate } from '../src/policy/index.js';
-import { resolvePushContext } from '../src/policy/git-context.js';
+import { resolvePushContext, hasExplicitPushRef } from '../src/policy/git-context.js';
 
 const cmd = command => ({ command });
 const ctx = (branch, upstreamBranch, pushDefault) => ({ status: 'resolved', branch, upstreamBranch, pushDefault });
@@ -53,6 +53,20 @@ describe('push-protected: the implicit target from a bare git push', () => {
 
   it('leaves the explicit main push to the old matcher', () => {
     assert.strictEqual(isPushProtected(cmd('git push origin main')), true);
+  });
+
+  it('treats shell decorations after a bare push as invisible (redirections are not refs)', () => {
+    // Found by the C3 acceptance session: an agent decorated its push as
+    // `git push 2>err.log; echo done`, and the trailing words were counted
+    // as positionals, so the bare push was read as an explicit named push.
+    assert.strictEqual(hasExplicitPushRef('git push 2>err.log; echo done'), false);
+    assert.strictEqual(isImplicitProtectedPush(cmd('git push 2>err.log; echo done'), ctx('main', 'origin/main', 'simple')), true);
+  });
+
+  it('still reads a real two-positional push as explicit, with or without -u', () => {
+    assert.strictEqual(hasExplicitPushRef('git push origin feature/x'), true);
+    assert.strictEqual(hasExplicitPushRef('git push -u origin feature/x'), true);
+    assert.strictEqual(hasExplicitPushRef('git push -u origin'), false);
   });
 
   it('gates a shell-variable ref that resolves to the current protected branch', () => {
