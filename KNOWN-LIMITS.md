@@ -1524,6 +1524,32 @@ attacker writes the transcript too, the hash matches — the bind is against
 accidental loss and honest logging errors, not against a hostile harness
 that controls the file.
 
+## 56. The GET-query-string matcher is a fence, not a proof, and it knows which side it over-gates
+
+The C1 fix (`hasDataCarryingQuery`, 2026-08-21) closes the hole in limit 2's
+egress matcher: a plain GET carrying data in its query string is now matched
+by sensitive param NAMES with non-empty values, or by payload-shaped VALUES
+(decoded length over 64 and percent-, base64url-, or hex-shaped), over
+non-loopback egress tools.
+
+The residual, stated rather than found later:
+
+- **Presigned URLs (X-Amz-*, X-Goog-*) are exempted by name-prefix.** A
+  signed GET is an ordinary read, and the exemption list is explicit. A
+  signer that uses a different prefix (custom `sig=`, `auth=`, `token=`
+  query names) is NOT exempt and will gate or warn — which is the safe
+  direction, and it costs a signature.
+- **Long cursor/continuation tokens and long percent-encoded search terms
+  (>64 chars) are NOT exempted.** They are data-shaped by construction; the
+  cost of the miss (exfil) outranks the cost of the cry (a signature on a
+  paginated read).
+- **A determined adversary can evade the whole matcher** by renaming a
+  parameter to a short innocent name and shipping a short encoded blob, or
+  by chunking. That is limit 11's ceiling applied to this rule: the gate
+  matches patterns, and patterns are evadable. The fix defends the honest
+  agent making a consequential move without sign-off — the threat model of
+  the whole table — not an adversary engineering around it.
+
 ## 57. The implicit-push rule reads git state, and its blind spots are named
 
 The C3 fix (`resolvePushContext` + `isImplicitProtectedPush`, 2026-08-21)

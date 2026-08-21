@@ -779,6 +779,60 @@ function hasDataFlag(cmd) {
   return false;
 }
 
+/**
+ * Data carried in a GET query string: exfil without a data flag.
+ *
+ * C1 (confessions/C1-egress-get-query-string.md). The confession: a plain GET
+ * that ships data in its query string has no --post flag to match and no -d to
+ * see, so the egress matcher passes it while the capture hook writes nothing
+ * egress-shaped. A clean receipt and a missed exfiltration look identical.
+ *
+ * THE POLARITY IS THE FIX, not the regex. Two cheap, explainable predicates,
+ * both readable by a stranger:
+ *
+ *   1. Sensitive param NAMES — a fixed set whose presence with a non-empty
+ *      value is data by construction (high precision, lower recall).
+ *   2. Payload-shaped VALUES — URL-decoded length over 64 chars AND
+ *      percent-encoded, base64url-shaped, or hex-shaped (higher recall,
+ *      lower precision: catches `data=<blob>` under any name).
+ *
+ * RESIDUAL, stated rather than found later. Presigned URLs (X-Amz-*, X-Goog-*)
+ * are exempted by name-prefix because a signed GET is an ordinary read. Long
+ * cursor/continuation tokens and long percent-encoded search terms are NOT
+ * exempted: they are data-shaped by construction, and the cost of the miss
+ * (exfil) outranks the cost of the cry (a signature on a paginated read). The
+ * honest-agent threat model (KNOWN-LIMITS 11) means this is a fence, not a
+ * proof: a determined adversary can rename a parameter to d and ship a blob
+ * under a short name, and this matcher will not see it. That is the same
+ * ceiling every rule in this table carries.
+ */
+const DATA_PARAM_NAMES = new Set([
+  'data', 'payload', 'content', 'body', 'token', 'secret', 'key', 'password',
+  'credential', 'exfil', 'dump', 'leak', 'paste', 'collect',
+]);
+const PRESIGN_PARAM_PREFIX = /^(x-amz-|x-goog-)/i;
+
+function hasDataCarryingQuery(cmd) {
+  // URLs with a non-empty query string, same extraction family as
+  // isLocalhostTarget: scheme://host/path?query — query runs to whitespace
+  // or a shell metacharacter that would terminate the URL argument.
+  for (const m of cmd.matchAll(/\bhttps?:\/\/[^\s"'<>|&;]*\?[^\s"'<>|&;]+/gi)) {
+    const qs = m[0].slice(m[0].indexOf('?') + 1);
+    for (const pair of qs.split(/[&;]/)) {
+      const eq = pair.indexOf('=');
+      if (eq === -1) continue; // a bare flag in a query names no value
+      const name = pair.slice(0, eq);
+      let value = pair.slice(eq + 1);
+      try { value = decodeURIComponent(value); } catch { /* malformed percent keeps the raw form */ }
+      if (value.length === 0) continue;
+      if (PRESIGN_PARAM_PREFIX.test(name)) continue; // signed reads are ordinary reads
+      if (DATA_PARAM_NAMES.has(name.toLowerCase())) return true;
+      if (value.length > 64 && /(^|[^%])%[0-9a-fA-F]{2}|^[A-Za-z0-9_-]{40,}$|^[0-9a-fA-F]{40,}$/.test(value)) return true;
+    }
+  }
+  return false;
+}
+
 function usesEgressTool(cmd) {
   if (/\bcurl\b/.test(cmd)) return true;
   if (/\bwget\b/.test(cmd)) return true;
@@ -880,7 +934,7 @@ export function isEgressOther(toolInput) {
   if (usesRemoteCopyTool(cmd) && isRemoteCopyTarget(cmd)) return true;
   if (usesRemotePublishTool(cmd)) return true;
   if (usesAuthedRemoteClient(cmd)) return true;
-  if (usesEgressTool(cmd) && (hasHttpMethodFlag(cmd) || hasDataFlag(cmd)) && !isLocalhostTarget(cmd)) {
+  if (usesEgressTool(cmd) && (hasHttpMethodFlag(cmd) || hasDataFlag(cmd) || hasDataCarryingQuery(cmd)) && !isLocalhostTarget(cmd)) {
     return true;
   }
   return false;
