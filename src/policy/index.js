@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { hasExplicitPushRef } from './git-context.js';
 
 /**
  * Herding modes (2026-07-23): three named presets over the same matchers,
@@ -359,7 +360,7 @@ function stripHeredocBodies(cmd) {
  * string. A preprocessing step an individual rule can forget to call is a
  * defect factory. Every command matcher below starts here.
  */
-function matchableCommand(toolInput) {
+export function matchableCommand(toolInput) {
   const raw = typeof toolInput?.command === 'string' ? toolInput.command : '';
   if (raw === '') return '';
   return stripMessageArgs(stripHeredocBodies(raw));
@@ -641,6 +642,46 @@ export function isPushProtected(toolInput) {
   // by `main` or `master` as a word.
   const after = cmd.split(/\bgit\s+push\b/)[1] || '';
   return /\b(main|master)\b/.test(after);
+}
+
+/**
+ * C3: a push whose protected target is IMPLICIT — git state, not string state.
+ *
+ * The string matcher above protects main/master only when the command spells
+ * the ref out. A bare `git push` from a checked-out main names nothing, and the
+ * rule never fires. This matcher closes the gap when the caller supplies the
+ * resolved git context (branch, upstream, push.default) from
+ * src/policy/git-context.js.
+ *
+ * SEMANTICS (C3 acceptance #3, stated per case):
+ *   - push.default `current`: the current branch is the target.
+ *   - `simple` / `upstream`: the upstream branch is the target.
+ *   - `nothing`: git refuses natively by configuration — nothing can leave,
+ *     so the rule allows and the native refusal is the control.
+ *   - UNRESOLVED (detached HEAD, not a repo, timeout, no upstream under
+ *     simple/upstream): the target cannot be resolved, so the push is
+ *     PROTECTED — fail toward gating, never toward silent allowance.
+ *   - The target is compared by its BARE branch name (`origin/main` and
+ *     `main` both gate), so a prefixed upstream can never slip through.
+ *
+ * @param {object} toolInput
+ * @param {{status:'resolved', branch:string|null, upstreamBranch:string|null, pushDefault:string}|{status:'unresolved', reason:string}|null|undefined} gitContext
+ */
+export function isImplicitProtectedPush(toolInput, gitContext) {
+  const cmd = matchableCommand(toolInput);
+  if (!/\bgit\s+push\b/.test(cmd)) return false;
+  if (isPushProtected(toolInput)) return false; // the explicit class is the old rule's
+  if (hasExplicitPushRef(cmd)) return false;     // a named feature ref flows free
+  if (!gitContext || gitContext.status === 'unresolved') return true; // unknown target: refuse, not allow
+  const { branch, upstreamBranch, pushDefault, unborn } = gitContext;
+  if (unborn) return false;          // a branch yet to be born has nothing to push; git refuses natively
+  if (pushDefault === 'nothing') return false;   // git itself refuses; nothing can leave
+  const target = pushDefault === 'current' ? branch : upstreamBranch;
+  // Compare the BARE name: the resolver returns `main`, but accept a
+  // prefixed `origin/main` too — it names the same protected branch, and a
+  // false positive gate is the accepted direction, a false negative is not.
+  const bareTarget = target && target.includes('/') ? target.slice(target.lastIndexOf('/') + 1) : target;
+  return bareTarget === 'main' || bareTarget === 'master';
 }
 
 // ---------- publish matcher ----------
@@ -1089,7 +1130,7 @@ function isCommandTool(toolName, toolInput) {
  * Returns { ruleId, mode } for the FIRST matching rule, or null.
  * A rule whose mode is "off" or unrecognized never matches.
  */
-function evaluate(toolName, toolInput, policy, baseDir) {
+function evaluate(toolName, toolInput, policy, baseDir, gitContext = undefined) {
   const modes = (policy && policy.modes) || DEFAULT_POLICY.modes;
 
   // Normalize mode lookup: only 'gate', 'warn', 'off' are valid. Anything
@@ -1116,6 +1157,12 @@ function evaluate(toolName, toolInput, policy, baseDir) {
   }
   // Rule 3: push-protected
   if (modeOf('push-protected') !== 'off' && isCommandTool(toolName, toolInput) && isPushProtected(toolInput)) {
+    return { ruleId: 'push-protected', mode: modeOf('push-protected') };
+  }
+  // Rule 3b: push-protected, implicit target (C3). The caller supplies the
+  // resolved git context; a null context means the hook could not resolve
+  // state, and the matcher gates rather than silently allows.
+  if (modeOf('push-protected') !== 'off' && isCommandTool(toolName, toolInput) && isImplicitProtectedPush(toolInput, gitContext)) {
     return { ruleId: 'push-protected', mode: modeOf('push-protected') };
   }
   // Rule 4: publish
