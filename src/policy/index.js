@@ -1074,6 +1074,42 @@ export function isScopeEscalation(toolInput) {
 // future terminator at once. See KNOWN-LIMITS 21 (the enumeration-leak lesson).
 const SCRIPT_EXT = /\.(ps1|sh|bash|zsh|bat|cmd)(?![a-z0-9_-])/i;
 
+// A local file handed to a script interpreter is exactly as unreadable as a
+// `.sh`/`.ps1` named on the command line: the gate can see the interpreter and
+// the file, not the code inside. Matches interpreters at the START of a
+// segment (like READ_ONLY_LEAD), after optional inline env assignments and an
+// `env` prefix, e.g. `PYTHONPATH=x python /tmp/evil.py` or
+// `env python3 script.py`. `python3.13` style versions are covered; a
+// word-boundary at the end keeps `python-config` and `bashful` out.
+const SCRIPT_INTERPRETER =
+  /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:env\s+)?(?:python\d*(?:\.\d+)?|node(?:js)?|ruby|perl|php|bash|zsh|dash|ksh|sh|pwsh|powershell)(?=\s|$)/i;
+
+// Inline-code / module / eval flags: the code or module name is IN the command
+// line, visible to every other matcher, so opaque-exec need not own it. These
+// take their argument and then (for -c/-e) ignore further operands, so any
+// later file token is inert. Everything else the interpreter runs is a file.
+const INLINE_CODE_FLAG = /^-(?:[cemr]|-[a-z]*(?:code|eval|module)[a-z]*)/i;
+
+// True when a segment executes a local script through an interpreter rather
+// than by spelling its extension. `python /tmp/evil.py` gates; so does a flag
+// followed by the file (`bash --posix /tmp/deploy`). `python --version` and
+// `bash -c "echo hi"` stay free: no file, or only inline code.
+function interpreterHandsFile(segment) {
+  const m = segment.match(SCRIPT_INTERPRETER);
+  if (!m) return false;
+  const tokens = segment.slice(m[0].length).split(/\s+/)
+    .map(t => t.replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+  const first = tokens[0];
+  if (!first || first.startsWith('-')) {
+    if (!first) return false;                    // bare interpreter = REPL, free
+    if (INLINE_CODE_FLAG.test(first)) return false; // -c/-e/-m: inline, free
+    // an ordinary option flag: skip flags, then require a file token
+    return tokens.slice(1).some(t => !t.startsWith('-'));
+  }
+  return true;                                   // first token is a file argument
+}
+
 // A command that only READS a script is not handing over control. The verb
 // must LEAD its segment, not appear anywhere in it. The earlier version
 // tested the whole command for `\btype\b`, `\bls\b` etc., and a hyphenated
@@ -1094,7 +1130,7 @@ export function isOpaqueExec(toolInput) {
   const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   for (const segment of cmd.split(CMD_SEPARATORS)) {
-    if (!SCRIPT_EXT.test(segment)) continue;      // no script in this segment
+    if (!SCRIPT_EXT.test(segment) && !interpreterHandsFile(segment)) continue;
     if (READ_ONLY_LEAD.test(segment)) continue;   // this segment only reads one
     return true;                                   // a script is being executed
   }
