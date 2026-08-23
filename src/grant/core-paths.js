@@ -62,6 +62,14 @@ const CORE_DIRS = Object.freeze([
   // from. The drift-guard test that keeps this list in step with the policy
   // fragments could not help, because both lists were wrong together.
   'src/charter',
+  // KNOWN-LIMITS pin (added 2026-08-23 with the L29 fix). src/limits/pin.js
+  // maintains the provenance block at the top of KNOWN-LIMITS.md — the file
+  // that states which commit the disclosures describe. A module able to
+  // rewrite what the log claims about itself can manufacture a false alibi
+  // for every other entry: same one-hop escalation class that put charter in
+  // this list. The drift-guard test asserts selfModFragmentsForBase() carries
+  // 'src/limits/' too.
+  'src/limits',
   // Added 2026-08-09 with the PAP publishing feature (WO-PAP-01). src/publish
   // holds the bundle signing path: encodeManifest + pack() sign a spine with
   // the chain key, and a poisoned signer forges bundles that impersonate the

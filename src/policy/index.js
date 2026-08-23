@@ -401,6 +401,11 @@ function selfModFragmentsForBase(baseDir) {
     // a new directory under src/ is grantable by default. The drift guard
     // could not catch that: both lists were wrong together.
     'src/charter/',
+    // Added 2026-08-23 alongside core-paths.js 'src/limits' (KNOWN-LIMITS pin).
+    // The module that stamps the disclosure log's provenance can manufacture a
+    // false alibi for every entry in it; both lists move together or the drift
+    // guard fails.
+    'src/limits/',
     // Added 2026-08-09 with WO-PAP-01, in lockstep with core-paths.js
     // CORE_DIRS 'src/publish'. The signing path for published QR bundles:
     // editing pack()/manifest.js could forge a bundle that boots a doctored

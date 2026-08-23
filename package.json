@@ -40,6 +40,7 @@
     "mode": "node bin/mode.js",
     "receipts": "node bin/view.js --all",
     "tokens": "node bin/tokens.js",
+    "limits-pin": "node bin/limits-pin.js",
     "inflight": "node bin/inflight.js",
     "retcon": "node bin/retcon.js",
     "export": "node bin/export-chain.js export",

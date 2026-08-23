@@ -1,3 +1,11 @@
+<!-- known-limits:pin v1
+ This file describes commit 2173d2316c1923998d473e2c8351543bce9c1c47
+ stamped 2026-08-23
+ subject: opaque-exec: gate local scripts handed to a script interpreter (#28)
+ Re-stamp after updating this log: npm run limits-pin -- --stamp
+ Divergent checkout? See: npm run limits-pin -- --check
+known-limits:pin end -->
+
 # Known Limits
 
 This document lists the v1 limitations of the receipt layer. Honesty about limits is a feature.
@@ -787,6 +795,29 @@ released behaviour.
 
 Until then, read this file as a statement about `main`, and check `git log` before
 trusting any entry in a feature checkout.
+
+**Fixed 2026-08-23.** The confusing state existed and was reproducible: before this
+change, no text anywhere in this file named the commit it describes, so any reader
+in any checkout had no way to tell whether they were reading mainline truth or
+somewhere else's. Two things changed:
+
+1. **This file now states its commit at the top**, in a managed pin block naming
+   the exact commit whose tree the entries were verified against (`npm run
+   limits-pin -- --stamp` re-stamps it in place after an update; it never
+   duplicates). The pin names the commit of the log's own tree, so a feature
+   branch that edits the log honestly re-pins to itself and the divergence
+   becomes visible on both sides instead of invisible on either.
+2. **A reader can check without trusting anything** (`npm run limits-pin --
+   --check`): it compares the pin against your checkout's HEAD and says so,
+   plainly, when you are reading a description of somewhere else — naming both
+   commits. Exit code 1 on divergence, so CI or a script can gate on it (that
+   CI wiring is still not built; the check exists, the automation does not).
+
+Still true: the pin is self-reported text inside the file it describes, not
+cryptographic binding — nothing stops a commit carrying a false pin, and review
+is what catches that, as with any claim in a markdown file. And a commit that
+touches `src/` without updating this log still lands silently; the pin makes the
+staleness *detectable* (the check reports divergence), not impossible.
 
 **Update 2026-07-26. The specific instance closed and the entry got worse, not
 better.** `fix/token-freshness-and-variant-denial` merged into `main` this morning,
