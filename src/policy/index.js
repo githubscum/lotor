@@ -506,6 +506,52 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Find the first shell brace-expansion group `{a,b,c}` in `s`, tracking nesting
+// so a top-level comma splits it and an inner group is left for a later pass. A
+// `${...}` is a parameter expansion, not a brace expansion, and is skipped. A
+// group with no top-level comma ({1..9} sequences, a bare {}) is not an
+// expansion and is stepped over. Returns { pre, options, post } or null.
+function firstBraceGroup(s) {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '{' || s[i - 1] === '$') continue;
+    let depth = 0, seg = i + 1, commaTop = false;
+    const opts = [];
+    let j;
+    for (j = i; j < s.length; j++) {
+      const c = s[j];
+      if (c === '{') depth++;
+      else if (c === '}') { if (--depth === 0) { opts.push(s.slice(seg, j)); break; } }
+      else if (c === ',' && depth === 1) { opts.push(s.slice(seg, j)); seg = j + 1; commaTop = true; }
+    }
+    if (depth === 0 && commaTop) return { pre: s.slice(0, i), options: opts, post: s.slice(j + 1) };
+    // Not a comma group; keep scanning past this '{'.
+  }
+  return null;
+}
+
+// Expand comma brace groups the way bash does, e.g. `src/{policy,gate}/x` ->
+// [`src/policy/x`, `src/gate/x`], nesting included. Bounded by `cap`: on
+// overflow, remaining partially-expanded strings are returned as-is (still
+// substring-checked, never crashed). Sequence forms ({1..9}) are not expanded.
+function expandBraces(str, cap = 4096) {
+  const out = [];
+  const stack = [str];
+  while (stack.length && out.length < cap) {
+    const s = stack.pop();
+    const g = firstBraceGroup(s);
+    if (!g) { out.push(s); continue; }
+    for (const opt of g.options) stack.push(g.pre + opt + g.post);
+  }
+  // Anything still on the stack is a string we did not finish expanding. The
+  // first version returned those as-is and the cap FAILED OPEN: depth-first
+  // pops the last option first, so at the cap the leftovers are exactly the
+  // first options of the early groups, unexpanded, and five harmless trailing
+  // binary groups were enough to push a split protected fragment past it
+  // (found 2026-08-21 while verifying LOTOR-C2). Report the overflow instead;
+  // the caller treats it as a hit. Unverified must not mean allowed.
+  return { variants: out, overflow: stack.length > 0 };
+}
+
 function isSelfModCommand(toolInput, baseDir) {
   // Inert prose is stripped first, same as every other command matcher: a
   // single-quoted commit message that merely NAMES a protected path is not a
@@ -513,6 +559,28 @@ function isSelfModCommand(toolInput, baseDir) {
   // an interpreter-fed heredoc) survives the strip and is matched whole.
   const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
+  // Brace expansion splits a protected fragment across shell syntax:
+  // `touch src/{policy,gate}/probe.js` writes into src/policy AND src/gate, but
+  // the literal string contains neither `src/policy/` nor `src/gate/`
+  // contiguously, so the substring checks below miss it (LOTOR-C2, found
+  // 2026-08-21). Check the original command AND every comma-brace expansion of
+  // it. This is STRICTLY ADDITIVE — more strings to match, never fewer — so it
+  // can only gate MORE, never make the gate quieter. RESIDUAL, stated honestly:
+  // sequence expansions ({1..9}, {a..z}) and anything past the variant cap are
+  // not expanded; a protected fragment split only by those forms still slips.
+  const { variants, overflow } = expandBraces(cmd);
+  // Past the cap the expansion is incomplete, so the command is unverified.
+  // Fail closed: a command with thousands of brace variants is not an honest
+  // agent's stub-creation one-liner, and the cost of a wrong denial is one
+  // signature while the cost of a wrong allow is an unsigned edit to the gate.
+  if (overflow) return true;
+  for (const variant of [cmd, ...variants]) {
+    if (selfModCommandHit(variant, baseDir)) return true;
+  }
+  return false;
+}
+
+function selfModCommandHit(cmd, baseDir) {
   const cmdNorm = normalizePath(cmd);
 
   // Lotor-specific artifact basenames are unambiguous. Gate them in any
