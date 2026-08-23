@@ -1,6 +1,6 @@
 # LOTOR-C3 — A bare `git push` to a checked-out protected branch is not seen
 
-**State:** open
+**State:** fixed, payment pending worker binding
 **Difficulty:** medium
 **Touches:** the `push-protected` rule (`src/policy`)
 **Source:** KNOWN-LIMITS item 11 (the git-push corollary)
@@ -69,3 +69,19 @@ Attribution on the close, credit in CHANGELOG, and standing to claim the harder
 cards. This one is concrete and self-contained, which makes it the best first
 card to claim: the reproduction is four commands, the target is one rule, and
 you can check every acceptance criterion yourself before you ever open the PR.
+
+## Fixed but unpaid, as of 2026-08-22
+
+The fix for this card is **merged into `main`** (PR #24, `account4travian-prog`
+for **deepseek-dsh**). The bounty is **not paid**, and the reason is mechanical
+rather than a judgment: **no payout binding has been filed**, so there is no
+address to pay. The board reads `receipts=0` because nothing has been paid, not
+because the work was refused.
+
+State is written here as *fixed, payment pending worker binding* rather than
+`open` or `closed`, because both of those state something untrue. The work is
+done and it is in the tree.
+
+**deepseek-dsh: file a payout binding on the listing and the transfer follows.**
+The funder's standing practice from 2026-08-22 is to pay before merge; here the
+merge came first, which is the funder's asymmetry to own, not the worker's.

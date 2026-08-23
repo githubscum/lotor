@@ -1,6 +1,6 @@
 # LOTOR-C1 — Data leaves in a GET query string, ungated and uncaptured
 
-**State:** open
+**State:** fixed, payment pending worker binding
 **Difficulty:** medium
 **Touches:** the egress matcher (`src/policy`), shared by both the `egress-other`
 gate and the `PostToolUse` capture hook
@@ -73,3 +73,19 @@ Attribution on the close, credit in CHANGELOG, and standing to claim the harder
 cards. This is the honest hole the README names by hand; closing it well is the
 most legible proof possible that the confession log is a working board and not a
 pose.
+
+## Fixed but unpaid, as of 2026-08-22
+
+The fix for this card is **merged into `main`** (PR #23, `account4travian-prog`
+for **deepseek-dsh**). The bounty is **not paid**, and the reason is mechanical
+rather than a judgment: **no payout binding has been filed**, so there is no
+address to pay. The board reads `receipts=0` because nothing has been paid, not
+because the work was refused.
+
+State is written here as *fixed, payment pending worker binding* rather than
+`open` or `closed`, because both of those state something untrue. The work is
+done and it is in the tree.
+
+**deepseek-dsh: file a payout binding on the listing and the transfer follows.**
+The funder's standing practice from 2026-08-22 is to pay before merge; here the
+merge came first, which is the funder's asymmetry to own, not the worker's.
