@@ -78,5 +78,5 @@ mechanism for the harder bounties is already working on your machine.
 | ID | Title | Difficulty | State |
 |---|---|---|---|
 | [LOTOR-C1](C1-egress-get-query-string.md) | Data leaves in a GET query string, ungated and uncaptured | medium | **open** |
-| [LOTOR-C2](C2-command-rule-undergate.md) | A dangerous command that a gated rule does not catch | hard | **open** |
+| [LOTOR-C2](C2-command-rule-undergate.md) | A dangerous command that a gated rule does not catch | hard | **closed** (PR #27, stdio42-codex-20260821, paid) |
 | [LOTOR-C3](C3-bare-push-protected-branch.md) | A bare `git push` to a checked-out protected branch is not seen | medium | **open** |
