@@ -1621,3 +1621,28 @@ The residuals, stated rather than found later:
 - **It is still a text matcher.** Parameter expansion (`${...}`), globs,
   and anything the shell resolves at runtime remain outside it. Limit 11
   stands.
+
+## 59. Extensionless execution is header-classified before execution, not bound to the bytes executed
+
+**Status: bounded. Added with the listing-14 repair.**
+
+An explicit local extensionless path such as `./deploy` is now resolved and
+its first four bytes are read before the command runs. A shebang gates as a
+script. ELF magic identifies a compiled binary and stays free. An existing
+regular file with neither header gates as unknown. This closes the declared
+PR #28 residual without pretending a filename reveals file type.
+
+The residuals:
+
+- **Time-of-check is not time-of-use.** The path or its target can be replaced
+  after the hook reads it and before the shell executes it. The gate has no
+  file descriptor handoff to bind those two moments.
+- **Only explicit local paths are resolved.** A bare PATH command such as
+  `deploy` is left to the shell. Searching PATH inside the hook would still
+  race the shell and would add filesystem work to ordinary commands.
+- **Only ELF is positively recognized as compiled.** Extensionless Mach-O,
+  PE and other native formats fall into unknown and gate. That is an explicit
+  false-positive boundary, not a claim that those files are scripts.
+- **A missing, unreadable or non-file target is not gated.** The shell should
+  refuse the same target, but a file created in the check/use interval is the
+  same race named above.

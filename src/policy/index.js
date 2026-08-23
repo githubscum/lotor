@@ -203,6 +203,8 @@ export function matcherVersionHash() {
     isDestructive.toString(),
     isScopeEscalation.toString(),
     isOpaqueExec.toString(),
+    extensionlessLocalFileKind.toString(),
+    EXPLICIT_LOCAL_PATH.toString(),
     JSON.stringify(sortKeysDeep(RULE_TABLE)),
     JSON.stringify(sortKeysDeep(RULE_INFO))
   ];
@@ -1131,9 +1133,10 @@ export function isScopeEscalation(toolInput) {
  * unverified action. "I cannot tell what this does" must not silently mean
  * "allow" on a tool whose entire promise is that nothing leaves unsigned.
  *
- * Deliberately narrow: only shell and batch scripts, only when invoked as
- * the command. It fires on the class of thing that wraps arbitrary egress,
- * not on every binary.
+ * Deliberately narrow: named shell and batch scripts, files handed to a
+ * script interpreter, and explicitly local extensionless files whose header
+ * proves script or remains unknown. Compiled ELF binaries stay free. It fires
+ * on the class of thing that wraps arbitrary egress, not on every binary.
  */
 // A negative continuation assertion, NOT an allowlist of terminators. Two prior
 // rounds closed one terminator at a time (`&`/`\r`, then `)`/backtick) and each
@@ -1189,18 +1192,58 @@ function interpreterHandsFile(segment) {
 const READ_ONLY_LEAD =
   /^\s*(?:cat|less|more|head|tail|grep|rg|ls|dir|stat|wc|type|Get-Content|gc|Select-String|sls)\b/i;
 
+// An extensionless explicit local path cannot be classified from its spelling.
+// Resolve the path and read only the magic bytes needed to distinguish a
+// shebang script from an ELF binary. An existing regular file with neither
+// header is unknown and gates in the safe direction. Bare PATH commands stay
+// free: resolving PATH here would turn every ordinary binary invocation into
+// synchronous filesystem search and would still race the shell's own lookup.
+//
+// The check is advisory rather than a filesystem capability: the file can be
+// replaced between this read and execution. That TOCTOU residual is declared
+// in KNOWN-LIMITS rather than hidden behind the word "resolved".
+const EXPLICIT_LOCAL_PATH =
+  /^\s*(?:"([^"]+)"|'([^']+)'|((?:\.{1,2}[\\/]|[A-Za-z]:[\\/]|\/)[^\s"'<>|;&]+))(?=\s|$)/;
+
+function extensionlessLocalFileKind(segment, cwd) {
+  const match = segment.match(EXPLICIT_LOCAL_PATH);
+  const candidate = match?.[1] ?? match?.[2] ?? match?.[3];
+  if (!candidate || path.extname(candidate) !== '') return null;
+
+  try {
+    const resolved = fs.realpathSync(path.resolve(cwd, candidate));
+    if (!fs.statSync(resolved).isFile()) return null;
+    const fd = fs.openSync(resolved, 'r');
+    try {
+      const header = Buffer.alloc(4);
+      const read = fs.readSync(fd, header, 0, header.length, 0);
+      if (read >= 2 && header[0] === 0x23 && header[1] === 0x21) return 'shebang';
+      if (read >= 4 && header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46) return 'elf';
+      return 'unknown';
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // A missing, unreadable or non-file path cannot execute as the file we
+    // inspected. The shell will refuse it; do not mint a gate decision for an
+    // action that has no executable target at check time.
+    return null;
+  }
+}
+
 // CMD_SEPARATORS (shared) is defined with the inert-prose helpers above: a
 // read verb only exempts the segment it leads. `Get-Content a.ps1 &&
 // ./evil.ps1` executes evil.ps1 in a later segment, which is not led by a
 // read verb, so it gates.
 
-export function isOpaqueExec(toolInput) {
+export function isOpaqueExec(toolInput, cwd = process.cwd()) {
   const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
   for (const segment of cmd.split(CMD_SEPARATORS)) {
-    if (!SCRIPT_EXT.test(segment) && !interpreterHandsFile(segment)) continue;
     if (READ_ONLY_LEAD.test(segment)) continue;   // this segment only reads one
-    return true;                                   // a script is being executed
+    if (SCRIPT_EXT.test(segment) || interpreterHandsFile(segment)) return true;
+    const kind = extensionlessLocalFileKind(segment, cwd);
+    if (kind === 'shebang' || kind === 'unknown') return true;
   }
   return false;
 }
@@ -1234,7 +1277,7 @@ function isCommandTool(toolName, toolInput) {
  * Returns { ruleId, mode } for the FIRST matching rule, or null.
  * A rule whose mode is "off" or unrecognized never matches.
  */
-function evaluate(toolName, toolInput, policy, baseDir, gitContext = undefined) {
+function evaluate(toolName, toolInput, policy, baseDir, gitContext = undefined, commandCwd = process.cwd()) {
   const modes = (policy && policy.modes) || DEFAULT_POLICY.modes;
 
   // Normalize mode lookup: only 'gate', 'warn', 'off' are valid. Anything
@@ -1279,7 +1322,7 @@ function evaluate(toolName, toolInput, policy, baseDir, gitContext = undefined) 
   }
   // Rule 5b: opaque-exec. Runs after egress-other so a command with a
   // readable egress verb reports that more specific reason first.
-  if (modeOf('opaque-exec') !== 'off' && isCommandTool(toolName, toolInput) && isOpaqueExec(toolInput)) {
+  if (modeOf('opaque-exec') !== 'off' && isCommandTool(toolName, toolInput) && isOpaqueExec(toolInput, commandCwd)) {
     return { ruleId: 'opaque-exec', mode: modeOf('opaque-exec') };
   }
   // Rule 6: destructive
