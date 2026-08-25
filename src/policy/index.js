@@ -202,6 +202,8 @@ export function matcherVersionHash() {
     isEgressOther.toString(),
     isDestructive.toString(),
     isScopeEscalation.toString(),
+    isScopeEscalationEdit.toString(),
+    isPersistenceArtifactPath.toString(),
     isOpaqueExec.toString(),
     JSON.stringify(sortKeysDeep(RULE_TABLE)),
     JSON.stringify(sortKeysDeep(RULE_INFO))
@@ -1103,14 +1105,118 @@ export function isDestructive(toolInput) {
 
 // ---------- scope-escalation matcher ----------
 
+/**
+ * The persistence-artifact surface: the directories and files whose mere
+ * existence registers execution beyond this session. Closing KNOWN-LIMITS 44
+ * (found 2026-07-29): the invocation verbs remembered here covered
+ * `schtasks /create` / `Register-ScheduledTask` / `sc create` /
+ * `New-Service` / `crontab`, but the actual persistence act is often the
+ * FILE laid down, not a verb at all — `tee /etc/cron.d/foo`,
+ * `launchctl load ~/Library/LaunchAgents/x.plist`, a Write tool call aimed
+ * at `/etc/systemd/system/sync.timer`, an XDG autostart entry. Same lesson
+ * as limit 34: decide by what the thing IS, not by one remembered spelling
+ * of how it happens.
+ *
+ * Anchored by path component (`(^|/)etc/cron.d(/|$)` style), so
+ * `~/projects/systemd-system-demo/x.conf` and `/etc/systemd/system.conf`
+ * do not match. Patterns are lowercase because normalizePath() lowercases;
+ * backslashes are folded there too, which is how the Windows task store
+ * spelling is covered by construction. Trailing-word terminators exclude
+ * word characters but include '.', so `sync.timer.bak` gates as well:
+ * Windows strips trailing dots from a path's last component, and crying
+ * wolf is the cheap failure on this file's standing rule.
+ */
+const PERSISTENCE_ARTIFACT_PATH = new RegExp([
+  // cron spools and drop-dirs. `/etc/crontab` itself, then the drop dirs,
+  // then the spool databases (Debian spells at's spool var/spool/cron/atjobs,
+  // others var/spool/at).
+  '(^|/)etc/crontab($|[^a-z0-9_-])',
+  '(^|/)etc/cron\\.(d|daily|hourly|weekly|monthly)(/|$)',
+  '(^|/)var/spool/cron(/|$)',
+  '(^|/)var/spool/at(/|$)',
+  '(^|/)var/spool/cron/atjobs(/|$)',
+  '(^|/)etc/anacrontab($|[^a-z0-9_-])',
+  // systemd unit directories (system and user spellings)
+  '(^|/)etc/systemd/(system|user)(/|$)',
+  '(^|/)(usr/lib|lib)/systemd/system(/|$)',
+  '(^|/)\\.config/systemd/user(/|$)',
+  '(^|/)\\.local/share/systemd/user(/|$)',
+  // launchd agents and daemons, user and system scopes
+  '(^|/)library/launch(agents|daemons)(/|$)',
+  // Windows Task Scheduler store (backslash folding does the work)
+  '(^|/)system32/tasks(/|$)',
+  // freedesktop autostart entries
+  '(^|/)\\.config/autostart(/|$)',
+  '(^|/)etc/xdg/autostart(/|$)'
+].join('|'));
+
+/**
+ * True when a path lands on the persistence-artifact surface above. Exported
+ * for focused tests; the gate reaches it through evaluate(), never directly.
+ */
+export function isPersistenceArtifactPath(filePath) {
+  const fp = normalizePath(filePath);
+  if (fp === '') return false;
+  return PERSISTENCE_ARTIFACT_PATH.test(fp);
+}
+
+// POSIX at(1) in command position followed by a time spec. Anchoring `at` to
+// command position (start of string, after ;/(/|, or after a sudo/doas/env
+// prefix) plus requiring an at(1) TIME SPEC keeps prose ("wait at noon") and
+// filenames (/tmp/at-the-market.txt) out; what remains is the honest overlap,
+// stated in the residuals: an echo containing the literal words "at noon"
+// gates, because a string matcher cannot read intent.
+const AT_INVOCATION = new RegExp(
+  '(^|[\\s;(])(?:sudo\\s+|doas\\s+|env\\s+\\S+=\\S+\\s+)*' +
+  'at(?:\\.exe)?\\s+' +
+  '(?:-{1,2}[a-z]+(?:\\s+\\S*)?\\s+)*' +
+  '(?:now|noon|midnight|teatime|today|tomorrow|[0-2]?\\d:[0-5]\\d|\\+\\s*\\d+)' +
+  '(?=\\s|$)'
+);
+
+// systemd-run schedules future execution only through its --on-* flags; a
+// plain transient run happens once, now, in sight of every other rule, so it
+// stays free. Both tokens required together.
+const SYSTEMD_RUN = /\bsystemd-run\b/;
+const SYSTEMD_RUN_SCHEDULED = /(^|\s)--on-[-a-z]+=/
+
+// launchd registration verbs. list/start/stop/kickstart are control or read
+// operations and stay free; these three install something that runs later.
+const LAUNCHCTL_REGISTRATION = /\blaunchctl\s+(?:-[a-z]\s+\S+\s+)*(?:load|bootstrap|submit)\b/;
+
+/**
+ * Check whether an Edit/Write/NotebookEdit tool_input lands on the
+ * persistence-artifact surface. The edit-half of the scheduled-task rule,
+ * mirroring isSelfModEdit's shape; returned as Rule 7b under the existing
+ * scope-escalation rule id, so no policy.json change and no mode remapping.
+ */
+function isScopeEscalationEdit(toolName, toolInput) {
+  if (toolName !== 'Edit' && toolName !== 'Write' && toolName !== 'NotebookEdit') {
+    return false;
+  }
+  return isPersistenceArtifactPath(toolInput?.file_path || '');
+}
+
 export function isScopeEscalation(toolInput) {
   const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
+
+  // The artifact half applies to shell writers too, WITHOUT enumerating
+  // writer binaries — per the 2026-07-24 lesson that enumerating terminators
+  // leaks one class per round, any command naming the artifact path gates,
+  // reads included. That over-gate is the declared residual.
+  const cmdNorm = normalizePath(cmd);
+  if (PERSISTENCE_ARTIFACT_PATH.test(cmdNorm)) return true;
+
   return /\bschtasks(\.exe)?\s+\/create\b/i.test(cmd)
     || /\bRegister-ScheduledTask\b/i.test(cmd)
+    || /\bRegister-ScheduledJob\b/i.test(cmd)
     || /\bsc\s+create\b/i.test(cmd)
     || /\bNew-Service\b/i.test(cmd)
-    || /\bcrontab\b/.test(cmd);
+    || /\bcrontab\b/.test(cmd)
+    || AT_INVOCATION.test(cmd)
+    || (SYSTEMD_RUN.test(cmd) && SYSTEMD_RUN_SCHEDULED.test(cmd))
+    || LAUNCHCTL_REGISTRATION.test(cmd);
 }
 
 // ---------- opaque-exec matcher ----------
@@ -1288,6 +1394,15 @@ function evaluate(toolName, toolInput, policy, baseDir, gitContext = undefined) 
   }
   // Rule 7: scope-escalation
   if (modeOf('scope-escalation') !== 'off' && isCommandTool(toolName, toolInput) && isScopeEscalation(toolInput)) {
+    return { ruleId: 'scope-escalation', mode: modeOf('scope-escalation') };
+  }
+  // Rule 7b: scope-escalation, artifact half (KNOWN-LIMITS 44). A Write or
+  // Edit that lays down a cron spool file, systemd unit, launchd plist, task
+  // store entry, or autostart entry registers execution beyond this session
+  // even when no scheduling verb appears in any command. Fires under the same
+  // rule id as Rule 7; the tool-name guard inside keeps it silent for shell
+  // tools, which Rule 7 already covered.
+  if (modeOf('scope-escalation') !== 'off' && isScopeEscalationEdit(toolName, toolInput)) {
     return { ruleId: 'scope-escalation', mode: modeOf('scope-escalation') };
   }
   // Rule 8: spend is "off" in v1; no matcher defined.

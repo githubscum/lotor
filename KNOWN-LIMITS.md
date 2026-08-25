@@ -1343,6 +1343,11 @@ charters cannot supply it for the non-delegable core by construction.
 
 ## 44. Scheduled task and cron operations are not gated
 
+**Status: closed for the honest-agent class 2026-08-25 (stdio42-codex-
+20260821), residuals below. Found 2026-07-29 by an agent expecting a gate
+ceremony on `Register-ScheduledTask` that never materialized; the task
+registered clean, no staged approval, no receipt of a denial.**
+
 Persistent unattended execution paths — Windows scheduled tasks
 (`Register-ScheduledTask`, `schtasks /Create`, `New-JobTrigger`), POSIX cron
 (`crontab`, `systemd-run --on-*`, `at`), and their equivalents — install an
@@ -1368,6 +1373,31 @@ meaningful control at this altitude. What runs when a scheduled task fires is
 back inside the harness (if the scheduled command is `claude` or an agent
 process) or entirely outside it (if the scheduled command is a `.ps1` or shell
 script), and only the first case is even in principle reachable by any hook.
+
+**Closed 2026-08-25, on this entry's own suggested shape.** The invocation
+matcher gained what it was missing (`at` with a time spec in command position,
+`systemd-run --on-*`, `launchctl load|bootstrap|submit`,
+`Register-ScheduledJob`), and — the half this entry said was closest to right —
+a component-anchored persistence-artifact path surface (`/etc/cron.*`,
+`/var/spool/cron`, systemd unit dirs, `Library/LaunchAgents|LaunchDaemons`,
+`System32/Tasks`, XDG autostart) now gates from both halves: Edit/Write tool
+paths via Rule 7b, and any command naming the path without enumerating writer
+binaries. Strictly additive under the existing scope-escalation rule id; in
+grazing mode these warn, as crontab always did. Residuals, stated:
+
+- **Reads of artifact paths warn too.** `cat /etc/cron.d/foo` fires. A string
+  matcher cannot separate reader from writer without enumerating writers,
+  which leaks one writer per round.
+- **Prose overlap on `at`.** An echo containing the literal words `at noon`
+  fires; intent is not visible to a string matcher.
+- **Enabling an existing unit by name stays free**: `systemctl enable --now
+  evil.timer`, `launchctl enable`. The unit FILE is covered; the enable verb
+  alone sweeps in mundane sysadmin work.
+- **Exotic schedulers stay free**: `batch`, `anacron` invocations, `fcron`,
+  SysWOW64's Tasks store, non-XDG session autostarts.
+- **What a registered task later RUNS is still outside any hook**, exactly as
+  this entry said: registration-time gating bounds what gets installed, not
+  what installed things do at 03:00.
 
 ## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
 
