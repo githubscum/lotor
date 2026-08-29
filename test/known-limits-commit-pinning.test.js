@@ -31,6 +31,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   PIN_BEGIN,
   PIN_END,
@@ -131,5 +132,54 @@ describe('L29: the log states which commit it describes', () => {
       checkPin({ pinText: text, head: 'not-a-real-state' }).status, 'diverged',
       'a hash-like value that simply differs is divergence, not unknown'
     );
+  });
+
+  it('the REAL shipped log: stamping it reports current, never permanent divergence', () => {
+    // Exercises the actual repo file (the gap the reviewer flagged: nothing in
+    // the suite touched the real KNOWN-LIMITS.md). Stamping pins the last src/
+    // commit; --check against the same checkout must be GREEN (exit 0), not the
+    // permanent exit-1 the HEAD-based pin produced on its own submission.
+    const repoLog = path.join(process.cwd(), 'KNOWN-LIMITS.md');
+    const restore = fs.readFileSync(repoLog, 'utf8');
+
+    try {
+      // Re-stamp the real log (writes the current src-commit as the pin).
+      execFileSync('node', ['bin/limits-pin.js', '--stamp'], { encoding: 'utf8' });
+
+      // --check must exit 0 (current) on the same checkout.
+      const out = execFileSync('node', ['bin/limits-pin.js', '--check'], { encoding: 'utf8' });
+      // execFileSync throws on non-zero exit, so reaching here means exit 0.
+      assert.ok(/matches your checkout/.test(out),
+        'after stamping, --check must report current, not diverged: ' + out);
+    } finally {
+      fs.writeFileSync(repoLog, restore);
+    }
+  });
+
+  it('the REAL shipped log: a stale/divered pin is caught by --check (exit 1)', () => {
+    // Proves the suite now notices if the shipped log were unpinned, stale, or
+    // diverged — the exact gap the reviewer named. We pin the real log to a
+    // foreign hash and assert --check exits 1 with a divergence message.
+    const repoLog = path.join(process.cwd(), 'KNOWN-LIMITS.md');
+    const restore = fs.readFileSync(repoLog, 'utf8');
+
+    try {
+      // Force a stale pin onto the real log.
+      writePin(repoLog, { commit: OTHER_HASH, subject: 'some other tree', date: '2026-08-23' });
+
+      let exitCode = 0;
+      let out = '';
+      try {
+        out = execFileSync('node', ['bin/limits-pin.js', '--check'], { encoding: 'utf8' });
+      } catch (e) {
+        exitCode = e.status ?? 1;
+        out = e.stdout ?? '';
+      }
+      assert.strictEqual(exitCode, 1, '--check must exit 1 on a diverged real log');
+      assert.ok(/reading a description of somewhere else/i.test(out),
+        'diverged real log must name both commits: ' + out);
+    } finally {
+      fs.writeFileSync(repoLog, restore);
+    }
   });
 });

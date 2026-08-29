@@ -10,11 +10,14 @@
  *
  * THE FIX has two halves, matching the listing's two requirements:
  *
- *   1. STATE THE COMMIT AT STAMP TIME. `writePin` maintains one delimited
- *      block at the very top of KNOWN-LIMITS.md naming the exact commit of
- *      the code the file describes, when it was stamped, and by what. The
- *      block is managed: re-stamping replaces it in place and never
- *      duplicates it.
+ *   1. STATE THE COMMIT THE LOG DESCRIBES. `writePin` maintains one delimited
+ *      block at the very top of KNOWN-LIMITS.md naming the commit of the code
+ *      the file describes, when it was stamped, and by what. The block is
+ *      managed: re-stamping replaces it in place and never duplicates it.
+ *      The pin names the last commit that touched `src/` (see bin/limits-pin.js
+ *      resolvePinTarget), NOT the current HEAD — because stamping edits only
+ *      this log file, so a HEAD-based pin could only ever name its own parent
+ *      and would read "diverged" on every reader of main after it landed.
  *
  *   2. TELL A DIVERGENT READER THEY ARE READING SOMEWHERE ELSE. `checkPin`
  *      compares the pin against the running checkout's HEAD and returns a
