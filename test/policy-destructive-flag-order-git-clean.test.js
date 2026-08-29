@@ -184,3 +184,59 @@ describe('policy: git clean -f with -d/-x is destructive', () => {
     assert.equal(isDestructive({ command: 'git clean -q' }), false);
   });
 });
+
+describe('policy: git clean pathspec handling (reviewer defects #1, #2)', () => {
+  // Defect #1: `-e <pattern>` takes a VALUE; that value must not be consumed
+  // as the pathspec. The old code read it as the pathspec and, when the
+  // exclude pattern happened to be allowlisted, laundered a whole-tree clean.
+  it('gates "git clean -fdx -e /tmp/keep" (exclude value is not a pathspec)', () => {
+    assert.equal(
+      isDestructive({ command: 'git clean -fdx -e /tmp/keep' }),
+      true,
+      '-e value must be skipped; with no real pathspec this is a whole-tree clean'
+    );
+  });
+
+  // Defect #2: EVERY pathspec is checked, not just the first. An allowlisted
+  // first pathspec must not exempt later pathspecs.
+  it('gates "git clean -fd /tmp/build lib" (second pathspec is not allowlisted)', () => {
+    assert.equal(
+      isDestructive({ command: 'git clean -fd /tmp/build lib' }),
+      true,
+      'an allowlisted first pathspec must not exempt an unallowlisted later one'
+    );
+  });
+
+  it('still exempts "git clean -fdx /tmp/build /tmp/keep" (all pathspecs allowlisted)', () => {
+    assert.equal(
+      isDestructive({ command: 'git clean -fdx /tmp/build /tmp/keep' }),
+      false,
+      'when EVERY pathspec is under scratch, the scoped clean stays exempt'
+    );
+  });
+});
+
+describe('policy: rm trigger scoped to its own segment (reviewer defect #3)', () => {
+  // Defect #3: rmTriggerFlags must scan the rm SEGMENT only, not the whole
+  // command. The old code fired on the rm when an earlier segment supplied
+  // the flags (a false-positive class the reviewer rejected as "cheap").
+  it('does NOT gate "grep -rf patterns.txt . && rm notes.txt"', () => {
+    assert.equal(
+      isDestructive({ command: 'grep -rf patterns.txt . && rm notes.txt' }),
+      false,
+      'the -rf belongs to grep; the rm segment has no force/recursive flags'
+    );
+  });
+
+  it('does NOT gate "tar -rf archive.tar x && rm old.log"', () => {
+    assert.equal(
+      isDestructive({ command: 'tar -rf archive.tar x && rm old.log' }),
+      false,
+      'tar -rf is not an rm trigger'
+    );
+  });
+
+  it('still gates "cd /srv && rm -rf /srv/app" (rm segment carries the flags)', () => {
+    assert.equal(isDestructive({ command: 'cd /srv && rm -rf /srv/app' }), true);
+  });
+});
