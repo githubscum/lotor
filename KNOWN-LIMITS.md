@@ -553,7 +553,38 @@ does not cost a signature, and tightening it to a leading-segment-only rule brok
 legitimate deletion of nested scratch dirs like `/home/me/scratchpad/run-1`.
 Exposure is limited to targets genuinely sitting under a scratch-named directory.
 
-## 25. The gate knew git's transports and not git's vendor CLI
+**Amendment (2026-08-29).** Two matcher changes in the same rule family as this
+entry, both closing under-gates that let a destructive delete slip past the gate
+when its spelling was not the exact compact form:
+
+- *rm / Remove-Item trigger now scans flag order and long-form options.* The
+  trigger previously required the `-r` and `-f` letters ADJACENT in one bundle
+  (`-rf` / `-fr`) or `--recursive` as the literal next token. So `rm --force
+  --recursive`, `rm --ignore-times --force --recursive`, separated shorts
+  (`rm -r -f`), and flags after the operand (`rm file.txt --force --recursive`)
+  were all silent. The fix shares one token predicate between the trigger and the
+  target extractor: long options match by exact name (`--force`, `--recursive`),
+  short bundles explode per character, so every ordering reduces to the same two
+  booleans. A trigger that fired only on adjacency was the *expensive* failure
+  (silence); this widens to the cheap one (occasional false positive), which is
+  the correct direction for this rule.
+- *`git clean -f` with `-d`/`-x` is now gated.* `git clean` never spells an `rm`
+  token, so the destructive matcher had zero handling for it and `git clean -fdx`
+  force-deleted the whole tree silently. The gate now requires `-f`/`--force`
+  AND a depth/ignored amplifier (`-d`/`--directory` or `-x`/`--ignored`/`-X`);
+  `-n` (dry-run) and bare `git clean` stay free. Two pathspec defects the
+  reviewer caught are closed: `-e <pattern>` / `-x <pattern>` take a *value* and
+  that value is skipped (it is not a pathspec, so an allowlisted exclude pattern
+  can no longer launder a whole-tree clean), and *every* pathspec is checked, not
+  just the first (an allowlisted first pathspec no longer exempts later
+  pathspecs). A pathspec still scopes the blast radius through the same
+  scratch-segment allowlist this entry describes; no pathspec means the whole
+  tree, which always gates.
+- *Scope discipline.* The rm trigger now scans only the command *segment* that
+  contains `rm` (split on `&&`/`||`/`;`/`|`/newline), not the whole command, so
+  `grep -rf x && rm y` no longer fires on the rm. This is the previously
+  undeclared false-positive class: the cheaper direction, but it costs signatures
+  on ordinary work and is now stated here on purpose.
 
 Until 2026-07-24, `gh` — the GitHub CLI, authenticated against the user's account
 from the system keyring — was almost entirely invisible to the rule set. Three

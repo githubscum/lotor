@@ -1093,19 +1093,131 @@ function extractDestructiveTarget(cmd) {
   return null;
 }
 
+/**
+ * Shared flag-token predicates for the rm trigger. These are DELIBERATELY
+ * stricter than the loose substring scan inside extractDestructiveTarget:
+ * a long option is matched by its exact name (`--recursive`, `--force`),
+ * never by "contains an r/f somewhere". The loose scan is safe downstream
+ * (it only picks a target AFTER something already decided to fire) but as
+ * a TRIGGER it would gate harmless deletes like `rm --reference=a b`.
+ * Short-flag bundles are exploded per character, which is what makes flag
+ * ORDER irrelevant: `-rf`, `-fr`, `-r -f`, `--force --recursive` and
+ * flags placed after the operands all reduce to the same two booleans.
+ *
+ * IMPORTANT: this must be called with the TOKENS OF THE rm SEGMENT ONLY,
+ * not the whole command. Scanning the whole command made `grep -rf x && rm
+ * y` fire on the rm (the -rf belonged to grep), a false-positive class the
+ * reviewer rejected. Callers split on CMD_SEPARATORS and pass the segment
+ * that actually contains `rm`.
+ */
+function rmTriggerFlags(tokens) {
+  let recursive = false;
+  let force = false;
+  for (const tok of tokens) {
+    if (!tok.startsWith('-')) continue;
+    if (tok === '--recursive') { recursive = true; continue; }
+    if (tok === '--force') { force = true; continue; }
+    if (tok.startsWith('--')) continue; // unrelated long option: inert
+    for (const ch of tok.slice(1)) {
+      if (ch === 'r' || ch === 'R') recursive = true;
+      else if (ch === 'f' || ch === 'F') force = true;
+    }
+  }
+  return { recursive, force };
+}
+
+// `git clean` never spells an `rm` token, so the rm/Remove-Item triggers
+// cannot see it, and `git clean -fdx` removes every untracked (with -x,
+// also ignored) path in one shot. Found 2026-08-22: zero handling anywhere
+// in src/ — silent, exit 0, no receipt. Force-deletes are the hazard, so
+// the gate requires -f/--force AND at least one depth/-x amplifier (-d or
+// -x/-X): a bare `git clean` deletes nothing, `-n` is a dry run, `-i` asks.
+//
+// pathspec handling (the two defects the reviewer caught):
+//   - `-e <pattern>` / `-x <pattern>` take a VALUE; that value is NOT a
+//     pathspec and must be skipped, or an allowlisted exclude pattern would
+//     be consumed as the pathspec and launder a whole-tree clean.
+//   - EVERY pathspec is checked, not just the first: an allowlisted first
+//     pathspec must not exempt later pathspecs (which would delete unsigned).
+//   - a pathspec scopes the blast radius through the SAME scratch-segment
+//     allowlist rm uses; no pathspec means the whole tree, which always gates.
+function isGitCleanForceDelete(cmd) {
+  return cmd.split(CMD_SEPARATORS).some(seg => {
+    const m = seg.match(/^\s*git\s+clean\s+(\S.*)$/);
+    if (!m) return false;
+
+    let force = false, deep = false, ignored = false, dryRun = false;
+    const pathspecs = [];
+    const toks = m[1].split(/\s+/).map(t => t.replace(/^["']|["']$/g, ''));
+    for (let i = 0; i < toks.length; i++) {
+      const tok = toks[i];
+      if (!tok.startsWith('-')) { pathspecs.push(tok); continue; }
+      // value-taking options: their argument is NOT a pathspec
+      if (tok === '-e' || tok === '--exclude') { i++; continue; } // -e <pattern>
+      if (tok === '-x' || tok === '--dx-include-ignored') { ignored = true; continue; } // -x <pattern>? no, -x is a boolean; only -e takes a value here
+      if (tok === '--force') { force = true; continue; }
+      if (tok === '--directory') { deep = true; continue; }
+      if (tok === '--ignored') { ignored = true; continue; }
+      if (tok === '--dry-run') { dryRun = true; continue; }
+      if (tok.startsWith('--')) continue; // unknown long option: inert
+      for (const ch of tok.slice(1)) {
+        if (ch === 'f') force = true;
+        else if (ch === 'd') deep = true;
+        else if (ch === 'x') ignored = true;
+        else if (ch === 'X') ignored = true; // -X: only ignored files
+        else if (ch === 'n') dryRun = true;
+        else if (ch === 'e') i++; // short -e takes a value too
+      }
+    }
+
+    if (dryRun || !force) return false;
+    if (!(deep || ignored)) return false;
+    if (pathspecs.length === 0) return true; // no pathspec: entire tree
+    // gate if ANY pathspec is outside the scratch allowlist
+    return pathspecs.some(p => !destructiveAllowlisted(p));
+  });
+}
+
 export function isDestructive(toolInput) {
   const cmd = matchableCommand(toolInput);
   if (cmd === '') return false;
 
-  const hasRmRf = /\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*[fF]|-[a-zA-Z]*[fF][a-zA-Z]*[rR])/.test(cmd)
-    || /\brm\s+--recursive\b/.test(cmd);
-  const hasRiRecurseForce = /\bRemove-Item\b/i.test(cmd) && /-Recurse/i.test(cmd) && /-Force/i.test(cmd);
+  if (isGitCleanForceDelete(cmd)) return true;
 
-  if (!hasRmRf && !hasRiRecurseForce) return false;
+  // Scope each trigger to its OWN segment. Scanning the whole command let
+  // `grep -rf x && rm y` fire on the rm; splitting on CMD_SEPARATORS keeps
+  // the -rf of grep away from the rm trigger.
+  const segments = cmd.split(CMD_SEPARATORS);
 
-  const target = extractDestructiveTarget(cmd);
-  if (target == null) return true; // rm -rf with no path is still destructive
-  return !destructiveAllowlisted(target);
+  for (const seg of segments) {
+    const isRm = /\brm\b/.test(seg);
+    if (isRm) {
+      const tokens = seg.split(/\s+/).map(t => t.replace(/^["']|["']$/g, ''));
+      const { recursive, force } = rmTriggerFlags(tokens);
+      if (recursive && force) {
+        const target = extractDestructiveTarget(seg);
+        if (target == null) return true; // rm -rf with no path is still destructive
+        if (!destructiveAllowlisted(target)) return true;
+      }
+    }
+
+    // Remove-Item -Recurse -Force <path>
+    if (/\bRemove-Item\b/i.test(seg)) {
+      if (/-Recurse/i.test(seg) && /-Force/i.test(seg)) {
+        const tokens = seg.split(/\s+/).map(t => t.replace(/^["']|["']$/g, ''));
+        for (let i = 0; i < tokens.length; i++) {
+          const tok = tokens[i];
+          if (tok === 'Remove-Item') continue;
+          if (tok.startsWith('-')) continue;
+          const target = tok;
+          if (!destructiveAllowlisted(target)) return true;
+          break;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 // ---------- scope-escalation matcher ----------
