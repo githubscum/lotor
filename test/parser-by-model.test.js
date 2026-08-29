@@ -12,7 +12,7 @@ import { parseSession } from '../src/parser/index.js';
  *    in both the flat total and the breakdown
  *  - a message with no model field: does not crash; lands in an "unknown" bucket
  *
- * The schema marker is `cost/3` once a receipt carries a breakdown.
+ * The schema marker is `cost/4` once a receipt carries a breakdown.
  */
 
 const sessionStart = (id) => JSON.stringify({
@@ -31,7 +31,7 @@ const assistantLine = (overrides) => JSON.stringify({
   createdAt: '2026-07-25T10:00:01Z'
 });
 
-describe('parseSession per-model cost breakdown (cost/3)', () => {
+describe('parseSession per-model cost breakdown (cost/4)', () => {
   it('attributes tokens to each model in a mixed-model transcript', () => {
     const lines = [
       sessionStart('mixed-001'),
@@ -53,8 +53,8 @@ describe('parseSession per-model cost breakdown (cost/3)', () => {
     ];
     const result = parseSession(lines.join('\n'));
 
-    // Schema must be cost/3
-    assert.strictEqual(result.cost.schema, 'cost/3', 'schema should be cost/3');
+    // Schema must be cost/4
+    assert.strictEqual(result.cost.schema, 'cost/4', 'schema should be cost/4');
 
     // byModel exists and has both models
     assert.ok(result.cost.byModel, 'byModel should exist');
@@ -108,12 +108,12 @@ describe('parseSession per-model cost breakdown (cost/3)', () => {
     ];
     const result = parseSession(lines.join('\n'));
 
-    // Same flat totals as before cost/3
+    // Same flat totals as before cost/4
     assert.strictEqual(result.cost.inputTokens, 150);
     assert.strictEqual(result.cost.outputTokens, 80);
     assert.strictEqual(result.cost.cacheCreationTokens, 10);
     assert.strictEqual(result.cost.cacheReadTokens, 5);
-    assert.strictEqual(result.cost.schema, 'cost/3');
+    assert.strictEqual(result.cost.schema, 'cost/4');
 
     // byModel has a single bucket, equal to the flat totals
     assert.ok(result.cost.byModel, 'byModel should exist');

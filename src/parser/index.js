@@ -46,7 +46,15 @@ function parseSession(jsonlText, opts = {}) {
     cacheCreationTokens: 0,
     cacheReadTokens: 0,
     note: 'tokens only; no USD in source',
-    byModel: {} // { "<model-id>": { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, messages } }
+    byModel: {}, // { "<model-id>": { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, messages } }
+    // Thought-level rows (2026-08-29): one entry per DISTINCT assistant
+    // message, aligned with the usage dedup below. The session totals answer
+    // "what did this cost"; these answer "where in the session did it go" —
+    // the question the operator asks when a run gets hot. Usage numbers
+    // only: no content, nothing reconstructible. Ingest replaces this array
+    // with a { schema, count, digest } binding before the payload reaches
+    // the chain (see src/ingest), so receipts stay slim.
+    thoughts: [] // { id, ts, model, input, output, cacheRead, cacheCreate }
   };
   const sent = {
     items: [],
@@ -105,6 +113,20 @@ function parseSession(jsonlText, opts = {}) {
           bucket.cacheCreationTokens += cacheCreate;
           bucket.cacheReadTokens += cacheRead;
           bucket.messages += 1;
+          // One thought row per distinct message, inside the same dedup
+          // guard so a message split across N lines is ONE thought. Real
+          // transcripts stamp `timestamp`; fixtures use `createdAt` — take
+          // either, in that order (same lesson as the null-timestamp bug,
+          // 2026-07-22).
+          cost.thoughts.push({
+            id: entry.message.id || null,
+            ts: entry.timestamp || entry.createdAt || null,
+            model: entry.message.model || null,
+            input,
+            output,
+            cacheRead,
+            cacheCreate
+          });
         }
       }
 
@@ -240,7 +262,7 @@ function parseSession(jsonlText, opts = {}) {
     ran,
     touched: Array.from(touched.entries()).map(([path, meta]) => ({ path, ...meta })),
     failed,
-    cost: { ...cost, schema: 'cost/3' },
+    cost: { ...cost, schema: 'cost/4' },
     // receipt/2 (2026-08-10): ran[] items carry paramsDigestCanonical (full
     // 256-bit, params/1 canonicalisation) and may carry correlationIdEcho.
     // Absence of this field is the read hint that a receipt predates the

@@ -1663,3 +1663,28 @@ recorded decision can no longer be recomputed from the recorded input alone,
 and matcherHash (limit 53) proves what the code was, never what the disk was.
 TOCTOU was declared; environment-dependence of the decision is the same fact
 seen from the record's side, and it needed saying in those words.
+
+## 60. Thought sidecars are digest-bound but not chain-protected
+
+Added 2026-08-29, with the thought-level cost rows (cost/4). One receipt
+per session says what a session cost; the per-thought rows say where in
+the session the cost went, one row per distinct assistant message. The
+rows live in a sidecar file under `<home>/thoughts/`, and the receipt
+carries `{ schema: 'thoughts/1', count, digest }`, where the digest is
+SHA-256 over the exact sidecar bytes. That binding is computed before the
+append, so the chain vouches for what the rows WERE at receipt time.
+
+What it does not do, in three parts:
+
+- **The sidecar is deletable without a signature.** The chain's own
+  deletion protection does not extend to `<home>/thoughts/`. Deleting a
+  sidecar orphans the digest in the receipt — a detectable absence, same
+  class as a truncated transcript — but nothing stops the deletion.
+- **A crash between append and write leaves a receipt whose sidecar never
+  existed.** The digest still proves what the rows were; the local copy is
+  simply missing, and a reader cannot tell this case from a later
+  deletion.
+- **Rows are usage numbers, not meaning.** A thought row carries token
+  counts, a model id and a timestamp. It says nothing about what the
+  thought did or why it cost that much — the same silence-is-not-safety
+  ceiling every other receipt field already discloses.

@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { parseSession } from '../parser/index.js';
 import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
@@ -28,7 +31,29 @@ function ingestSession(jsonlText, opts = {}) {
   const sessionId = receiptSummary.session.id;
   const thisSize = receiptSummary.counts.transcriptEntries;
 
-  const store = createStore(resolveHome());
+  const home = resolveHome();
+  const store = createStore(home);
+
+  // Thought sidecar (2026-08-29). The parser's cost.thoughts array is one
+  // row per distinct assistant message; embedding it would grow a heavy
+  // session's receipt by two orders of magnitude, so the DETAIL goes to a
+  // sidecar file and the RECEIPT keeps a binding summary. Same precedent
+  // as transcriptHash: bind by digest, do not embed. The digest is computed
+  // over the exact bytes the sidecar will hold, BEFORE the append, because
+  // the chain hashes the payload; the file itself is written only after a
+  // successful append (a skipped ingest writes nothing).
+  let sidecarText = null;
+  if (receiptSummary.cost && Array.isArray(receiptSummary.cost.thoughts)) {
+    const rows = receiptSummary.cost.thoughts;
+    sidecarText = rows.length
+      ? rows.map(r => JSON.stringify(r)).join('\n') + '\n'
+      : '';
+    receiptSummary.cost.thoughts = {
+      schema: 'thoughts/1',
+      count: rows.length,
+      digest: crypto.createHash('sha256').update(sidecarText, 'utf-8').digest('hex')
+    };
+  }
 
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot
@@ -59,6 +84,22 @@ function ingestSession(jsonlText, opts = {}) {
 
   if (entry == null) {
     return { entry: null, skipped: true, subsession: null, sessionId };
+  }
+
+  // Write the sidecar the receipt's digest now binds. Failure here is
+  // reported by the caller's catch, and the seam is disclosed: a receipt
+  // can reference a digest whose file never landed (crash between append
+  // and write). The digest still proves what the rows WERE; only the local
+  // copy is missing. Session ids are uuids in practice; sanitize anyway so
+  // a hostile id cannot traverse out of <home>/thoughts/.
+  if (sidecarText !== null && entry.payload.cost.thoughts.count > 0) {
+    const dir = path.join(home, 'thoughts');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeId = String(sessionId).replace(/[^A-Za-z0-9_-]/g, '_');
+    const file = path.join(
+      dir, `${safeId}-s${entry.payload.session.subsession}.jsonl`
+    );
+    fs.writeFileSync(file, sidecarText, 'utf-8');
   }
 
   return {
