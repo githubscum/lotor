@@ -1646,3 +1646,20 @@ The residuals:
 - **A missing, unreadable or non-file target is not gated.** The shell should
   refuse the same target, but a file created in the check/use interval is the
   same race named above.
+
+Two boundaries this limit did not state when it was written, added at merge:
+
+The cwd plumbing is dead. `isOpaqueExec` and `evaluate` accept a command-cwd
+parameter and no caller anywhere passes it, so every classification runs from
+the hook's own working directory. A `cd <dir> && ./deploy` in one command
+string moves the shell's cwd where the classifier never looks, and the
+extensionless file executes free. This is not a regression, the whole class
+was free before, but the closure is partial and this is the seam.
+
+The matcher now touches the filesystem. Classification is no longer a pure
+function of the command string: the same command classifies differently
+depending on what is on disk at hook time. The auditor's consequence: a
+recorded decision can no longer be recomputed from the recorded input alone,
+and matcherHash (limit 53) proves what the code was, never what the disk was.
+TOCTOU was declared; environment-dependence of the decision is the same fact
+seen from the record's side, and it needed saying in those words.
