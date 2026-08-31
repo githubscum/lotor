@@ -74,6 +74,59 @@ describe('reconcile: a declared file item against touched paths', () => {
   });
 });
 
+describe('reconcile: a confirmation says which kind of match it rests on', () => {
+  // KNOWN-LIMITS 38's residual, narrowed 2026-08-31. Exact and tail-only
+  // matches were both printed as the single word "confirmed". The ambiguity
+  // cannot be resolved; presenting the two as one thing was the fixable half.
+
+  it('labels an exact match exact, with no tail-match count', () => {
+    const out = reconcile(charterOf([fileItem('1', 'src/a.js')]), fold({ touched: ['src/a.js'] }));
+    assert.equal(out.confirmed[0].matchKind, 'exact');
+    assert.equal(out.confirmed[0].ambiguous, false);
+    assert.equal(out.confirmedBySuffixOnly, 0);
+  });
+
+  it('labels a relative-against-absolute match as suffix, and still confirms it', () => {
+    const out = reconcile(
+      charterOf([fileItem('1', 'bin/retcon.js')]),
+      fold({ touched: ['C:\\Users\\x\\agent-receipts\\bin\\retcon.js'] })
+    );
+    assert.equal(out.confirmed.length, 1, 'the ordinary case must still confirm');
+    assert.equal(out.confirmed[0].matchKind, 'suffix');
+    assert.equal(out.confirmedBySuffixOnly, 1);
+  });
+
+  it('prefers the exact match when both kinds are present', () => {
+    const out = reconcile(
+      charterOf([fileItem('1', 'src/a.js')]),
+      fold({ touched: ['/other/checkout/src/a.js', 'src/a.js'] })
+    );
+    assert.equal(out.confirmed[0].matchKind, 'exact');
+    assert.deepEqual(out.confirmed[0].matchedPaths, ['src/a.js']);
+    assert.equal(out.confirmedBySuffixOnly, 0);
+  });
+
+  it('flags the false confirmation happening in front of it: two checkouts, one tail', () => {
+    const out = reconcile(
+      charterOf([fileItem('1', 'src/a.js')]),
+      fold({ touched: ['/home/a/repo/src/a.js', '/home/b/repo/src/a.js'] })
+    );
+    assert.equal(out.confirmed.length, 1);
+    assert.equal(out.confirmed[0].matchKind, 'suffix');
+    assert.equal(out.confirmed[0].ambiguous, true, 'at most one of the two can be the declared file');
+    assert.equal(out.ambiguousConfirmations, 1);
+  });
+
+  it('does not call a single tail match ambiguous', () => {
+    const out = reconcile(
+      charterOf([fileItem('1', 'src/a.js')]),
+      fold({ touched: ['/home/a/repo/src/a.js'] })
+    );
+    assert.equal(out.confirmed[0].ambiguous, false);
+    assert.equal(out.ambiguousConfirmations, 0);
+  });
+});
+
 describe('reconcile: what the record structurally cannot answer', () => {
   it('classifies a COMMAND item as unreconcilable, never as never-attempted', () => {
     // The heart of 38. Gate receipts carry the tool and no command string
@@ -149,6 +202,25 @@ describe('deviationNote: derived, never invented (KNOWN-LIMITS 39)', () => {
       noEvidence: [], unreconcilable: [1], toolsNotDeclared: [], undetermined: [1]
     });
     assert.match(note, /is NOT an item that did not run/);
+  });
+
+  it('counts tail-only confirmations and names the failure direction', () => {
+    const note = deviationNote({
+      noEvidence: [], unreconcilable: [], toolsNotDeclared: [], undetermined: [],
+      confirmedBySuffixOnly: 2, ambiguousConfirmations: 1
+    });
+    assert.match(note, /\b2 confirmation\(s\) rest on a path-tail match/);
+    assert.match(note, /CONSISTENT with the item/);
+    assert.match(note, /\b1 of those matched more than one distinct recorded path/);
+  });
+
+  it('says nothing about tail matches when every confirmation was exact', () => {
+    const note = deviationNote({
+      noEvidence: [], unreconcilable: [], toolsNotDeclared: [], undetermined: [],
+      confirmedBySuffixOnly: 0, ambiguousConfirmations: 0
+    });
+    assert.ok(!/tail/i.test(note), 'a caveat that fires when it has nothing to report is limit 39 again');
+    assert.match(note, /Nothing was counted/);
   });
 
   it('never throws on a malformed or empty input', () => {
