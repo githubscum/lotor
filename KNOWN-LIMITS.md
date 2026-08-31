@@ -1309,6 +1309,36 @@ Not fixed. Nothing is proposed here either, because the tempting fix (an agent t
 appends entries on a schedule) is the version most likely to produce volume and
 least likely to produce this entry.
 
+**Amended 2026-08-31, verified against `a2ac5e2` by reading the merge commit and
+the branch that produced it. The factual claim above is no longer true. The hazard
+it names is untouched.**
+
+A producer exists. An unattended scheduled routine drafted entry 61, opened
+[#37](https://github.com/githubscum/lotor/pull/37) from the branch
+`lotor-lane/limit-61-permissive-warning`, and a human reviewed and merged it. No
+interactive session was involved in the finding or in the writing, which is
+exactly what the sentence "nothing anywhere writes to this file except a
+human-driven session that remembers to" denied.
+
+**What narrowed.** The producer gap is closed, and the human role moved from
+author to reviewer. The numbering-and-deduplication constraint was not solved so
+much as it dissolved: the routine runs against a checkout, so it numbers from the
+live file itself, and the split this entry imagined between whoever discovers and
+whoever applies never had to happen.
+
+**What did not change, and it is the larger half.** The quota hazard is open and
+nothing here addresses it. The routine is not scored on entries produced, but that
+is a property of how it is currently pointed, not a property of the design.
+Nothing stops it being scored that way tomorrow.
+
+**The new writer is the thing this entry warned about.** Entry 61 was found by the
+routine using the tool it reports on, so the first automated confession is
+evidence for the mechanism and not evidence against the warning. A confessor that
+reports on its own lane has an obvious interest in that lane looking productive.
+Read the warning as live. The test is not whether entries keep appearing. It is
+whether an expensive one appears against the routine's own interest, and this
+amendment is not that one.
+
 ## 41. The MCP server answers from a process that can predate the fix
 
 Found 2026-07-26 by walking into it, and the demonstration is the entry.
