@@ -1750,3 +1750,43 @@ What it does not do, in three parts:
   counts, a model id and a timestamp. It says nothing about what the
   thought did or why it cost that much — the same silence-is-not-safety
   ceiling every other receipt field already discloses.
+
+## 61. The permissive-posture warning overstates its own inertness
+
+Found 2026-08-31, by tripping it twice in one session.
+
+`bin/hook-pre-tool-use.js:756-757` prints, whenever Lotor is in `loose` and the
+harness reports a permissive mode:
+
+> WARNING: Lotor is in LOOSE mode and the harness reports "auto". Neither layer is
+> stopping anything; both are only recording.
+
+**The second sentence is false, and it is false about the only two rules that still
+matter in loose.** `src/policy/index.js:48-49` keeps `self-mod` and `mode-change` at
+`gate` in every mode including `loose`. Everything else degrades to `warn` or `off`.
+So in the exact configuration this warning describes, the gate is still stopping
+edits to the gate and still stopping changes to the mode.
+
+The warning is printed before `evaluate()` runs and is unconditional on the outcome,
+so it cannot know what is about to happen. Observed live twice on 2026-08-31: the
+same stderr block carried the sentence above and a `BLOCKED: self-mod` line, for the
+same tool call. The tool contradicted itself inside one message.
+
+**The failure direction is understatement, which is not the harmless one.** A reader
+who takes the sentence at its word concludes the gate is inert in loose. The next
+self-mod block then reads as a malfunction rather than as the design, which is the
+posture that gets a gate disabled or routed around. It also misprices the operator's
+own choice: someone selecting `loose` is told they turned everything off, when the
+two protections that guard the gate itself are still live. **Understating coverage in
+the honesty block is the same class as limit 39**, where a caveat invented specifics.
+A reader who distrusts the numbers will trust the disclaimer, so the disclaimer is the
+one line that cannot afford to be wrong.
+
+Not fixed here. `bin/hook-*` is non-delegable core and belongs in a reviewed signing
+sitting rather than riding along with a documentation change.
+
+**The fix is to name the exceptions rather than claim there are none:** state that
+`self-mod` and `mode-change` still gate, and that everything else is recording only.
+That is one sentence longer and it is true. Deriving the list from the policy table
+rather than hardcoding it would also keep the sentence honest if the table changes,
+which is the failure that produced limit 39 in the first place.
