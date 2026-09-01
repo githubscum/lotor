@@ -1710,6 +1710,18 @@ fail-first evidence and convert it to cases in
 `test/policy-scheduled-task.test.js`; this amendment deliberately ships no
 test, because a test asserting the fixed behavior would land red.**
 
+**Amended the same day: the five uncovered forms are now asserted as
+uncovered.** A test of the fixed behavior would land red, and a confession
+that only exists in prose is one someone can close by editing prose. The
+third option is the one that shipped: `test/policy-scheduled-task.test.js`
+carries a TRIPWIRE block asserting that these forms are still FREE, with the
+covered forms (`--on-active=30`, `at 03:00`, `at noon`) beside them as
+controls so the block cannot pass because the matcher died. **When the two
+widenings land, that block fails**, and the instruction in it is to invert
+the assertions and amend this entry in the same change rather than delete the
+test. The gap is now executable, and closing it silently is no longer
+available.
+
 **Still not covered, unchanged by this amendment:** `systemctl enable` on an
 existing unit, `batch`, `anacron`, `fcron`, SysWOW64's task store, and what a
 registered task runs later.
