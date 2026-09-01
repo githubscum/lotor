@@ -586,6 +586,8 @@ when its spelling was not the exact compact form:
   undeclared false-positive class: the cheaper direction, but it costs signatures
   on ordinary work and is now stated here on purpose.
 
+## 25. The gate knew git's transports and not git's vendor CLI
+
 Until 2026-07-24, `gh` — the GitHub CLI, authenticated against the user's account
 from the system keyring — was almost entirely invisible to the rule set. Three
 specific shapes were matched (`gh pr merge`, `gh release create`, `gh * create`);
@@ -869,6 +871,100 @@ behaviour. Merging is what converts a private staleness into a public one, so **
 merge is the moment the amendment is owed**, not some later tidy-up. None of the
 candidate fixes above would have caught this either; a CI check on `src/` would have
 passed, since the merge commit touches this file's neighbours and not its claims.
+
+**Update 2026-09-01. The pin is stale on `main` right now, the suite is green,
+and the two tests that name the real log are the reason.** Found by running the
+check the entry recommends, which nothing else does.
+
+The committed pin reads `2173d231` (stamped 2026-08-23, subject "opaque-exec:
+gate local scripts handed to a script interpreter (#28)"). The last commit that
+touched `src/` on `main` is `dc1910b` ("fix(C6): scope rm trigger to its
+segment; check every git-clean pathspec; amend limit 24 (#36)"). So
+`npm run limits-pin -- --check` on a clean `main` checkout reports divergence
+and exits 1, and has done since #36 landed. A reader who follows the
+instruction in the pin block is told, correctly, that they are reading a
+description of somewhere else.
+
+**Why the suite did not catch it, which is the part worth keeping.** Two tests
+in `test/known-limits-commit-pinning.test.js` announce themselves as exercising
+"the REAL shipped log". Neither asserts anything about the log as committed:
+
+- the first runs `--stamp` on it and *then* asserts `--check` reports current.
+  That proves `--stamp` works. It cannot fail on a stale committed pin, because
+  it overwrites the pin before looking at it.
+- the second writes a foreign hash into it and asserts `--check` exits 1. That
+  proves `--check` works. It also cannot fail on a stale committed pin, for the
+  same reason in the other direction.
+
+Both write the state they then assert, so the committed value is never read.
+The suite is green at 908 tests with the shipped log wrong, which is this
+entry's own thesis one level up: **the mechanism built to make staleness
+detectable is never run against the artifact, and its tests are shaped so they
+structurally cannot fail on it.** The 2026-08-23 fix said "that CI wiring is
+still not built; the check exists, the automation does not." That is still true,
+and this is what it cost.
+
+**A second defect, found in the same read.** Those two tests reach green by
+writing to the tracked `KNOWN-LIMITS.md` in the working tree and restoring it in
+a `finally`. A `finally` survives an assertion failure; it does not survive the
+process being killed. An interrupted `npm test` can leave the shipped confession
+log carrying `commit: bbbbbbbb...`, subject "some other tree" — a fabricated pin,
+in the file this repository's own tooling stages and commits. This entry already
+says nothing stops a commit carrying a false pin and that review is what catches
+it. The suite that tests the pin is a mechanism that manufactures one,
+unattended.
+
+**Not fixed here, and the reason is not time.** The obvious repair is a
+read-only test asserting the committed pin equals the last `src/` commit — the
+assertion that would have caught this. It fails on `main` today, so landing it
+requires re-stamping in the same change, and **stamping is a claim that the
+entries were verified against that tree.** `bin/limits-pin.js` says so in its
+own header: a stamp that happens without anyone verifying makes the pin say
+"verified" when nobody did. This lane has not read 61 entries against
+`dc1910b`, so it will not make that claim, and re-stamping to go green would be
+the precise dishonesty the pin exists to prevent. The stamp is owed by whoever
+verifies.
+
+The test-isolation half is separable and does not need a stamp: point the CLI at
+a scratch copy (an env override on the log path, git resolution left anchored to
+the repo) and the mutation of the tracked file goes away. That edit is to
+`bin/limits-pin.js`, which self-mod gates, and it was blocked unsigned when this
+entry was written. Named here rather than smuggled into a file the gate does
+allow.
+
+**Amendment, 2026-09-01. The failure this pin was built to prevent happened
+anyway, in a worse form, and nothing saw it.** The pin exists because of
+2026-08-22, when a bounty cited an entry number that meant something different on
+`main`. Seven days later an entry number stopped meaning anything at all.
+
+`dc1910b` (PR #36, an outside contributor's destructive-matcher fix) appended an
+amendment to entry 24 and, in the same hunk, **deleted the `## 25.` heading
+line.** Nothing else about entry 25 was touched. Its body — three paragraphs on
+`gh`, the authenticated vendor CLI the rule set could not see — has been sitting
+inside entry 24 ever since. So a reader of "the destructive allowlist exempts
+real directories named tmp/temp/scratchpad" got a section that changes subject
+mid-way to an unrelated limit about GitHub's CLI, and a citation of
+"KNOWN-LIMITS 25" resolved to nothing. The log ran 1 to 61 with 60 entries in it.
+
+**It survived a code review and 891 green tests**, because no test ever read the
+shipped log as a structure. The two tests that name the real log both write the
+state they then assert (the finding above); neither looks at what is committed.
+An accidental one-line deletion inside a 230-line documentation diff is exactly
+what review misses and exactly what a parser catches for free.
+
+**Fixed here.** The heading is restored — a faithful revert of the deleted line,
+with the body left where it has always been — and
+`test/known-limits-numbering.test.js` now reads the committed file and asserts
+the entry numbers are contiguous from 1, unique, and above a sanity floor. It is
+read-only: it opens the shipped log, writes nothing, and needs no pin to pass.
+Run against `main` today it fails on the missing 25, which is the fail-first
+evidence that it tests something real.
+
+**Still not fixed, and still for the same reason:** the stale pin above. This
+run verified the log's *structure* against the tree; it did not read 61 entries
+for *truth* against `dc1910b`. Stamping on the strength of a numbering check
+would be a smaller lie than stamping on nothing, and it would still be one. The
+stamp remains owed by whoever verifies.
 
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
