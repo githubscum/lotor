@@ -24,10 +24,62 @@ import { loadPolicy } from '../policy/index.js';
 import { snapshotHookRegistration } from '../registration.js';
 import { sinceReport } from '../views/since.js';
 import { liveReport } from '../views/live.js';
+import { captureBuildIdentity, checkFreshness } from './build-identity.js';
 import * as crypto from 'node:crypto';
 
 // Initialize store under the canonical Lotor home
 const store = createStore(resolveHome());
+
+/**
+ * The repository this server was loaded from, and the build it is.
+ *
+ * KNOWN-LIMITS 41: this process is spawned once by the client and outlives
+ * every session in it, so a fix under src/ is invisible here until the client
+ * restarts, and until now nothing in a response said which build answered. A
+ * pre-fix answer was once read as a live defect and reported as a finding.
+ *
+ * Captured once, at load, because that is the moment whose code this process
+ * is actually running.
+ */
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const BUILD = captureBuildIdentity(REPO_ROOT);
+
+/**
+ * The stamp attached to every tool response.
+ *
+ * Short by design: a reader scanning an answer needs the build and whether it
+ * is still current, not a manifest. `sourceDigest` is truncated for reading;
+ * `buildFull` is not, so the truncation is never the only value available
+ * (limit 50's lesson: a shortened digest that looks comparable and is not).
+ */
+function buildStamp() {
+  const fresh = checkFreshness(BUILD, REPO_ROOT);
+  const stamp = {
+    version: BUILD.version,
+    build: BUILD.sourceDigest ? BUILD.sourceDigest.slice(0, 12) : null,
+    buildFull: BUILD.sourceDigest,
+    startedAt: BUILD.startedAt,
+    pid: BUILD.pid,
+    sourceChangedSinceStart: fresh.stale
+  };
+  if (fresh.stale !== false) {
+    // Silent when the process matches disk: a warning that fires with nothing
+    // to report is limit 39, and this file is not going to add another one.
+    stamp.warning = fresh.reason;
+  }
+  return stamp;
+}
+
+/**
+ * Attach the build stamp to a tool result without colliding with its fields.
+ * Non-objects are wrapped rather than mangled.
+ */
+function withBuild(result) {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+    return { result, _lotorBuild: buildStamp() };
+  }
+  return { ...result, _lotorBuild: buildStamp() };
+}
 
 /**
  * The chain holds several kinds of entry and they do not share a shape.
@@ -460,17 +512,17 @@ function createMcpServer() {
 
     switch (name) {
       case 'query_receipts':
-        return { content: [{ type: 'text', text: JSON.stringify(handleQueryReceipts(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleQueryReceipts(args)), null, 2) }] };
       case 'sessions_live':
-        return { content: [{ type: 'text', text: JSON.stringify(handleSessionsLive(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleSessionsLive(args)), null, 2) }] };
       case 'sessions_since':
-        return { content: [{ type: 'text', text: JSON.stringify(handleSessionsSince(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleSessionsSince(args)), null, 2) }] };
       case 'verify_chain':
-        return { content: [{ type: 'text', text: JSON.stringify(handleVerifyChain(), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleVerifyChain()), null, 2) }] };
       case 'lotor_status':
-        return { content: [{ type: 'text', text: JSON.stringify(handleStatus(), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleStatus()), null, 2) }] };
       case 'gated_action':
-        return { content: [{ type: 'text', text: JSON.stringify(handleGatedAction(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(withBuild(handleGatedAction(args)), null, 2) }] };
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -489,7 +541,11 @@ export {
   handleGatedAction,
   // Exported so the per-type shaping can be tested against synthetic payloads
   // without standing up a store or a chain.
-  summarizeEntry
+  summarizeEntry,
+  // Exported so the build stamp that rides on every response can be tested
+  // without standing up a transport.
+  buildStamp,
+  withBuild
 };
 
 // Export store for testing (allows tests to reset/reload)
