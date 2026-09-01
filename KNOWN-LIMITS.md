@@ -586,6 +586,8 @@ when its spelling was not the exact compact form:
   undeclared false-positive class: the cheaper direction, but it costs signatures
   on ordinary work and is now stated here on purpose.
 
+## 25. The gate knew git's transports and not git's vendor CLI
+
 Until 2026-07-24, `gh` — the GitHub CLI, authenticated against the user's account
 from the system keyring — was almost entirely invisible to the rule set. Three
 specific shapes were matched (`gh pr merge`, `gh release create`, `gh * create`);
@@ -929,6 +931,40 @@ the repo) and the mutation of the tracked file goes away. That edit is to
 `bin/limits-pin.js`, which self-mod gates, and it was blocked unsigned when this
 entry was written. Named here rather than smuggled into a file the gate does
 allow.
+
+**Amendment, 2026-09-01. The failure this pin was built to prevent happened
+anyway, in a worse form, and nothing saw it.** The pin exists because of
+2026-08-22, when a bounty cited an entry number that meant something different on
+`main`. Seven days later an entry number stopped meaning anything at all.
+
+`dc1910b` (PR #36, an outside contributor's destructive-matcher fix) appended an
+amendment to entry 24 and, in the same hunk, **deleted the `## 25.` heading
+line.** Nothing else about entry 25 was touched. Its body — three paragraphs on
+`gh`, the authenticated vendor CLI the rule set could not see — has been sitting
+inside entry 24 ever since. So a reader of "the destructive allowlist exempts
+real directories named tmp/temp/scratchpad" got a section that changes subject
+mid-way to an unrelated limit about GitHub's CLI, and a citation of
+"KNOWN-LIMITS 25" resolved to nothing. The log ran 1 to 61 with 60 entries in it.
+
+**It survived a code review and 891 green tests**, because no test ever read the
+shipped log as a structure. The two tests that name the real log both write the
+state they then assert (the finding above); neither looks at what is committed.
+An accidental one-line deletion inside a 230-line documentation diff is exactly
+what review misses and exactly what a parser catches for free.
+
+**Fixed here.** The heading is restored — a faithful revert of the deleted line,
+with the body left where it has always been — and
+`test/known-limits-numbering.test.js` now reads the committed file and asserts
+the entry numbers are contiguous from 1, unique, and above a sanity floor. It is
+read-only: it opens the shipped log, writes nothing, and needs no pin to pass.
+Run against `main` today it fails on the missing 25, which is the fail-first
+evidence that it tests something real.
+
+**Still not fixed, and still for the same reason:** the stale pin above. This
+run verified the log's *structure* against the tree; it did not read 61 entries
+for *truth* against `dc1910b`. Stamping on the strength of a numbering check
+would be a smaller lie than stamping on nothing, and it would still be one. The
+stamp remains owed by whoever verifies.
 
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
