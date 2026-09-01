@@ -1595,8 +1595,10 @@ charters cannot supply it for the non-delegable core by construction.
 
 ## 44. Scheduled task and cron operations are not gated
 
-**Status: closed for the honest-agent class 2026-08-25 (stdio42-codex-
-20260821), residuals below. Found 2026-07-29 by an agent expecting a gate
+**Status: NARROWED, not closed. Was recorded "closed for the honest-agent
+class" 2026-08-25 (stdio42-codex-20260821); downgraded 2026-09-01 when four
+forms of the same class were measured walking past the closing change — see
+the amendment at the end of this entry. Residuals below. Found 2026-07-29 by an agent expecting a gate
 ceremony on `Register-ScheduledTask` that never materialized; the task
 registered clean, no staged approval, no receipt of a denial.**
 
@@ -1650,6 +1652,79 @@ grazing mode these warn, as crontab always did. Residuals, stated:
 - **What a registered task later RUNS is still outside any hook**, exactly as
   this entry said: registration-time gating bounds what gets installed, not
   what installed things do at 03:00.
+
+**AMENDED 2026-09-01: "closed for the honest-agent class" was too strong, and
+the four forms that disprove it are one token from the closing change's own
+worked examples.** Found by probing the merged matcher during the post-merge
+review of the change above, rather than by reading it. Measured against `main`
+at `6d77e64`:
+
+```
+GATE | systemd-run --on-active=30 touch /tmp/m      <- the closing PR's example
+FREE | systemd-run --on-active 30 touch /tmp/m      <- the same flag, no '='
+FREE | systemd-run --on-calendar "*:0/5" touch /tmp/m
+GATE | echo x | at 03:00                            <- the closing PR's example
+FREE | echo x | at 3pm
+FREE | echo x | at 1730
+FREE | echo x | at 10am tomorrow
+```
+
+Two causes, both narrow. The systemd guard is `/(^|\s)--on-[-a-z]+=/` and
+requires the `=`; systemd parses with getopt_long and `required_argument`,
+which takes `--on-active 30` just as readily, registering the same timer. And
+the at(1) time-spec alternation carries `now|noon|midnight|teatime|today|
+tomorrow|HH:MM|+N` but not the am/pm forms or a bare `HHMM`, both of which
+at(1) accepts.
+
+**Why this is an amendment and not a new entry.** These are not a new class.
+They are the class this entry says is closed, reached by a spelling the matcher
+did not remember — which is the exact failure mode the closing change was
+written to fix, recurring one level down. Deciding by what the thing IS rather
+than by a remembered spelling is right; the time spec and the flag separator
+are still remembered spellings.
+
+**Against an honest agent this matters more than it looks.** The distinction
+between `--on-active=30` and `--on-active 30` is not a choice anyone makes on
+purpose. An agent that reaches for the space form is not evading anything and
+gets no receipt, so the operator's record shows a clean session where the gated
+one should have been. The residual list above is otherwise scrupulous and does
+not mention either form, so a reader of this entry currently believes something
+slightly stronger than what ships.
+
+**The fix is two one-line widenings and it is NOT in this change, because it is
+core.** `src/policy` is on the non-delegable list, and the self-mod gate
+blocked the edit unsigned during the run that found this — correctly, and the
+command was not reshaped to get around it. Named here instead, per the standing
+practice that a docs-only confession lands without a ceremony while the code it
+describes waits for one:
+
+1. make the separator optional in the systemd guard (`--on-[-a-z]+[=\s]`);
+2. add `\d{1,2}(:[0-5]\d)?\s*(am|pm)` and a bare four-digit `HHMM` to the at(1)
+   alternation.
+
+Each needs a control landing beside it, because widening a time spec is exactly
+where prose starts firing: `at 12 files`, `grep at 1200 log.txt`. The existing
+controls (`/tmp/at-the-market.txt`, `systemd-run --wait`, `systemctl status`)
+must stay free. **Whoever lands the code should treat the probe above as the
+fail-first evidence and convert it to cases in
+`test/policy-scheduled-task.test.js`; this amendment deliberately ships no
+test, because a test asserting the fixed behavior would land red.**
+
+**Amended the same day: the five uncovered forms are now asserted as
+uncovered.** A test of the fixed behavior would land red, and a confession
+that only exists in prose is one someone can close by editing prose. The
+third option is the one that shipped: `test/policy-scheduled-task.test.js`
+carries a TRIPWIRE block asserting that these forms are still FREE, with the
+covered forms (`--on-active=30`, `at 03:00`, `at noon`) beside them as
+controls so the block cannot pass because the matcher died. **When the two
+widenings land, that block fails**, and the instruction in it is to invert
+the assertions and amend this entry in the same change rather than delete the
+test. The gap is now executable, and closing it silently is no longer
+available.
+
+**Still not covered, unchanged by this amendment:** `systemctl enable` on an
+existing unit, `batch`, `anacron`, `fcron`, SysWOW64's task store, and what a
+registered task runs later.
 
 ## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
 
