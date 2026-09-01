@@ -1229,6 +1229,35 @@ may be read on a machine that did not write it (limit 9). Read `confirmed` as
 "a path consistent with this item was touched", never as proof the declared file
 was the one.
 
+**Amended 2026-08-31. NARROWED, not closed.** The sentence above told the reader
+to read `confirmed` as something weaker than it said. Nothing in the output
+helped them do it: an exact match and a tail-only match both printed the single
+word `confirmed`, and the report never said which one it was holding.
+
+`samePath()` is now `pathMatch()` and returns `exact`, `suffix` or null. A
+confirmation carries `matchKind`, the paths it matched on, and `ambiguous`, which
+is set when a tail-only match hit **more than one distinct recorded path** — the
+false confirmation happening in front of us, since at most one of them can be the
+declared file. `deviationNote()` counts the tail-only confirmations and states
+the failure direction, and stays silent when every match was exact, because a
+caveat that fires with nothing to report is limit 39 again. 898 tests green,
+seven of them new.
+
+**What did not change, and cannot.** The ambiguity is unresolvable for the reason
+this entry already gave: a charter may name a file that does not exist yet, and a
+chain may be read on a machine that did not write it (limit 9). **A tail-only
+match is still counted as `confirmed` rather than downgraded**, because the
+relative-charter-against-absolute-record case is the ordinary one and downgrading
+it would break the thing the suffix rule exists for. The false confirmation is
+still reachable. What changed is that the report no longer presents the strong
+case and the ambiguous case as the same word, and the reader is told how many of
+each they were handed.
+
+**Doubt this:** the count is only as good as `touched`, which is self-attested
+capture (limit 1), and `ambiguous` cannot fire at all when the two colliding
+checkouts are on different machines, because only one of them is in this chain.
+A single tail match is reported as unambiguous and may still be the wrong file.
+
 ## 39. The retcon's honesty block states invented specifics
 
 Found in the same run, and it is the worse of the pair.

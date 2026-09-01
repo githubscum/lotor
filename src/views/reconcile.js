@@ -50,27 +50,33 @@ function norm(p) {
 }
 
 /**
- * Do two paths refer to the same file?
+ * How do two paths match, if at all? Returns 'exact', 'suffix', or null.
  *
- * Exact match, or one is a path-segment-boundary suffix of the other. The
- * suffix case is needed because a charter is written by a human in relative
+ * The suffix case is needed because a charter is written by a human in relative
  * form ("bin/retcon.js") while `touched` carries whatever the harness recorded,
  * which is usually absolute.
  *
- * STATED AS A LIMITATION RATHER THAN LEFT TO BE FOUND: this can match two
- * genuinely different files that share a tail, for example the same relative
+ * STATED AS A LIMITATION RATHER THAN LEFT TO BE FOUND: a suffix match can match
+ * two genuinely different files that share a tail, for example the same relative
  * path inside two checkouts. It cannot resolve, because a charter may name a
  * file that does not exist yet and a chain may be read on a different machine
  * than wrote it (limit 9). The failure direction is a FALSE CONFIRMATION,
- * which is the wrong direction, so it is called out in the output rather than
- * silently trusted.
+ * which is the wrong direction.
+ *
+ * WHY THIS RETURNS A KIND AND NOT A BOOLEAN (2026-08-31, limit 38 narrowed).
+ * It used to return true for both, and the caller printed one word, "confirmed",
+ * over both. That made the strong case and the ambiguous case indistinguishable
+ * in the only place a reader looks. The kind is carried through to the report so
+ * the reader can tell which one they were handed. The ambiguity itself is not
+ * fixed and cannot be; what is fixed is reporting it as though it were not there.
  */
-function samePath(a, b) {
+function pathMatch(a, b) {
   const x = norm(a);
   const y = norm(b);
-  if (x === '' || y === '') return false;
-  if (x === y) return true;
-  return x.endsWith('/' + y) || y.endsWith('/' + x);
+  if (x === '' || y === '') return null;
+  if (x === y) return 'exact';
+  if (x.endsWith('/' + y) || y.endsWith('/' + x)) return 'suffix';
+  return null;
 }
 
 /** The file path a charter item names, or '' if it names none. */
@@ -138,8 +144,31 @@ export function reconcile(charter, r) {
       continue;
     }
 
-    if (touched.some(t => samePath(t, fp))) {
-      confirmed.push({ item, matchedBy: 'touched' });
+    // An exact match, when one exists, is the answer. A tail-only match is
+    // still a confirmation, because the relative-charter-versus-absolute-record
+    // case is the ordinary one and downgrading it would break what this is for.
+    // It is LABELLED rather than downgraded, and the caveat block counts it.
+    const exact = [];
+    const suffix = [];
+    for (const t of touched) {
+      const kind = pathMatch(t, fp);
+      if (kind === 'exact') exact.push(t);
+      else if (kind === 'suffix') suffix.push(t);
+    }
+
+    if (exact.length > 0 || suffix.length > 0) {
+      const matchKind = exact.length > 0 ? 'exact' : 'suffix';
+      const matchedPaths = exact.length > 0 ? exact : suffix;
+      // Two distinct recorded paths matching one declared tail is the false
+      // confirmation happening in front of us: at most one of them can be it.
+      const distinct = new Set(matchedPaths.map(norm)).size;
+      confirmed.push({
+        item,
+        matchedBy: 'touched',
+        matchKind,
+        matchedPaths,
+        ambiguous: matchKind === 'suffix' && distinct > 1
+      });
     } else {
       noEvidence.push({ item, why: 'no closed session in this window reported touching it' });
     }
@@ -159,7 +188,11 @@ export function reconcile(charter, r) {
 
   return {
     confirmed, noEvidence, unreconcilable, undetermined,
-    toolsNotDeclared, pathEvidenceAvailable
+    toolsNotDeclared, pathEvidenceAvailable,
+    // Counted here so a renderer does not have to know the shape of a
+    // confirmation to say the honest thing about it.
+    confirmedBySuffixOnly: confirmed.filter(c => c.matchKind === 'suffix').length,
+    ambiguousConfirmations: confirmed.filter(c => c.ambiguous).length
   };
 }
 
@@ -182,6 +215,9 @@ export function deviationNote(out) {
   const unreconcilable = n('unreconcilable');
   const undetermined = n('undetermined');
   const notDeclared = n('toolsNotDeclared');
+  const int = k => (Number.isInteger(out?.[k]) ? out[k] : 0);
+  const suffixOnly = int('confirmedBySuffixOnly');
+  const ambiguous = int('ambiguousConfirmations');
 
   const lines = [
     'Receipts carry which tools ran and a digest of their parameters.',
@@ -201,6 +237,9 @@ export function deviationNote(out) {
   if (notDeclared > 0) {
     facts.push(`${notDeclared} tool(s) were used that no declared item names`);
   }
+  if (suffixOnly > 0) {
+    facts.push(`${suffixOnly} confirmation(s) rest on a path-tail match, not an exact one`);
+  }
 
   if (facts.length === 0) {
     lines.push('Nothing was counted on either side of the comparison here.');
@@ -210,6 +249,16 @@ export function deviationNote(out) {
 
   if (unreconcilable > 0 || undetermined > 0) {
     lines.push('An item this cannot check is NOT an item that did not run.');
+  }
+
+  // Limit 38's residual, said out loud at the only moment a reader can act on
+  // it. Silent when nothing rests on a tail match, per limit 39: this block
+  // states what was counted and never what would have sounded good.
+  if (suffixOnly > 0) {
+    lines.push('A tail match means a path CONSISTENT with the item was touched, never that the declared file was the one. The same relative path in two checkouts matches identically.');
+  }
+  if (ambiguous > 0) {
+    lines.push(`${ambiguous} of those matched more than one distinct recorded path, so at most one of the matches can be the declared file.`);
   }
 
   return lines.join('\n');
