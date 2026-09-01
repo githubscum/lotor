@@ -1395,6 +1395,41 @@ than the fix they are checking. Until then, after changing anything under
 `src/mcp/`, restart the client before trusting its output, and treat a surprising
 result from these tools as possibly a version question rather than a finding.
 
+**NARROWED 2026-08-31. The mitigation named above is now shipped, and it does
+slightly more than the entry asked for.** Every tool response carries a
+`_lotorBuild` stamp: the package version, a digest of this repository's own
+`.js` source under `src/` and `bin/` taken at process load, the process start
+time, the pid, and a `sourceChangedSinceStart` boolean. When the source on
+disk no longer matches what this process started with, the stamp adds a
+`warning` telling the reader these answers come from a build that no longer
+exists and to restart the client. When it matches, the warning is absent,
+because a caveat that fires with nothing to report is limit 39.
+
+Content, not mtime, is what is compared, which is the difference between a
+detector and a nuisance: a `git checkout`, a `touch`, or an edit that is made
+and then reverted all leave the running code equal to the code on disk, and
+none of them should tell an operator to restart.
+
+**What is narrowed, precisely: the reader is no longer silent about its own
+age.** What is NOT closed, and is worth being blunt about, because this entry's
+whole subject is a reader that was confidently wrong:
+
+- **It compares disk against disk-at-start, not against the code the process
+  actually loaded.** That is a proxy. It is a good one, since the process
+  loaded from that disk moments before the first digest, but a module loaded
+  by an absolute path from outside the repository is outside the fingerprint.
+- **`node_modules` is not in the digest.** A dependency upgrade under a live
+  server moves nothing and warns nobody.
+- **Only `.js` files under `src/` and `bin/` are hashed.** Policy files,
+  settings, and the chain itself are not source and are not covered.
+- **A digest detects, it does not explain** (the same edge as limit 53). The
+  stamp says the source moved. It cannot say what moved, and a reader still
+  has to go to git for that.
+- **The stamp is only as reachable as the reader's attention.** It rides on
+  every response, but nothing forces anyone to look at it. This makes the
+  staleness *visible*; it does not make it *impossible*, and the restart
+  advice above still stands as the actual fix.
+
 ## 42. A signature is spent when the gate verifies it, not when the action succeeds
 
 Found 2026-07-26, live, on a push.
