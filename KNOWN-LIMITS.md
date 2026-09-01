@@ -870,6 +870,66 @@ merge is the moment the amendment is owed**, not some later tidy-up. None of the
 candidate fixes above would have caught this either; a CI check on `src/` would have
 passed, since the merge commit touches this file's neighbours and not its claims.
 
+**Update 2026-09-01. The pin is stale on `main` right now, the suite is green,
+and the two tests that name the real log are the reason.** Found by running the
+check the entry recommends, which nothing else does.
+
+The committed pin reads `2173d231` (stamped 2026-08-23, subject "opaque-exec:
+gate local scripts handed to a script interpreter (#28)"). The last commit that
+touched `src/` on `main` is `dc1910b` ("fix(C6): scope rm trigger to its
+segment; check every git-clean pathspec; amend limit 24 (#36)"). So
+`npm run limits-pin -- --check` on a clean `main` checkout reports divergence
+and exits 1, and has done since #36 landed. A reader who follows the
+instruction in the pin block is told, correctly, that they are reading a
+description of somewhere else.
+
+**Why the suite did not catch it, which is the part worth keeping.** Two tests
+in `test/known-limits-commit-pinning.test.js` announce themselves as exercising
+"the REAL shipped log". Neither asserts anything about the log as committed:
+
+- the first runs `--stamp` on it and *then* asserts `--check` reports current.
+  That proves `--stamp` works. It cannot fail on a stale committed pin, because
+  it overwrites the pin before looking at it.
+- the second writes a foreign hash into it and asserts `--check` exits 1. That
+  proves `--check` works. It also cannot fail on a stale committed pin, for the
+  same reason in the other direction.
+
+Both write the state they then assert, so the committed value is never read.
+The suite is green at 908 tests with the shipped log wrong, which is this
+entry's own thesis one level up: **the mechanism built to make staleness
+detectable is never run against the artifact, and its tests are shaped so they
+structurally cannot fail on it.** The 2026-08-23 fix said "that CI wiring is
+still not built; the check exists, the automation does not." That is still true,
+and this is what it cost.
+
+**A second defect, found in the same read.** Those two tests reach green by
+writing to the tracked `KNOWN-LIMITS.md` in the working tree and restoring it in
+a `finally`. A `finally` survives an assertion failure; it does not survive the
+process being killed. An interrupted `npm test` can leave the shipped confession
+log carrying `commit: bbbbbbbb...`, subject "some other tree" — a fabricated pin,
+in the file this repository's own tooling stages and commits. This entry already
+says nothing stops a commit carrying a false pin and that review is what catches
+it. The suite that tests the pin is a mechanism that manufactures one,
+unattended.
+
+**Not fixed here, and the reason is not time.** The obvious repair is a
+read-only test asserting the committed pin equals the last `src/` commit — the
+assertion that would have caught this. It fails on `main` today, so landing it
+requires re-stamping in the same change, and **stamping is a claim that the
+entries were verified against that tree.** `bin/limits-pin.js` says so in its
+own header: a stamp that happens without anyone verifying makes the pin say
+"verified" when nobody did. This lane has not read 61 entries against
+`dc1910b`, so it will not make that claim, and re-stamping to go green would be
+the precise dishonesty the pin exists to prevent. The stamp is owed by whoever
+verifies.
+
+The test-isolation half is separable and does not need a stamp: point the CLI at
+a scratch copy (an env override on the log path, git resolution left anchored to
+the repo) and the mutation of the tracked file goes away. That edit is to
+`bin/limits-pin.js`, which self-mod gates, and it was blocked unsigned when this
+entry was written. Named here rather than smuggled into a file the gate does
+allow.
+
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
 Found 2026-07-26, live, from a double-signing that was an accident.
