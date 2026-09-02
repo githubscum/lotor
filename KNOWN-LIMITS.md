@@ -2074,3 +2074,62 @@ reviewed sitting rather than in this entry.
 behavior with the plain spellings beside it as controls. **When the matcher is
 fixed, that file fails.** The repair is to invert its assertions and amend this
 entry in the same change, never to delete the block.
+
+## 63. The matcher version stamp hashes the rule entry points, not the code that decides
+
+Found 2026-09-02, by asking what `matcherVersionHash()` actually reads rather than
+what its comment says it reads.
+
+Every `gated-action`, `policy-warn`, grant and egress receipt carries a matcher
+version. It is the field a reader uses to answer the only question that makes two
+receipts comparable: **were these decided by the same rules?** The function's own
+docstring calls it the "content hash of the matcher logic in force right now."
+
+**It hashes thirteen top-level functions plus `RULE_TABLE` and `RULE_INFO`.**
+`Function.prototype.toString()` returns a function's own source and nothing it
+calls, so a helper is covered only if the `parts` array names it. The self-mod
+deciders are not named: `selfModFragmentsForBase` (the protected-path list
+itself), `isSelfModEdit`, `selfModCommandHit`, `normalizePath`,
+`pathContainsFragment`, `expandBraces`, `stripHeredocBodies`, `stripMessageArgs`.
+`isSelfMod` IS hashed and is a three-line dispatcher: it names the two matchers
+and contains neither.
+
+**Measured, not argued.** `test/policy-matcher-stamp-coverage.test.js` asserts the
+absence directly against the hashed inputs, with controls asserting the hashed
+bodies are present so the block cannot pass vacuously. On the build this entry was
+written against, the stamp is `matcher/1 95291ff6385151ca`.
+
+**What it costs.** Add a directory to the protected list, change how a path is
+folded before it is matched, or widen the brace expander, and the gate stops a
+different set of actions while the stamp stays byte-identical. Two receipts either
+side of that change agree on the matcher version and disagree on the behavior.
+**The failure runs the wrong way on purpose-built silence:** a matcher WEAKENED
+between two runs keeps stamping the old, stronger version, so the record's own
+account of why an action was allowed is wrong in the permissive direction. This is
+a witness defect rather than an enforcement one, which is what makes it worth its
+own entry: the gate still gates correctly, and the trace misdescribes it.
+
+A shipped change demonstrates it. The stamp was introduced 2026-08-09 (commit
+b1b7bf8, "Observer versioning: matcher hash and canonical params digest"). The
+protected-path list gained an entry on 2026-08-23, two weeks later, which changed
+what an unsigned Edit could touch. That list is not inside the hashed text, so a
+receipt written before that date and one written after carry the same matcher
+version and cannot be told apart by it.
+
+**The repair, and why it is not done here.** Add the helpers to `parts` and bump
+`MATCHER_SCHEMA` to `matcher/2` (the hashing METHOD changes, which is precisely
+what that marker exists to record; the value changing on its own would otherwise
+be indistinguishable from a rule edit). Historical receipts keep `matcher/1` and
+stay honest about what they meant. That edit is `src/policy` and therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with the disclosure.
+
+**Residual after the repair, stated now.** A hash over function source is still a
+hash over THIS module. Behavior that reaches the decision from outside it, such as
+`src/policy/git-context.js` resolving a push target, would remain unstamped. The
+honest ceiling is "the rules in this file", and the docstring should say that
+instead of "the matcher logic", which is what invited the gap in the first place.
+
+**Related.** Limit 62 is the same file being wrong about paths; this is the record
+being wrong about limit 62. A stamp that does not move when 62 is fixed is how a
+reader would fail to notice the fix landed.
