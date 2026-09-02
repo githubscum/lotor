@@ -2010,3 +2010,67 @@ sitting rather than riding along with a documentation change.
 That is one sentence longer and it is true. Deriving the list from the policy table
 rather than hardcoding it would also keep the sentence honest if the table changes,
 which is the failure that produced limit 39 in the first place.
+
+## 62. The self-mod matcher folds slashes and case, and stops there, so an equivalent path spelling is ungated
+
+Found 2026-09-01, by running fourteen spellings through the shipped matcher rather
+than reading it. Twelve seconds of probing, seven misses.
+
+`normalizePath()` in `src/policy/index.js` converts backslashes to forward slashes,
+lowercases, and strips a trailing slash. The self-mod fragment list is then matched
+as a plain substring on both paths: `cmdNorm.includes(frag)` for a command,
+`pathContainsFragment()` for an `Edit`. **A doubled separator or a `.` segment
+defeats both**, because neither is removed before the comparison and neither breaks
+the path for the operating system:
+
+| Spelling | Gated today | Opens the protected file |
+|---|---|---|
+| `<repo>/src/policy/index.js` | yes | yes |
+| `<repo>/src//policy/index.js` | **no** | yes |
+| `<repo>/src/./policy/index.js` | **no** | yes |
+| `<repo>/src/./chain/index.js` | **no** | yes |
+| `<repo>/bin//charter.js` | **no** | yes |
+| `<repo>/./bin/./charter.js` | **no** | yes |
+
+The right-hand column is measured, not argued: the test asserts it by writing a
+canary file and reading it back through all three spellings.
+
+**The `Edit` half is the one that matters.** The command half is a shell matcher and
+the file already concedes (limit 34) that a command cannot be resolved. `Edit`,
+`Write` and `NotebookEdit` carry a `file_path`, and limit 34 says outright that a
+path **can be proven contained** and that the resolver in `core-paths.js` is the
+better answer, not taken because it couples `src/policy` to `src/grant`. This entry
+is what that deferral costs: not a theoretical drift in a hand-maintained list, but
+a live, one-character bypass of the rule that protects the gate, the chain, the
+store, the grant verifier and every script in `bin/`. `src/policy` stays at `gate`
+in every mode including loose, and this walks around it in every mode.
+
+**Not a new class, and that is the uncomfortable part.** Limit 22 was tilde and
+`$HOME` spellings. LOTOR-C2 was brace expansion. This is a third spelling escape in
+the same matcher, and all three were found the same way: by executing the matcher,
+never by reading it. The pattern says the substring approach will keep leaking on
+the command side, where it has to, and that the `Edit` side should stop being a
+matcher at all.
+
+**Also unfixed and less certain:** `src/policy./index.js` is ungated and Windows
+strips trailing dots from a path component (the mechanism named in limit 22), but
+`fs.existsSync` refused that spelling on the machine where this was found, so
+whether a real write lands is **unverified**. Recorded so it is not lost, marked so
+it is not quoted as proven.
+
+**The fix is `src/policy` and therefore non-delegable core.** It is one clause in
+`normalizePath` (collapse `/+`, drop `./` segments) plus the resolver swap limit 34
+already specifies for the `Edit` path. It was attempted on 2026-09-01 and **the gate
+refused it unsigned, correctly**. The bypass proved above was not used to land the
+fix; it is queued for a signing sitting.
+
+**Caution for whoever writes that clause:** `normalizePath` is applied to whole
+command strings, not only to paths. Collapsing `/+` globally rewrites `https://x` to
+`https:/x`, and other matchers in the same file read command text. The change needs
+its blast radius checked across every caller, which is exactly why it belongs in a
+reviewed sitting rather than in this entry.
+
+`test/policy-selfmod-separator-spellings.test.js` asserts the current, defective
+behavior with the plain spellings beside it as controls. **When the matcher is
+fixed, that file fails.** The repair is to invert its assertions and amend this
+entry in the same change, never to delete the block.
