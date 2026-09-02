@@ -2133,3 +2133,69 @@ instead of "the matcher logic", which is what invited the gap in the first place
 **Related.** Limit 62 is the same file being wrong about paths; this is the record
 being wrong about limit 62. A stamp that does not move when 62 is fixed is how a
 reader would fail to notice the fix landed.
+
+## 64. The whole-tree fingerprint exists, and it is wired to the reader instead of the record
+
+Found 2026-09-02, following limit 63's own stated residual to the place it leads,
+and finding the fix already built and pointed the wrong way.
+
+This repository computes **two** code identities, and they cover different things.
+
+| Stamp | Covers | Reaches |
+|---|---|---|
+| `matcherVersionHash()` | named functions in `src/policy/index.js` (and per limit 63, not all of them) | **every receipt**: `gated-action`, `policy-warn`, grant, egress, session-start |
+| `computeSourceDigest()` | **every `.js` file under `src/` and `bin/`** | MCP tool responses only, as `_lotorBuild` |
+
+**Measured, not argued.** `test/stamp-reach-coverage.test.js` asserts all of it
+against the tree. On the build this entry was written against: the build digest is
+`47ed7876d2652e68`, over **50 files / 522,651 bytes**; the matcher stamp is
+`matcher/1 95291ff6385151ca`. The digest's file set contains `src/gate/index.js`,
+`src/grant/check.js`, `src/chain/index.js`, `src/store/index.js` and
+`bin/hook-pre-tool-use.js` — every module that decides whether an action is
+allowed. The matcher stamp contains none of them. And the digest has exactly two
+consumers in the whole tree, `src/mcp/build-identity.js` and `src/mcp/server.js`,
+neither of which writes to the chain.
+
+**What it costs.** Change the gate, the grant checker, the chain writer, the store,
+or the pre-tool-use hook, and every receipt written after the change is
+byte-comparable with every receipt written before it. `matcherHash` is unmoved,
+because none of that code is in the policy module. A reader asking the question
+receipts exist to answer — *were these two decided by the same code?* — is told yes,
+and the honest answer is unknown. The MCP reader is told the truth in the same
+minute, on a response that is discarded when the call returns.
+
+**Why this is its own entry rather than limit 63's residual.** Limit 63 names the
+gap ("behavior that reaches the decision from outside it would remain unstamped")
+and treats it as an accepted ceiling. It is not a ceiling. **The instrument that
+closes it is already in this repository, already tested, already computing the
+right value on every MCP call.** The defect is not a missing capability, it is a
+wire going to the wrong consumer, and that is a different and much cheaper thing to
+fix. Limit 63's repair (widening `parts`) does not touch this and should not be
+read as covering it.
+
+**The asymmetry is the sharpest part.** The ephemeral artifact carries the strong
+identity. The permanent artifact carries the weak one. That is exactly backwards
+for a project whose thesis is that the record outlives the reader, and it is the
+same shape as limit 41's original incident: the chain was intact and signed the
+whole time, and what could not be trusted was the account of which code produced
+the answer.
+
+**The repair, and why it is not done here.** Carry the source digest (short form
+plus full, per limit 50) onto `session-open` at minimum, where it costs one field
+per session rather than one per action, and let per-action receipts inherit it by
+session id. That edit touches `src/gate` and `bin/hook-*` and is therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with this disclosure.
+
+**Residual after that repair, stated now.** A digest over `src/` and `bin/` still
+misses `node_modules` (a dependency upgrade moves nothing), anything loaded by
+absolute path from outside the repository, and every non-`.js` input: policy files,
+settings, the chain itself. All 50 source files are `.js` today, so the extension
+filter has no live hole; a future `.mjs` or `.cjs` under either directory would be
+unstamped and nothing would say so. And a digest detects without explaining, which
+is limit 53 again.
+
+**Related.** Limit 41 shipped this digest to stop a stale reader misreporting a fix
+as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
+cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
+this is the wide one not being anywhere it matters.
