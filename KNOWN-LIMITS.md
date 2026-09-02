@@ -2199,3 +2199,73 @@ is limit 53 again.
 as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
 cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
 this is the wide one not being anywhere it matters.
+
+## 65. The freshness pin binds the code, and never the log it lives in
+
+Limit 29 gave `KNOWN-LIMITS.md` a pin: a comment block at the top naming the commit
+the log was verified against, plus `npm run limits-pin -- --check` so a reader in a
+different checkout is told they are reading a description of somewhere else. That
+works, and the design decision underneath it is right: the pin names **the last
+commit that touched `src/`**, not `HEAD`, because stamping is itself a commit that
+edits only this file. A `HEAD`-based pin could only ever name its own parent and
+would read `diverged` for every reader forever, training them to ignore it.
+
+**The consequence was not carried through.** A commit that edits only this log does
+not move the last `src/` commit either. So the pin cannot notice it. The check
+answers "has the code moved since the log was stamped?" and has no way to answer
+"is this the log that was stamped?"
+
+**Measured on a synthetic tree, not reasoned** (the real repository was not written
+to; `writePin`/`checkPin` were the shipped functions, and the commit resolution was
+reproduced verbatim from `resolvePinTarget`):
+
+| what changed after stamping | `src/` commit | reported |
+|---|---|---|
+| nothing | unmoved | `current` |
+| a new entry appended | unmoved | `current` |
+| an entry deleted, and another's claim reversed | unmoved | `current` |
+| a source file edited | moved | `diverged` |
+
+The third row is the one that matters. An entry can be added that was never held
+against any code, an entry can be deleted, and a limit's claim can be inverted from
+"this is not covered" to "this is covered", and the checker reports `current` and
+exits **0**. It does not merely fail to complain. It certifies.
+
+**What a reader should not conclude from `current`.** Not that the entries were
+verified. Not that the log is the one the stamp was applied to. Only that `src/` has
+not moved since somebody last ran `--stamp`. The pin block's own wording invites the
+stronger reading, because it says entry numbering, entry presence, and every claim
+are guaranteed for the pinned commit, and a reader who sees `current` will take that
+guarantee as live.
+
+**Why this is not the residual already declared.** `src/limits/pin.js` declares two:
+that a commit can carry a false pin, which review catches, and that touching code
+without re-stamping leaves a stale pin, which `--check` surfaces as divergence. Both
+are about the code half. This is the log half, it is silent rather than surfaced, and
+it needs no liar and no reviewer error. The mechanism working exactly as designed
+produces it.
+
+**Aggravating, and worth stating plainly: nothing runs the check.** It is not in
+`npm test`, and this repository has no CI at all. The shipped pin has been diverged
+since 2026-08-23 (pinned `2173d23`, last `src/` commit `9b8b862` at the time of
+writing) and no automated reader has said so once.
+
+**The repair, drafted and gated.** Add `body-sha256` to the pin block, covering the
+file with the pin block itself removed so that stamping stays stable and limit 29's
+self-invalidation problem does not return. A pin whose commit matches but whose
+digest does not is a third status, `edited`: the code is where the log says it is,
+and the log is not. Exit 1, like divergence, so a future CI can gate on it. A v1 pin
+with no digest keeps v1 semantics exactly, so old pins are not retroactively failed;
+re-stamping upgrades them. **The patch was written and the gate refused it** as a
+self-modification of `src/`, correctly, so it queues for a signing sitting rather
+than landing with this disclosure.
+
+**Residual after that repair.** A digest binds the text and says nothing about
+whether the text is true, which is limit 1 in a different coat. Re-stamping still
+asserts verification that nobody checks, and a liar re-stamps. The digest converts a
+silent gap into a prompt to re-verify; it does not perform the verification.
+
+**Related.** Limit 29 is the pin this extends. Limit 53 is why a digest detects
+without explaining. Limits 63 and 64 are the same family read three ways: 63 is a
+stamp narrower than it claims, 64 is a wide stamp wired somewhere it does not
+persist, and this is a stamp that covers the wrong artifact entirely.
