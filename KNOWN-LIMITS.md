@@ -2269,3 +2269,176 @@ silent gap into a prompt to re-verify; it does not perform the verification.
 without explaining. Limits 63 and 64 are the same family read three ways: 63 is a
 stamp narrower than it claims, 64 is a wide stamp wired somewhere it does not
 persist, and this is a stamp that covers the wrong artifact entirely.
+
+---
+
+## 66. Subagent tool use is outside the witness entirely
+
+**Found 2026-09-02**, on a real dispatch: one parent session, three concurrent
+children, chain rows counted across the window.
+
+Three Bash calls executed inside the measured window and produced **zero chain
+rows**. The parent's own calls in the same minutes produced a row every time,
+which is the control that makes the absence a measurement rather than an
+impression. **The gate cannot see, record, or stop anything a subagent does.**
+
+In LOOSE mode nothing was being stopped anyway, so today this reads as
+bookkeeping. Under a herded configuration it is a hole in **enforcement**:
+dispatching would be a way to do ungated work inside a gated session. The
+gap is the same size either way; only the consequence changes with posture.
+
+**The measurement.** The three children (`a0113e1c3f129f638`,
+`acd87cfd8747b4605`, `aeea528ee5379e3dc`) each wrote a transcript carrying
+`sidechain=true`, the parent session id, and the parent's `tool_use` uuid. The
+material to attribute them exists on disk and is correctly keyed. **What does
+not exist is any row in the chain.** The reader that proved this
+(`projects/meter/tools/trace-bridge.py`) lives outside this repository, so a
+reader of this log cannot re-run it from here; the evidence is the absence of
+chain rows, which anyone can check on their own dispatch.
+
+**Amended 2026-09-02: the reachability probe ran, and the floor came off.** This
+entry originally said that an honest agent reaching the hole by accident was
+**not established** and was the next probe. It is now measured. Every subagent
+transcript on this machine was replayed through Lotor's own matcher
+(`evaluate()`) under a policy with all nine rules set to `gate`: 3,962 tool calls
+from 1,073 child transcripts across 104 parent sessions, six weeks, zero read,
+parse or evaluate failures. **519 of those calls (13.1%) would have gated the
+parent had the parent made them**, sitting in 110 child transcripts and touching
+40 of the 104 parent sessions (38.5%). By rule: opaque-exec 339, self-mod 171,
+destructive 4, egress-other 4, scope-escalation 1. **377 of the 519 are after the
+gate was armed on 2026-07-23.** The upgrade is duller and stronger than "the gate
+can be bypassed": **the bypass does not require intent, and it is the normal
+case.** 519 is a floor rather than a point estimate, and the same-command
+asymmetry it exposes is filed separately as limit 70.
+
+**Related.** Limit 67 is the same dispatch reporting numbers that do not match
+its own transcripts. Limit 44 is the other enforcement gap found by probing
+rather than by reading.
+
+## 67. The harness's reported subagent token figure does not reconcile with the transcript
+
+**Found 2026-09-02**, comparing what the harness reports per child against what
+the child's own transcript records.
+
+Reported per child: **32,395 / 32,481 / 32,504**. Three near-identical numbers.
+The transcripts, summed excluding cache reads, give **32,512 / 25,069 /
+25,132**. Two of the three are off by about **7,400**, and the reported figures
+do not track the observed spread at all.
+
+**The arithmetic, so it can be checked.** Child one recorded `in=4 out=149
+cache_write=32359`, summing to 32,512. Child two recorded `in=6 out=456
+cache_write=24607`, summing to 25,069. Child three recorded `in=6 out=495
+cache_write=24631`, summing to 25,132. Cache reads (28,799 / 65,449 / 65,451)
+are excluded from the sum because they are priced separately.
+
+**The convenient number is not the auditable one.** Anything priced from the
+harness notification is wrong for two of these three calls.
+
+**What a reader should not conclude.** This does not establish which side is
+correct. It establishes that they disagree by a margin large enough to change a
+price, and therefore that a receipt must be built from the transcript, which is
+the artifact the work actually left behind.
+
+**Related.** Limit 66 is the same dispatch leaving no chain row at all. Limit 69
+is what happens to the dollars once the tokens are settled.
+
+## 68. The subagent reader depends on an undocumented harness path layout, and fails to a false zero
+
+**Found 2026-09-02**, by reading the reader rather than trusting it.
+
+Child transcripts are located at
+`<project-slug>/<parent-session-id>/subagents/agent-<agentId>.jsonl`. That
+layout is an internal detail of the harness and can change in any release
+without notice. The reader as written **globs that pattern and reports a count**
+(`projects/meter/tools/trace-bridge.py`, the glob at line 24 and the
+`children found :` print at line 73). Across all 91 lines it reads **no version
+or schema marker** before walking the directory.
+
+**So its failure mode is a false zero.** Rename the directory, change the
+suffix, move the level, and the reader reports `children found : 0` and exits
+clean. **Silence would read as "no subagents ran."** That is not hypothetical:
+the first scan of this layout on 2026-09-02 reported zero sidechain entries
+anywhere, and it was wrong. The absence was in the query, not in the world.
+
+**A reader must distinguish "no children" from "cannot find children."** The two
+are the same output today and mean opposite things.
+
+**What a reader should not conclude.** Not that the layout is unstable. Only
+that nothing here would notice if it moved, and that the noticing has to be
+built rather than assumed.
+
+**Related.** Limit 41 is the same class: a reader that could not say which build
+answered. Limit 53 is why a detector that cannot explain itself is still worth
+having, and why this one is not yet one.
+
+## 69. Subagent cost is derived rather than reported, and the derivation carries a price table's staleness
+
+**Found 2026-09-02**, by tracing which inputs produce the dollar figures.
+
+No harness output contains a dollar figure for a subagent call. Every dollar in
+the trace-bridge report is **computed**: measured tokens multiplied by a price
+table at `drive/lotor/price-table.json`, whose own `"date"` field reads
+**2026-08-29**, with `"basis": "public list prices, USD per million tokens"`.
+Four days stale at the time of measurement, and list prices rather than billed
+ones.
+
+**The tokens are measured. The dollars are computed.** The three children
+priced at $0.341734, $0.290224 and $0.291440, totalling **$0.923399** for three
+`echo` calls. The cache-write to hand each child its context is the entire bill;
+the work is free.
+
+**The consequence for any receipt this produces.** A receipt carrying a dollar
+figure without the price-table date beside it will be read as measured when it
+is computed. That is not a hypothetical misreading: it is the exact defect
+caught twice inside the run that produced these numbers.
+
+**What a reader should not conclude.** Not that the figures are wrong. Staleness
+is not error. The claim is narrower and harder to dismiss: **a reader cannot
+tell whether they are wrong without being handed the table's date**, so the date
+travels with the number or the number is not evidence.
+
+**Related.** Limit 68 is the same reader trusting an undocumented path without a
+schema stamp; this is the same reader trusting a table without a freshness
+stamp.
+
+## 70. The protected-path rules are enforced against the parent and structurally unenforced against a child
+
+**Found 2026-09-02**, by replaying six weeks of real dispatches through the
+matcher rather than by staging a probe.
+
+The gate evaluates the calls the session itself makes. A subagent's calls never
+reach it (limit 66). The consequence is not a rate, it is an asymmetry: **the
+same command, on the same machine, in the same minute, is gated or ungated
+depending only on who runs it.** During the run that measured this, the self-mod
+rule stopped the parent twice, on an `ls` of two protected directories and on a
+grep of the policy source. Both were handled by switching to the dedicated tools
+rather than by reshaping the command. **The identical call issued from inside a
+child goes through silently.**
+
+**The measurement.** 519 of 3,962 replayed subagent tool calls would have gated
+the parent; 171 of those hit the self-mod rule. Re-read at raw-transcript level
+rather than trusted as an aggregate, **51 are real `Write`/`Edit` calls into this
+repository from inside child sessions** (`isSidechain: true`), across 24 distinct
+files. **Nine of them landed in the non-delegable core** (the signing code, the
+session-end hook, and the store's index and lock).
+
+**The caveat that guts the easy headline, stated before anyone quotes the nine.**
+All nine are dated 2026-07-22, one day *before* the gate was armed. Lotor was a
+recorder then and there was nothing to walk around. **They are not evidence that
+anyone bypassed an armed gate.** What they show is the shape: a subagent editing
+the signing code is a thing that happens in ordinary work, and today that same
+edit would still produce no chain row and no prompt. The live class is August's
+44 self-mod hits, all command-shaped, reads and listings naming the protected
+paths rather than writes.
+
+**What this does not establish.** Not that anything harmful happened: every hit
+is a call an operator would very likely have approved, and the gate's job is to
+be asked rather than to say no. Not a fresh enforcement claim either, because
+this machine runs LOOSE, so nothing was being stopped anyway. Under a herded
+configuration these 519 are an enforcement hole; today they are 519 missing rows.
+The replay tool lives outside this repository, so a reader of this log cannot
+re-run it from here.
+
+**Related.** Limit 66 is the same blindness stated as a recording gap rather than
+an enforcement one. Limit 62 is the other way a protected path escapes the
+self-mod rule: by spelling rather than by caller.
