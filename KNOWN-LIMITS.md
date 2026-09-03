@@ -2296,10 +2296,20 @@ not exist is any row in the chain.** The reader that proved this
 reader of this log cannot re-run it from here; the evidence is the absence of
 chain rows, which anyone can check on their own dispatch.
 
-**What a reader should not conclude.** Not that an honest agent reaches this by
-accident. Whether the hole is reachable without intent is **not established**
-and is the next probe. Stated at its floor: the witness is blind to subagent
-actions, confirmed on a live dispatch rather than inferred from the code.
+**Amended 2026-09-02: the reachability probe ran, and the floor came off.** This
+entry originally said that an honest agent reaching the hole by accident was
+**not established** and was the next probe. It is now measured. Every subagent
+transcript on this machine was replayed through Lotor's own matcher
+(`evaluate()`) under a policy with all nine rules set to `gate`: 3,962 tool calls
+from 1,073 child transcripts across 104 parent sessions, six weeks, zero read,
+parse or evaluate failures. **519 of those calls (13.1%) would have gated the
+parent had the parent made them**, sitting in 110 child transcripts and touching
+40 of the 104 parent sessions (38.5%). By rule: opaque-exec 339, self-mod 171,
+destructive 4, egress-other 4, scope-escalation 1. **377 of the 519 are after the
+gate was armed on 2026-07-23.** The upgrade is duller and stronger than "the gate
+can be bypassed": **the bypass does not require intent, and it is the normal
+case.** 519 is a floor rather than a point estimate, and the same-command
+asymmetry it exposes is filed separately as limit 70.
 
 **Related.** Limit 67 is the same dispatch reporting numbers that do not match
 its own transcripts. Limit 44 is the other enforcement gap found by probing
@@ -2390,3 +2400,45 @@ travels with the number or the number is not evidence.
 **Related.** Limit 68 is the same reader trusting an undocumented path without a
 schema stamp; this is the same reader trusting a table without a freshness
 stamp.
+
+## 70. The protected-path rules are enforced against the parent and structurally unenforced against a child
+
+**Found 2026-09-02**, by replaying six weeks of real dispatches through the
+matcher rather than by staging a probe.
+
+The gate evaluates the calls the session itself makes. A subagent's calls never
+reach it (limit 66). The consequence is not a rate, it is an asymmetry: **the
+same command, on the same machine, in the same minute, is gated or ungated
+depending only on who runs it.** During the run that measured this, the self-mod
+rule stopped the parent twice, on an `ls` of two protected directories and on a
+grep of the policy source. Both were handled by switching to the dedicated tools
+rather than by reshaping the command. **The identical call issued from inside a
+child goes through silently.**
+
+**The measurement.** 519 of 3,962 replayed subagent tool calls would have gated
+the parent; 171 of those hit the self-mod rule. Re-read at raw-transcript level
+rather than trusted as an aggregate, **51 are real `Write`/`Edit` calls into this
+repository from inside child sessions** (`isSidechain: true`), across 24 distinct
+files. **Nine of them landed in the non-delegable core** (the signing code, the
+session-end hook, and the store's index and lock).
+
+**The caveat that guts the easy headline, stated before anyone quotes the nine.**
+All nine are dated 2026-07-22, one day *before* the gate was armed. Lotor was a
+recorder then and there was nothing to walk around. **They are not evidence that
+anyone bypassed an armed gate.** What they show is the shape: a subagent editing
+the signing code is a thing that happens in ordinary work, and today that same
+edit would still produce no chain row and no prompt. The live class is August's
+44 self-mod hits, all command-shaped, reads and listings naming the protected
+paths rather than writes.
+
+**What this does not establish.** Not that anything harmful happened: every hit
+is a call an operator would very likely have approved, and the gate's job is to
+be asked rather than to say no. Not a fresh enforcement claim either, because
+this machine runs LOOSE, so nothing was being stopped anyway. Under a herded
+configuration these 519 are an enforcement hole; today they are 519 missing rows.
+The replay tool lives outside this repository, so a reader of this log cannot
+re-run it from here.
+
+**Related.** Limit 66 is the same blindness stated as a recording gap rather than
+an enforcement one. Limit 62 is the other way a protected path escapes the
+self-mod rule: by spelling rather than by caller.
