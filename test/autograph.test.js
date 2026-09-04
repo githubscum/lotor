@@ -5,10 +5,14 @@
  * signature is a decision. The gate collects either without complaint, so
  * counting them is the only defence.
  *
- * The load-bearing constraint these tests pin: an approved receipt records the
- * TOOL, not the target. Per-signature attribution to a charter item is not
- * derivable from the record, so the split is by WINDOW and must stay that way.
- * A future version that claims per-signature attribution would be guessing.
+ * The load-bearing constraint these tests pin: this view reports by WINDOW,
+ * not per signature. That used to be because per-signature attribution was
+ * not derivable from the record at all; since 2026-08-15 (paramsDigestCanonical
+ * on every gate receipt) it is derivable AGAINST A KNOWN CANDIDATE, and this
+ * view has simply not been upgraded to use it (KNOWN-LIMITS 36, corrected;
+ * see test/limit-36-digest-attribution.test.js for the proof and its residual).
+ * These tests still pin the window behavior as this view's CURRENT output,
+ * not as a ceiling on what the chain can support.
  */
 
 import { test } from 'node:test';
@@ -101,13 +105,15 @@ test('denials are counted separately and never treated as signatures', () => {
   assert.equal(r.byAction.Bash.denied, 1);
 });
 
-test('the report states that per-signature attribution is not derivable', () => {
-  // This is the honesty requirement, not a nicety. Anything that later claims
-  // to match a signature to a charter item is guessing, because the receipt
-  // does not record what was approved.
+test('the report states that THIS VIEW attributes by window, not that per-signature attribution is impossible (KNOWN-LIMITS 36, corrected)', () => {
+  // This is the honesty requirement, not a nicety, and the requirement moved:
+  // as of 2026-08-15 a receipt DOES carry enough (paramsDigestCanonical) to
+  // match a signature to a known candidate. The remaining honest claim is
+  // narrower — this view reports by window because it was never upgraded to
+  // use the digest, and matching still needs a candidate to test against.
   const out = renderAutograph(autographReport([], [], { now: T0 }));
-  assert.match(out, /records the tool, not the target/);
-  assert.match(out, /never per signature/);
+  assert.match(out, /attributes by WINDOW, not per signature/);
+  assert.match(out, /has not been upgraded to use it/);
   assert.match(out, /no target ratio/);
 });
 

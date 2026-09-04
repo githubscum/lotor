@@ -15,18 +15,31 @@
  *   person. This is counting pointed at the operator's own load, which is the
  *   most on-thesis metric available and did not exist in any form.
  *
- * WHAT CANNOT BE COMPUTED, AND WHY IT IS NOT A TODO
- *   An approved gate receipt carries { decision, action, approvalNonce }. It
- *   records THAT a signature was spent and on which tool. It does not record
- *   WHAT was approved: no path, no command, no params. Verified by reading the
- *   chain, not assumed.
+ * WHY THIS STILL ATTRIBUTES BY WINDOW, NOT PER SIGNATURE (corrected, KNOWN-LIMITS 36)
+ *   As of 2026-08-15 (commit 9a934f2) an approved gate receipt also carries
+ *   `paramsDigestCanonical`, a SHA-256 digest of the approved params. A
+ *   reviewer holding a CANDIDATE (e.g. one enumerated charter item, which
+ *   carries the same { action, params } shape) can re-derive that digest and
+ *   compare — that IS per-signature attribution against a known candidate,
+ *   and it is computed, not guessed (test/limit-36-digest-attribution.test.js
+ *   proves it against the real functions, not a description of them). The
+ *   claim that a signature "cannot be matched against a charter's declared
+ *   items after the fact" was true when this file was written and stopped
+ *   being true three weeks before the next line was.
  *
- *   So a signature cannot be matched against a charter's declared items after
- *   the fact. Per-signature classification is not merely unbuilt, it is not
- *   derivable from the record as it stands, and any tool claiming to do it
- *   would be guessing.
+ *   This view was never upgraded to use it. Two real reasons to still prefer
+ *   the window split here rather than treat this as done: (1) matching needs
+ *   a candidate to test against — it answers "was this receipt FOR item X",
+ *   never "list every receipt's target" from the chain alone, so it cannot
+ *   replace the window view, only sit beside it; (2) a charter item with
+ *   `params` omitted and a receipt whose action genuinely took no params
+ *   digest DIFFERENTLY (`digestParamsCanonical(undefined)` returns the
+ *   literal `'empty'`, `digestParamsCanonical({})` hashes `"{}"`), so a naive
+ *   matcher false-negatives on every no-arg action — proven in the same test
+ *   file, not merely asserted here.
  *
- *   What IS derivable is the window. A charter carries issuedAt and expiresAt.
+ *   What IS derivable, and what this view still reports, is the window. A
+ *   charter carries issuedAt and expiresAt.
  *   Signatures spent while a charter was live were, by construction, spent
  *   inside a reviewed plan; signatures spent outside any charter were not. That
  *   is the comparison the complaint was actually about: 33 approvals in one
@@ -147,7 +160,7 @@ export function autographReport(entries, charters, opts = {}) {
       id: w.id, title: w.title, from: w.from, to: w.to, openEnded: w.openEnded
     })),
     caveats: [
-      'An approved receipt records the tool, not the target. A signature cannot be matched to a charter item after the fact, so this attributes by WINDOW, never per signature.',
+      'This attributes by WINDOW, not per signature. A digest exists that CAN match a signature to a known candidate (KNOWN-LIMITS 36), but this view has not been upgraded to use it, and it cannot list every receipt\'s target unaided — only confirm or deny one you already suspect.',
       'Charters issued as markdown rather than through the signing tool leave no record here and their windows cannot be counted.',
       'There is no target ratio. A high decision rate in a design session is correct; the same rate through a long build is the thing worth noticing.'
     ]

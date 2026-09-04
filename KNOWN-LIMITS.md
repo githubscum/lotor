@@ -1245,6 +1245,43 @@ attribution possible and would put command strings in the log, which limit 18 al
 flags as a disclosure surface. The fix is a digest, not the string, and it is a core
 change.
 
+**NARROWED 2026-09-04 (Lotor lane run 26). The fix named above already shipped, six
+weeks before this entry was re-read.** Commit `9a934f2` (2026-08-15,
+"denial-enrichment") added `paramsDigestCanonical` — a SHA-256 digest of the
+approved params, exactly the digest this entry called for and not the string —
+to every `gated-action` receipt: denied, stale, and approved alike
+(`src/gate/index.js`). Charter items already carry the matching `{ action, params }`
+shape (`src/charter/index.js`'s `canonicalizeItem`). **A reviewer holding a
+candidate — one enumerated charter item — can now re-derive
+`digestParamsCanonical(item.params)` and compare it against a receipt's
+`paramsDigestCanonical` to confirm or deny "was this signature for THIS", which is
+per-signature attribution against a known target, computed rather than guessed.**
+Proven by running the real functions, not by reading them:
+`test/limit-36-digest-attribution.test.js`.
+
+**Nobody told the tool that reads the chain.** `src/views/autograph.js` — the one
+consumer of this entry, and the reason it was written — still asserted the
+pre-fix state as current, in its own header comment AND in the caveat line it
+prints to the operator: *"An approved receipt records the tool, not the target. A
+signature cannot be matched to a charter item after the fact."* That is false as
+of 2026-08-15 and was still shipping as of this morning. `test/autograph.test.js`
+pinned the same false claim as an explicit *"honesty requirement."* This is limit
+39's class one level up: not the gate misreporting its own coverage, but a
+downstream view misreporting the chain's own capability, inside the exact caveat
+block that exists to be trusted. Both are corrected on this branch.
+
+**Genuinely still open, not closed by this change:** the digest answers "was this
+receipt for THIS candidate," never "list every receipt's target" — it cannot
+replace `autograph.js`'s window view, only sit beside it, because there is no
+enumeration of candidates to test against without a charter (limit 37's class:
+markdown-issued charters leave no record here). And matching has a real edge-case
+gap, proven in the same test file: a charter item with `params` omitted digests as
+`hash("{}")` while a receipt whose action took no params at all digests as the
+literal string `'empty'` — an unguarded matcher false-negatives on every no-arg
+action. **`autograph.js` itself has NOT been upgraded to compute per-signature
+matches; only its own honesty about that fact has been corrected.** Building the
+matcher is a further WO, not this one.
+
 ## 37. The chain accepts entries from writers outside this repository
 
 Found 2026-07-26 while auditing receipt coverage.
