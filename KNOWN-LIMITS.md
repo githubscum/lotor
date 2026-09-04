@@ -1220,6 +1220,21 @@ change to `src/gate`, which is one signature per edit and belongs in a reviewed
 sitting rather than riding along with a view. Until then, denials are a timeline and
 not a per-session fact.
 
+**NARROWED, not closed (2026-09-04, lotor lane).** `gatedAction()` already carries
+an informational side-channel for exactly this shape of field: `meta.ruleId` and
+`meta.heldMs` reach the receipt without ever entering `canonicalizeRequest` or
+`verifyApproval`, so they cannot be forged into an approval and cost nothing to add.
+`meta.sessionId` does not exist yet, but the precedent it would follow is already
+shipped and tested. Confirmed by reading, not reasoning: `bin/hook-pre-tool-use.js`
+already computes `sessionId` from `payload.session_id` and already threads it onto
+one receipt type (`policy-warn`, the `both-layers-permissive` case) — the value is
+in hand at every one of the three `gatedAction()` call sites, it is simply not
+passed. The three-part fix is named verbatim, with file and approximate line
+numbers, in `test/known-limits-35-session-attribution.test.js`, which ships a
+tripwire proving the gap against the live source (three assertions, all passing
+against today's code) rather than describing it in prose alone. **Core. Queues for
+the signing sitting**, same as the rest of this file's open core items.
+
 ## 36. An approved receipt records the tool, never the target
 
 Found 2026-07-26 building the autograph ratio, by reading `src/gate/index.js:209`.
