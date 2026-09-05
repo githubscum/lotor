@@ -1270,17 +1270,43 @@ pinned the same false claim as an explicit *"honesty requirement."* This is limi
 downstream view misreporting the chain's own capability, inside the exact caveat
 block that exists to be trusted. Both are corrected on this branch.
 
-**Genuinely still open, not closed by this change:** the digest answers "was this
-receipt for THIS candidate," never "list every receipt's target" — it cannot
-replace `autograph.js`'s window view, only sit beside it, because there is no
-enumeration of candidates to test against without a charter (limit 37's class:
-markdown-issued charters leave no record here). And matching has a real edge-case
-gap, proven in the same test file: a charter item with `params` omitted digests as
-`hash("{}")` while a receipt whose action took no params at all digests as the
-literal string `'empty'` — an unguarded matcher false-negatives on every no-arg
-action. **`autograph.js` itself has NOT been upgraded to compute per-signature
-matches; only its own honesty about that fact has been corrected.** Building the
-matcher is a further WO, not this one.
+**Genuinely still open as of the prior amendment, not closed by it:** the digest
+answers "was this receipt for THIS candidate," never "list every receipt's
+target" — it cannot replace `autograph.js`'s window view, only sit beside it,
+because there is no enumeration of candidates to test against without a charter
+(limit 37's class: markdown-issued charters leave no record here). And matching
+has a real edge-case gap, proven in the same test file: a charter item with
+`params` omitted digests as `hash("{}")` while a receipt whose action took no
+params at all digests as the literal string `'empty'` — an unguarded matcher
+false-negatives on every no-arg action. **`autograph.js` itself has NOT been
+upgraded to compute per-signature matches; only its own honesty about that fact
+has been corrected.** Building the matcher is a further WO, not this one.
+
+**NARROWED FURTHER, same day (Lotor lane run 28). The matcher named above is now
+built.** `src/views/autograph.js` tests every approved receipt signed inside a
+charter's window against that charter's own `items` (action match plus a
+re-derived `digestParamsCanonical(item.params)` match) and reports
+`signatures.confirmed` / `.ambiguous` / `.unmatched` beside the existing window
+split, not instead of it. The no-arg edge case named above is guarded by
+construction, not merely documented: the comparison passes `item.params` straight
+through rather than reusing `canonicalizeItem`'s `item.params || {}` default, so
+an item with `params` omitted digests as `'empty'` and correctly matches a
+receipt whose action took no params. Proven in six new assertions across
+`test/autograph.test.js` (confirmed / unmatched / ambiguous / the no-arg case)
+and `test/limit-36-digest-attribution.test.js` (unchanged, still proves the
+underlying digest functions). Suite 948/948.
+
+**What is still open, and it is the same two limits, sharpened rather than
+closed.** (1) No reverse index exists from a digest back to an item — a charter
+with real items nobody declared correctly reports those signatures as
+`unmatched`, not as evidence the signature was unrelated to the charter; that
+gap cannot be closed from inside the chain, only by better charter discipline.
+(2) Two declared items sharing identical `action`+`params` produce the same
+digest and both register as hits on one receipt — reported honestly as
+`ambiguous` rather than silently attributed to whichever item happened to be
+enumerated first. Neither is a defect in the matcher; both are what a one-way
+digest can and cannot buy, stated where the count is printed rather than only
+in this file.
 
 ## 37. The chain accepts entries from writers outside this repository
 
