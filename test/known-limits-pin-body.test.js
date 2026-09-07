@@ -1,20 +1,21 @@
 /**
  * KNOWN-LIMITS 65: the freshness pin binds the code, and never the log it lives in.
  *
- * These are CHARACTERIZATION tests. They assert the behaviour as it ships today,
- * which is the gap, so that the gap is visible in the suite instead of only in the
- * confession log. They are written to FAIL once the `body-sha256` repair lands,
- * which is deliberate: the failure is the prompt to rewrite them as the assertions
- * for the fixed behaviour. Each one names what it should say after the repair.
+ * CLOSED 2026-09-07 at the signing sitting. These were CHARACTERIZATION tests
+ * asserting the gap (a log-only edit read `current`). `writePin` now records a
+ * `body-sha256` over the file with the pin block removed, and `checkPin` reports
+ * a third status, `edited`, when the commit matches and the digest does not.
+ * A v1 pin with no digest keeps v1 semantics exactly (see the L29 suite), so
+ * old pins are not retroactively failed; re-stamping upgrades them.
  *
- * The repair itself edits `src/limits/pin.js` and was refused by the self-mod gate,
- * so it queues for a signing sitting. This file does not need the gate: it only
- * reads the shipped functions.
+ * Each assertion below is the inverted characterization, as its own comment
+ * said it should read after the repair.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { writePin, readPin, checkPin } from '../src/limits/pin.js';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -49,24 +50,30 @@ function stampedLog() {
 const verdict = (file) =>
   checkPin({ pinText: fs.readFileSync(file, 'utf8'), head: SRC_COMMIT, dirty: false });
 
-describe('L65: the pin does not bind the log body', () => {
+describe('L65: the pin binds the log body (closed 2026-09-07)', () => {
   it('a freshly stamped, unmodified log reads current', () => {
     assert.strictEqual(verdict(stampedLog()).status, 'current');
   });
 
-  it('GAP: an entry APPENDED after stamping still reads current', () => {
+  it('re-stamping the same body is stable: the digest excludes the pin block itself', () => {
+    const file = stampedLog();
+    const first = readPin(fs.readFileSync(file, 'utf8')).bodySha256;
+    writePin(file, { commit: SRC_COMMIT, subject: 'a different subject line', date: '2026-09-07' });
+    const second = readPin(fs.readFileSync(file, 'utf8')).bodySha256;
+    assert.strictEqual(first, second, 'the pin must not invalidate itself (limit 29 self-invalidation)');
+    assert.strictEqual(verdict(file).status, 'current');
+  });
+
+  it('an entry APPENDED after stamping reads edited, exit-1 class', () => {
     const file = stampedLog();
     fs.appendFileSync(file, '\n## 99. A limit never held against any code\n\nAppended after the stamp.\n');
 
-    // After the repair this must be 'edited'.
-    assert.strictEqual(
-      verdict(file).status,
-      'current',
-      'characterization: the shipped pin cannot see an appended entry'
-    );
+    const v = verdict(file);
+    assert.strictEqual(v.status, 'edited', 'the pin must see an appended entry');
+    assert.ok(/edited since it was stamped/.test(v.message), 'and say so: ' + v.message);
   });
 
-  it('GAP: an entry DELETED and a claim REVERSED still read current', () => {
+  it('an entry DELETED and a claim REVERSED read edited, and the message does not reassure', () => {
     const file = stampedLog();
     const mangled = fs
       .readFileSync(file, 'utf8')
@@ -75,24 +82,32 @@ describe('L65: the pin does not bind the log body', () => {
     fs.writeFileSync(file, mangled);
 
     const v = verdict(file);
-    // After the repair this must be 'edited'.
-    assert.strictEqual(v.status, 'current', 'characterization: deletion and reversal are both invisible');
+    assert.strictEqual(v.status, 'edited', 'deletion and reversal must both be visible');
     assert.ok(
-      /matches your checkout/.test(v.message),
-      'and the message actively reassures the reader, which is the sharp end of this limit'
+      !/matches your checkout/.test(v.message),
+      'the message must not reassure the reader about a log that moved'
     );
   });
 
-  it('the pin records a commit and carries no digest of its own body', () => {
+  it('the pin records a commit AND a sha256 of its own body', () => {
     const file = stampedLog();
-    const pin = readPin(fs.readFileSync(file, 'utf8'));
+    const text = fs.readFileSync(file, 'utf8');
+    const pin = readPin(text);
     assert.strictEqual(pin.commit, SRC_COMMIT);
-    // After the repair: assert pin.bodySha256 is a 64-char hex string.
-    assert.strictEqual(
-      pin.bodySha256,
-      undefined,
-      'characterization: nothing in the pin block measures the text around it'
-    );
+    assert.match(pin.bodySha256, /^[0-9a-f]{64}$/, 'the pin block measures the text around it');
+    // The digest is over the file with the pin block removed, so a reader can
+    // recompute it from the bytes they hold.
+    const stripped = text.replace(/<!-- known-limits:pin v1[\s\S]*?known-limits:pin end -->\n*/, '');
+    const recomputed = crypto.createHash('sha256').update(stripped, 'utf8').digest('hex');
+    assert.strictEqual(pin.bodySha256, recomputed);
+  });
+
+  it('a v1 pin with no digest keeps v1 semantics: current, never edited', () => {
+    const file = stampedLog();
+    const text = fs.readFileSync(file, 'utf8').replace(/^ body-sha256: [0-9a-f]{64}\n/m, '');
+    assert.ok(!/body-sha256/.test(text), 'precondition: digest line removed');
+    fs.writeFileSync(file, text + '\n## 99. Appended to a v1-pinned log\n');
+    assert.strictEqual(verdict(file).status, 'current', 'old pins are not retroactively failed');
   });
 
   it('CONTROL: a moved src/ commit is still correctly reported as diverged', () => {

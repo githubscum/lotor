@@ -82,36 +82,42 @@ test('the build digest covers every decider, including the ones outside the poli
   assert.equal(typeof d.digest, 'string');
 });
 
-test('the matcher hash is the only code identity that reaches a receipt', () => {
-  // Every module that writes a receipt names matcherVersionHash...
+test('the whole-tree digest reaches the record through session-open (closed 2026-09-07)', () => {
+  // Per-action writers still stamp the matcher hash and still do not carry
+  // the tree digest themselves: they inherit it by session id from the open
+  // receipt, one field per session rather than one per action.
   for (const rel of ['src/gate/index.js', 'bin/hook-pre-tool-use.js', 'bin/hook-post-tool-use.js']) {
     const src = read(rel);
     assert.match(src, /matcherVersionHash/, `${rel} should stamp receipts with the matcher hash (control)`);
-    // ...and none of them names the whole-tree digest.
     assert.doesNotMatch(
       src,
       /computeSourceDigest|captureBuildIdentity|sourceDigest/,
-      `${rel} does not carry the build digest onto the record — this is limit 64`
+      `${rel} inherits the build digest by session id rather than repeating it per action`
     );
   }
+  // The session-open writer is the one that carries it.
+  assert.match(
+    read('bin/hook-session-start.js'),
+    /computeSourceDigest/,
+    'bin/hook-session-start.js writes the whole-tree digest onto session-open (limit 64 repair)'
+  );
 });
 
-test('the whole-tree digest is consumed only by the MCP response path', () => {
-  // Control: the consumer that does exist.
+test('the whole-tree digest is consumed by the MCP response path AND the session-open writer', () => {
+  // Control: the consumer that always existed.
   assert.match(
     read('src/mcp/server.js'),
     /captureBuildIdentity|_lotorBuild/,
     'the MCP server should attach the build stamp (control)'
   );
-  // And it is the only non-test consumer in the tree.
   const all = [...jsUnder(path.join(ROOT, 'src')), ...jsUnder(path.join(ROOT, 'bin'))];
   const consumers = all.filter((rel) =>
     /computeSourceDigest|captureBuildIdentity/.test(read(rel))
   );
   assert.deepEqual(
     consumers.sort(),
-    ['src/mcp/build-identity.js', 'src/mcp/server.js'],
-    'the build digest should have exactly one consumer outside its own module'
+    ['bin/hook-session-start.js', 'src/mcp/build-identity.js', 'src/mcp/server.js'],
+    'exactly two consumers outside the module: the ephemeral reader and the durable record'
   );
 });
 
@@ -119,7 +125,7 @@ test('the two stamps are different values over different inputs', () => {
   const build = computeSourceDigest(ROOT).digest;
   const matcher = matcherVersionHash();
   assert.notEqual(build, matcher);
-  assert.equal(MATCHER_SCHEMA, 'matcher/1');
+  assert.equal(MATCHER_SCHEMA, 'matcher/2');
   // Stable across calls, so a receipt comparison is meaningful at all.
   assert.equal(matcherVersionHash(), matcher);
 });

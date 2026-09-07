@@ -193,58 +193,59 @@ describe('scope-escalation: controls that must stay free, before and after', () 
 });
 
 /**
- * TRIPWIRE, not a blessing.
+ * KNOWN-LIMITS 44, the residual timespec forms. Was a TRIPWIRE from
+ * 2026-09-01 to 2026-09-07 asserting these five forms were FREE.
  *
- * These assertions record that four forms of the class entry 44 once called
- * "closed" still walk past the shipped matcher. They were measured on
- * 2026-09-01 by running strings through `isScopeEscalation`, not by reading
- * the regexes — reading would not have caught either cause:
+ * They were measured on 2026-09-01 by running strings through
+ * `isScopeEscalation`, not by reading the regexes — reading would not have
+ * caught either cause:
  *
- *   - the systemd-run guard requires a literal `=` after `--on-<flag>`, while
+ *   - the systemd-run guard required a literal `=` after `--on-<flag>`, while
  *     getopt_long accepts `--on-active 30` with a space just the same;
- *   - the at(1) time-spec alternation carries `noon`, `HH:MM` and `+N`, and
- *     has no am/pm form and no bare `HHMM` form, both of which at(1) accepts.
+ *   - the at(1) time-spec alternation carried `noon`, `HH:MM` and `+N`, and
+ *     had no am/pm form and no bare `HHMM` form, both of which at(1) accepts.
  *
  * Each case is one token from a worked example in the change that closed the
- * entry. The fix is two widenings inside `src/policy`, which is the
- * non-delegable core and waits for a signing sitting.
+ * entry. The fix is two widenings inside `src/policy` (the separator made
+ * optional in the systemd guard; `H[:MM]am|pm` and a bare four-digit `HHMM`
+ * added to the at(1) alternation), landed under signature at the 2026-09-07
+ * sitting. The assertions below are the inverted tripwire: these forms now
+ * MUST gate, and the prose controls beside them must stay free, because a
+ * widened time spec is exactly where prose starts firing.
  *
- * WHEN THAT FIX LANDS, THIS BLOCK FAILS. That is the whole point and it is
- * the correct response: invert the assertion, move the case up into the
- * "must gate" block above, and amend KNOWN-LIMITS 44 in the same change. Do
- * not delete the block to get green — a deletion closes the confession
- * without closing the hole, which is the failure entry 44 already has once.
- *
- * The controls below are load-bearing: they stop this block from passing
- * because the matcher stopped working altogether rather than because these
- * specific forms are uncovered.
+ * Declared over-gate, unchanged in kind from the `at noon` residual entry 44
+ * already carries: `grep at 1200 log.txt` fires, because the at(1) anchor
+ * treats any whitespace-preceded `at` as command position and the bare HHMM
+ * is a valid spec. `grep at 03:00 log.txt` fired before this change for the
+ * same reason. A string matcher cannot read intent.
  */
-describe('scope-escalation: KNOWN-LIMITS 44 residual timespec forms (TRIPWIRE)', () => {
-  const stillFree = [
+describe('scope-escalation: KNOWN-LIMITS 44 residual timespec forms (closed 2026-09-07)', () => {
+  const nowGated = [
     ['systemd-run --on-active 30 /usr/bin/backup.sh', 'systemd-run --on-active, space form'],
     ['systemd-run --on-calendar daily /usr/bin/backup.sh', 'systemd-run --on-calendar, space form'],
+    ['systemd-run --on-calendar "*:0/5" touch /tmp/m', 'systemd-run --on-calendar, quoted spec'],
     ["echo 'echo backup ran' | at 3pm", 'at(1) pm form'],
     ["echo 'echo backup ran' | at 10am tomorrow", 'at(1) am form with a day word'],
+    ["echo 'echo backup ran' | at 5:30pm", 'at(1) H:MM pm form'],
     ["echo 'echo backup ran' | at 1730", 'at(1) bare HHMM form']
   ];
 
-  for (const [command, label] of stillFree) {
-    it(`is still uncovered: ${label}`, () => {
+  for (const [command, label] of nowGated) {
+    it(`gates: ${label}`, () => {
       assert.strictEqual(
         isScopeEscalation(cmd(command)),
-        false,
-        `${label} now gates. If you widened the matcher on purpose: invert this ` +
-        'assertion, move the case into the "must gate" block, and amend ' +
-        'KNOWN-LIMITS 44 in the same change. Do not delete this test.'
+        true,
+        `${label} walked past the matcher. This form was closed on 2026-09-07; ` +
+        'if it is free again, the widening regressed. Do not delete this test.'
       );
     });
   }
 
-  it('controls: the forms the matcher does cover still gate', () => {
+  it('controls: the forms the matcher covered before still gate', () => {
     assert.strictEqual(
       isScopeEscalation(cmd('systemd-run --on-active=30 /usr/bin/backup.sh')),
       true,
-      'the equals form must still gate, or the tripwire above is measuring a dead matcher'
+      'the equals form must still gate'
     );
     assert.strictEqual(
       isScopeEscalation(cmd("echo 'echo backup ran' | at 03:00")),
@@ -256,5 +257,15 @@ describe('scope-escalation: KNOWN-LIMITS 44 residual timespec forms (TRIPWIRE)',
       true,
       'the noon form must still gate'
     );
+  });
+
+  it('controls: prose and filenames near the widened specs stay free', () => {
+    assert.strictEqual(isScopeEscalation(cmd('ls at 12 files')), false, 'a bare number is not a time spec');
+    assert.strictEqual(isScopeEscalation(cmd('echo "meet at 5"')), false, 'no am/pm, no colon, not four digits');
+    assert.strictEqual(isScopeEscalation(cmd('grep at 1730.log')), false, 'HHMM glued to more filename is a filename');
+    assert.strictEqual(isScopeEscalation(cmd('grep amp /tmp/at-the-market.txt')), false, 'existing control');
+    assert.strictEqual(isScopeEscalation(cmd('systemd-run --wait touch /tmp/marker')), false, 'existing control');
+    assert.strictEqual(isScopeEscalation(cmd('systemctl status sync.timer')), false, 'existing control');
+    assert.strictEqual(isScopeEscalation(cmd('echo --on-call rota')), false, 'an --on- flag with no systemd-run is nothing');
   });
 });

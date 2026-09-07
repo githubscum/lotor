@@ -8,35 +8,27 @@ import { fileURLToPath } from 'node:url';
 import { loadChain } from '../src/store/index.js';
 
 /**
- * WO-TRACE-BRIDGE-01, the last mile.
+ * WO-TRACE-BRIDGE-01, the last mile. CLOSED 2026-09-07 at the signing sitting.
  *
- * src/ingest/index.js already reads opts.transcriptPath and binds a
- * subagents summary onto the receipt when a sibling
- * <transcript-basename>/subagents/ directory exists (see
- * test/subagent-ingest-wiring.test.js). bin/hook-session-end.js is the ONLY
- * caller that matters in production — it is what Claude Code's SessionEnd
- * hook actually invokes — and as of this file it still calls
+ * src/ingest/index.js reads opts.transcriptPath and binds a subagents summary
+ * onto the receipt when a sibling <transcript-basename>/subagents/ directory
+ * exists (see test/subagent-ingest-wiring.test.js). bin/hook-session-end.js
+ * is the ONLY caller that matters in production — it is what Claude Code's
+ * SessionEnd hook actually invokes — and until this sitting it called
  * `ingestSession(text, { transcriptBytes: bytes })`, one field short of
- * `transcriptPath`. The reader is live; the wire from the hook to it is not.
+ * `transcriptPath`. The reader was live; the wire from the hook to it was not.
  *
- * bin/hook-session-end.js is core (bin/hook-*) and gated: this lane cannot
- * land the fix unsigned (request denied when attempted, self-mod class).
- * This test pins the CURRENT, dark behavior — a real subagents sidecar
- * sitting right beside a real parent transcript, ingested through the real
- * hook binary, produces a receipt with NO subagents field — so the gap is
- * asserted rather than described.
- *
- * THE FIX, one line, for whoever signs it:
- *   bin/hook-session-end.js line ~127
+ * The one-line fix landed under signature:
+ *   bin/hook-session-end.js
  *     - const result = ingestSession(text, { transcriptBytes: bytes });
  *     + const result = ingestSession(text, { transcriptBytes: bytes, transcriptPath });
  *
- * WHEN THAT LANDS, invert this test: assert `subagents` IS present with the
- * expected count and totals (see the wiring test's second case for the
- * shape), and rename it off "ships dark". Do not delete it — a test that
- * silently stops running the moment behavior changes is exactly what let
- * entry 25 stay deleted for weeks (see KNOWN-LIMITS.md, and MEMORY.md 2026-09-01
- * run 6).
+ * This test was the tripwire pinning the dark behaviour; it is now the
+ * inverted assertion: a real subagents sidecar beside a real parent
+ * transcript, ingested through the real hook binary, produces a receipt WITH
+ * the subagents field and the sidecar's exact totals. Not deleted, on the
+ * entry-25 lesson: a test that silently stops running the moment behaviour
+ * changes is how a gap stays closed on paper only.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -138,7 +130,7 @@ describe('bin/hook-session-end.js x subagent sidecar (WO-TRACE-BRIDGE-01 last mi
     }
   });
 
-  it('ships dark: a real sibling subagents dir is invisible on the receipt the hook writes today', async () => {
+  it('binds the sibling subagents dir onto the receipt the hook writes', async () => {
     const res = await runHook({
       home,
       stdin: JSON.stringify({ transcript_path: transcriptPath })
@@ -150,15 +142,14 @@ describe('bin/hook-session-end.js x subagent sidecar (WO-TRACE-BRIDGE-01 last mi
     assert.strictEqual(chain.length, 1, 'chain should have exactly one entry');
     assert.strictEqual(chain[0].payload.session.id, 'hook-subagents-parent-001');
 
-    // THE GAP. The dir exists, has one child, and carries real usage. The
-    // reader that would summarize it (summarizeSubagents) is proven to work
-    // in test/subagent-ingest-wiring.test.js. It never runs here because
-    // the hook does not pass transcriptPath through to ingestSession.
-    assert.ok(
-      !('subagents' in chain[0].payload),
-      'EXPECTED TO FAIL once the one-line fix above lands — invert this ' +
-      'assertion (and the sidecar\'s existence keeps making it a real ' +
-      'positive, not an absence) rather than deleting the test'
-    );
+    // The dir exists, has one child, and carries real usage. The reader
+    // (summarizeSubagents) is proven in test/subagent-ingest-wiring.test.js;
+    // this proves the hook now hands it the path it needs.
+    const sub = chain[0].payload.subagents;
+    assert.ok(sub, 'the receipt carries a subagents summary; absent means the wire from the hook is dark again');
+    assert.strictEqual(sub.schema, 'subagents/1');
+    assert.strictEqual(sub.count, 1);
+    assert.strictEqual(sub.totals.inputTokens, 40);
+    assert.strictEqual(sub.totals.outputTokens, 20);
   });
 });

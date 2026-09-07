@@ -172,8 +172,12 @@ const DEFAULT_POLICY = {
  * they're joined). Bumped only if that method changes. A rule moving from
  * warn to gate, a regex edit, or a new matcher function changes the HASH
  * VALUE below automatically and needs no edit here.
+ *
+ * matcher/2 (2026-09-07, KNOWN-LIMITS 63): the self-mod deciders joined the
+ * hashed inputs. Receipts stamped matcher/1 were hashed over the rule entry
+ * points only, and stay honest about what they meant.
  */
-export const MATCHER_SCHEMA = 'matcher/1';
+export const MATCHER_SCHEMA = 'matcher/2';
 
 function sortKeysDeep(value) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
@@ -184,17 +188,37 @@ function sortKeysDeep(value) {
   return value;
 }
 
+let cachedMatcherInputs = null;
 let cachedMatcherHash = null;
 
 /**
- * Content hash of the matcher logic in force right now. Pure and in-memory:
- * no disk I/O, so it is safe to call on every gate/warn/grant/egress
- * receipt, not just once per session. Cached after first call in a process.
+ * The exact text matcherVersionHash() digests: the rules in THIS FILE, joined.
+ * Exported so a test can assert coverage against the bytes that are hashed
+ * rather than against a reconstruction from the export surface.
+ *
+ * Function.prototype.toString() returns a function's own source and nothing it
+ * calls, so every helper a rule decides through has to be named here or it is
+ * outside the stamp. Until 2026-09-07 the self-mod deciders were not named
+ * (KNOWN-LIMITS 63): the protected-path list could gain an entry, or the path
+ * folding could change what a spelling matched, and the stamp stayed
+ * byte-identical.
  */
-export function matcherVersionHash() {
-  if (cachedMatcherHash) return cachedMatcherHash;
+export function matcherHashInputs() {
+  if (cachedMatcherInputs) return cachedMatcherInputs;
   const parts = [
     isSelfMod.toString(),
+    // The self-mod deciders isSelfMod dispatches to. The protected-path list,
+    // the two matchers, the path folding and the prose/brace pre-processing all
+    // decide what an unsigned edit can touch (KNOWN-LIMITS 63).
+    isSelfModCommand.toString(),
+    isSelfModEdit.toString(),
+    selfModCommandHit.toString(),
+    selfModFragmentsForBase.toString(),
+    normalizePath.toString(),
+    pathContainsFragment.toString(),
+    expandBraces.toString(),
+    stripHeredocBodies.toString(),
+    stripMessageArgs.toString(),
     isModeChange.toString(),
     isPushForce.toString(),
     isPushProtected.toString(),
@@ -210,8 +234,25 @@ export function matcherVersionHash() {
     JSON.stringify(sortKeysDeep(RULE_TABLE)),
     JSON.stringify(sortKeysDeep(RULE_INFO))
   ];
+  cachedMatcherInputs = parts.join(' ');
+  return cachedMatcherInputs;
+}
+
+/**
+ * Content hash of the rules in this file, in force right now. Pure and
+ * in-memory: no disk I/O, so it is safe to call on every gate/warn/grant/egress
+ * receipt, not just once per session. Cached after first call in a process.
+ *
+ * The honest ceiling is "the rules in this file", not "the matcher logic":
+ * behaviour that reaches a decision from outside this module (git-context.js
+ * resolving a push target, the gate, the grant checker) is not in this hash.
+ * The whole-tree source digest on the session-open receipt covers that
+ * (KNOWN-LIMITS 64).
+ */
+export function matcherVersionHash() {
+  if (cachedMatcherHash) return cachedMatcherHash;
   cachedMatcherHash = crypto.createHash('sha256')
-    .update(parts.join(' '))
+    .update(matcherHashInputs())
     .digest('hex')
     .slice(0, 16);
   return cachedMatcherHash;
@@ -226,12 +267,27 @@ function defaultPolicyCopy() {
 
 /**
  * Normalize a file path for substring matching: lowercase, all backslashes to
- * forward slashes, strip trailing separator. Both Windows and POSIX forms
- * collapse to a single form so .toLowerCase() comparisons work uniformly.
+ * forward slashes, collapse doubled separators, drop `./` segments, strip
+ * trailing separator. Both Windows and POSIX forms collapse to a single form
+ * so .toLowerCase() comparisons work uniformly.
+ *
+ * The collapse and the dot-drop were added 2026-09-07 (KNOWN-LIMITS 62): a
+ * doubled separator (`src//policy`) or a dot segment (`src/./policy`) defeated
+ * every fragment match while the operating system opened exactly the same
+ * file. This function also runs over WHOLE COMMAND STRINGS (selfModCommandHit,
+ * isScopeEscalation), so the collapse spares a `//` that follows `:`, which is
+ * the scheme separator of every URL the other matchers read: `https://x` must
+ * stay `https://x`. A `./` is dropped only at the start of the string or after
+ * a `/`, so it can only ever remove a no-op path segment.
  */
 function normalizePath(p) {
   if (typeof p !== 'string' || p === '') return '';
-  return p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+  return p
+    .replace(/\\/g, '/')
+    .toLowerCase()
+    .replace(/(?<!:)\/{2,}/g, '/')
+    .replace(/(^|\/)(?:\.\/)+/g, '$1')
+    .replace(/\/+$/, '');
 }
 
 /**
@@ -1289,15 +1345,23 @@ const AT_INVOCATION = new RegExp(
   '(^|[\\s;(])(?:sudo\\s+|doas\\s+|env\\s+\\S+=\\S+\\s+)*' +
   'at(?:\\.exe)?\\s+' +
   '(?:-{1,2}[a-z]+(?:\\s+\\S*)?\\s+)*' +
-  '(?:now|noon|midnight|teatime|today|tomorrow|[0-2]?\\d:[0-5]\\d|\\+\\s*\\d+)' +
+  // Widened 2026-09-07 (KNOWN-LIMITS 44 amendment of 2026-09-01): the am/pm
+  // forms (`3pm`, `5:30pm`, `10am tomorrow`) and a bare four-digit HHMM
+  // (`1730`), both of which at(1) accepts, were missing from this alternation.
+  // Ordered so `H[:MM]am|pm` is tried before the bare `HH:MM`, and the HHMM
+  // form is exactly four digits so `at 12 files` stays free.
+  '(?:now|noon|midnight|teatime|today|tomorrow|[0-2]?\\d(?::[0-5]\\d)?\\s*(?:am|pm)|[0-2]?\\d:[0-5]\\d|[0-2]\\d[0-5]\\d|\\+\\s*\\d+)' +
   '(?=\\s|$)'
 );
 
 // systemd-run schedules future execution only through its --on-* flags; a
 // plain transient run happens once, now, in sight of every other rule, so it
-// stays free. Both tokens required together.
+// stays free. Both tokens required together. The separator after the flag is
+// `=` OR whitespace (widened 2026-09-07, KNOWN-LIMITS 44): systemd parses with
+// getopt_long and required_argument, so `--on-active 30` registers the same
+// timer as `--on-active=30`, and the space form was walking past this guard.
 const SYSTEMD_RUN = /\bsystemd-run\b/;
-const SYSTEMD_RUN_SCHEDULED = /(^|\s)--on-[-a-z]+=/
+const SYSTEMD_RUN_SCHEDULED = /(^|\s)--on-[-a-z]+[=\s]/
 
 // launchd registration verbs. list/start/stop/kickstart are control or read
 // operations and stay free; these three install something that runs later.

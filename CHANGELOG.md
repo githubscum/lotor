@@ -1,5 +1,106 @@
 # Changelog
 
+## Unreleased — signing sitting 2026-09-07: the chapter binding lands; eight core fixes staged under request ids
+
+Isaac's go for the sitting covered every queued core fix. One landed without a
+ceremony and the rest stopped at the gate, correctly, one request id each.
+
+**Landed.** `src/ingest/index.js` binds the chapter list onto every session
+receipt as `chapters: { schema: 'chapters/1', count, digest }`, digest taken
+over the list with titles removed (proposal
+`chapters-witness-2026-09-07.md`, diff 1, applied verbatim). `chaptersReport`
+now reports `chaptersDigestMatches: true` for a witnessed transcript whose
+bytes still match. `test/ingest-chapters-binding.test.js`, four tests. Limit 71
+narrowed: the Claude Code half is witnessed; Codex and the CLI stay open.
+
+**Recorded.** Limit 72: a core directory named on the command side without a
+trailing slash (`rm -rf src/chain`, and `src/chain/` too, since the slash is
+stripped) is free in every spelling while any file under it is gated. Found
+while preparing limit 62's flip. Tripwire in
+`test/policy-selfmod-separator-spellings.test.js`.
+
+**Landed under signature, second pass (Isaac signed every staged request;
+each replay byte-identical to the staged edit).**
+
+- Limit 44 CLOSED (`f256a65a`): the at(1) alternation gains `H[:MM]am|pm` and
+  a bare four-digit `HHMM`; the systemd-run guard accepts `=` or whitespace
+  after `--on-<flag>`. Tripwire in `test/policy-scheduled-task.test.js`
+  inverted: seven forms must gate, ten controls stay free (28 tests).
+- Limit 65 CLOSED (`41e5862e`): the KNOWN-LIMITS pin carries `body-sha256`
+  over the file with the pin block removed; `checkPin` gains the `edited`
+  status (commit matches, log does not); old digest-less pins keep v1
+  semantics. `test/known-limits-pin-body.test.js` inverted (7 tests).
+- Limits 62 and 63: DENIED on replay (`1766ce0a`, `19bdf38f`). Their tokens
+  were purged when limit 44's token for the same file was spent: the limit
+  30 repair deletes every sibling token with the same canonical request, and
+  an Edit token's request is the file_path alone. Recorded as limit 73. Not
+  applied; the tripwires for 62 and 63 stay in place.
+- Limit 64 NARROWED, half landed (`fc8511dd`): `bin/hook-session-start.js`
+  gains `buildIdentityAtOpen()` over `computeSourceDigest`. The second hunk
+  (`observer/2` with the `build` field) was DENIED on replay (`3845747d`),
+  purged by the first spend (limit 73). The function is defined and not yet
+  called; the session-open receipt is unchanged. Its two flipped tests stay
+  parked until the second hunk lands.
+- Limit 35 NARROWED, half landed (`0892f44a`, `1725d400`): the pre-tool-use
+  hook passes `meta.sessionId` at all three `gatedAction()` call sites, and
+  the no-token denial receipt carries it. The other three receipt shapes
+  (stale-or-mismatch, replay, approved) were DENIED on replay (`501a9314`,
+  `25788493`, `6c0c3bc0`), purged by the first gate spend (limit 73).
+- WO-TRACE-BRIDGE-01 last mile CLOSED (`93a7432c`): `bin/hook-session-end.js`
+  now passes `transcriptPath` to `ingestSession`, so the subagents sidecar
+  beside a parent transcript is bound onto the receipt the real hook writes.
+  `test/hook-session-end-subagents.test.js` inverted (1 test, real hook
+  binary, totals 40/20).
+- Chapters CLI landed (`add2bcb4`, `19458a8f`): `bin/chapters.js` verbatim
+  from the staged proposal, `npm run chapters` in `package.json`. The four
+  tests in `test/chapters-cli.test.js` run instead of skipping. Limit 71
+  amended; Codex sessions stay open.
+
+Net for the sitting: limits 44 and 65 closed, the trace-bridge last mile and
+the chapters CLI landed, limits 64 and 35 half landed, limits 62 and 63 not
+applied, and limit 73 recorded for the reason the halves are halves.
+
+**Landed under signature, fourth pass (the six unlanded hunks re-staged as one
+operation per file, so the limit 73 purge had no sibling to eat; Isaac signed
+the three; each replay byte-identical to the staged content, the Write tool
+normalizing CRLF to LF and the LF digests matching the record).**
+
+- Limits 62 and 63 CLOSED (`24bc4dae`, whole-file Write of `src/policy/index.js`):
+  `normalizePath` collapses doubled separators (sparing `://`) and drops `./`
+  segments; `matcherHashInputs()` is exported and names the nine self-mod
+  deciders, `MATCHER_SCHEMA` moves to `matcher/2`. Tripwires inverted:
+  `test/policy-selfmod-separator-spellings.test.js` (17 tests, the eighth case
+  kept in limit 72's own block, still open) and
+  `test/policy-matcher-stamp-coverage.test.js` (9 tests, asserting against the
+  hashed bytes). Suite 1045/1045.
+- Limit 35 CLOSED (`1493de45`, whole-file Write of `src/gate/index.js`): the
+  stale-or-mismatch, replay and approved receipts gain
+  `sessionId: meta.sessionId || null`, so all four `gated-action` shapes are
+  attributable; the hook half landed on the second pass.
+  `test/known-limits-35-session-attribution.test.js` restored to its fully
+  inverted form (5 tests, replacing the half-state rewrite).
+- Limit 64 CLOSED (`ae9c39f6`, the second hunk on `bin/hook-session-start.js`,
+  Edit preserved byte-for-byte including CRLF): `session-open` writes
+  `observer/2` with `build: buildIdentityAtOpen()`, the whole-tree source
+  digest in short and full form plus file and byte counts. New
+  `test/session-open-build-identity.test.js` (2 tests, real hook binary);
+  `test/stamp-reach-coverage.test.js` restored to its inverted form (4 tests).
+
+Net for the fourth pass: limits 62, 63, 35 and 64 CLOSED; limit 72 stays open
+and keeps its tripwire; no denials. Suite 1047 tests, 1047 pass, 0 skipped.
+
+**Staged, denied unsigned, request ids in the brain
+(`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
+(`src/policy`), 64 (`bin/hook-session-start.js`), 65 (`src/limits/pin.js`),
+35 (`src/gate` and `bin/hook-pre-tool-use.js`), the WO-TRACE-BRIDGE-01 last
+mile (`bin/hook-session-end.js`), and `bin/chapters.js` with its
+`package.json` line. Every one has fail-first evidence recorded (the flipped
+test ran red against unfixed code), and every flipped test is parked in the
+session scratchpad in its inverted state, to be restored the moment the
+byte-identical retry lands. (Written at the first pass, before the
+signatures; the "Landed under signature" list above is the second pass and
+supersedes the open status this paragraph implied for the ones it names.)
+
 ## Unreleased — README: names Obsigna as prior art on the local signed record
 
 Oracle row 60 (2026-09-07) found Obsigna / Agent Receipts, an independent, formally verified local signed record with a Claude Code hook, 110 days older than this repo's first commit. Isaac ruled it a stranger. The README's "most accountability tooling is cloud observability" line now reads "much," names the prior art, and claims only what is Lotor's: the block-until-signed gate and the confession ledger.
@@ -19,8 +120,8 @@ counts. No assistant text and no tool parameters beyond the file paths
 `touched` already records. `chaptersBinding()` produces the
 `{ schema, count, digest }` a receipt would carry, digest taken over the
 list with titles removed; the view verifies that binding if a receipt has one.
-No receipt has one today: the ingest change is drafted in
-`proposals/chapters-witness-2026-09-07.md` and queued for a signing sitting.
+(Applied at the 2026-09-07 sitting; see the entry above. Receipts written
+before that carry no binding and read as unrecorded.)
 
 `bin/chapters.js` and its `npm run chapters` script were denied by the gate
 (all of `bin/` is self-mod protected, not only the hooks, and so is

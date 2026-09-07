@@ -1198,6 +1198,23 @@ and a list is only as good as the last person to remember it.
 
 ## 35. A gate decision carries no session id, so a denial cannot be attributed
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`1493de45`, a whole-file Write of `src/gate/index.js` carrying the three
+receipt sites the second pass could not land, re-staged in that shape after
+the limit 73 purge spent `3614fcb7`, `76404e71` and `b3891aac`; branch
+`signing-sitting-2026-09-07`, commit "limit 35 closed"). All four
+`gated-action` receipt shapes (no-token denial, stale-or-mismatch, replay
+denial, approved) now carry `sessionId: meta.sessionId || null`, and the
+pre-tool-use hook passes `meta.sessionId` at all three call sites (landed on
+the second pass, `1725d400`). `meta` stays informational: it never enters
+`canonicalizeRequest` or `verifyApproval`, so the id cannot be forged into an
+approval. `test/known-limits-35-session-attribution.test.js` is the fully
+inverted tripwire (5 tests: both decision paths carry the id, absence lands
+as `null`, 0 bare meta sites and 3 carrying ones in the hook, 4 of 4 receipt
+shapes in the gate). Attribution stays self-report at the hook's altitude
+(limit 1); receipts written before this date carry no id and `since.js`
+should keep listing those unattributed.**
+
 Found 2026-07-26 building the cross-session view.
 
 Every `gated-action` receipt written in `src/gate/index.js` (four call sites, lines
@@ -1234,6 +1251,23 @@ numbers, in `test/known-limits-35-session-attribution.test.js`, which ships a
 tripwire proving the gap against the live source (three assertions, all passing
 against today's code) rather than describing it in prose alone. **Core. Queues for
 the signing sitting**, same as the rest of this file's open core items.
+
+**NARROWED again, not closed (2026-09-07, signing sitting).** Five Edits were
+staged and Isaac signed all five: four receipt sites in `src/gate/index.js`
+(the entry counted three; there are four `gated-action` shapes, the replay
+denial being the one it missed) and the three `meta` sites in
+`bin/hook-pre-tool-use.js`. What landed: the hook edit (request `1725d400`),
+so every call into `gatedAction()` now passes `meta.sessionId`; and the first
+gate edit (request `0892f44a`), so the **no-token denial** receipt carries
+`sessionId` (null when the hook had none). What did not: the stale-or-mismatch
+denial, the replay denial and the approved receipt (requests `3614fcb7`,
+`76404e71`, `b3891aac`), denied on replay because spending the first gate
+token purged the other three (limit 73). So today one of the four receipt
+shapes is attributable and three are not, and a reader must check
+`reason` before trusting an absent `sessionId` as "no session" rather than
+"site not yet threaded". The test file above was adjusted to assert exactly
+that state; the fully inverted version is parked in the brain. Three more
+signatures, one per sitting or one whole-file Write, finish it.
 
 ## 36. An approved receipt records the tool, never the target
 
@@ -1673,12 +1707,17 @@ charters cannot supply it for the non-delegable core by construction.
 
 ## 44. Scheduled task and cron operations are not gated
 
-**Status: NARROWED, not closed. Was recorded "closed for the honest-agent
-class" 2026-08-25 (stdio42-codex-20260821); downgraded 2026-09-01 when four
-forms of the same class were measured walking past the closing change — see
-the amendment at the end of this entry. Residuals below. Found 2026-07-29 by an agent expecting a gate
-ceremony on `Register-ScheduledTask` that never materialized; the task
-registered clean, no staged approval, no receipt of a denial.**
+**Status: CLOSED 2026-09-07 for the honest-agent class, at the signing
+sitting (request `f256a65a`, branch `signing-sitting-2026-09-07`, commit
+"limit 44: at(1) am/pm and HHMM forms, systemd-run space separator"). The two
+widenings named in the 2026-09-01 amendment landed under signature and the
+tripwire in `test/policy-scheduled-task.test.js` was inverted to assert the
+seven forms gate; see the closing note at the end of this entry. History: recorded
+"closed" 2026-08-25 (stdio42-codex-20260821); downgraded to NARROWED
+2026-09-01 when four forms of the same class were measured walking past the
+closing change. Found 2026-07-29 by an agent expecting a gate ceremony on
+`Register-ScheduledTask` that never materialized; the task registered clean,
+no staged approval, no receipt of a denial.**
 
 Persistent unattended execution paths — Windows scheduled tasks
 (`Register-ScheduledTask`, `schtasks /Create`, `New-JobTrigger`), POSIX cron
@@ -1803,6 +1842,21 @@ available.
 **Still not covered, unchanged by this amendment:** `systemctl enable` on an
 existing unit, `batch`, `anacron`, `fcron`, SysWOW64's task store, and what a
 registered task runs later.
+
+**CLOSED 2026-09-07, signing sitting.** Both widenings landed in `src/policy`
+under Isaac's signature (request `f256a65a`, byte-identical replay of the
+staged edit): the systemd guard is now `--on-[-a-z]+[=\s]`, and the at(1)
+alternation carries `H[:MM]am|pm` (tried before the bare `HH:MM`) and a bare
+four-digit `HHMM`. The tripwire block was inverted, not deleted: seven forms
+now MUST gate (the five measured on 2026-09-01 plus `--on-calendar "*:0/5"`
+and `5:30pm`), the three previously covered forms stay as controls, and seven
+prose controls (`ls at 12 files`, `echo "meet at 5"`, `grep at 1730.log`,
+`echo --on-call rota`, plus the three existing ones) stay free. Declared
+over-gate, unchanged in kind from the `at noon` residual: `grep at 1200
+log.txt` fires, because the bare HHMM is a valid spec after a
+whitespace-preceded `at`. The list two paragraphs up (`systemctl enable`,
+`batch`, `anacron`, `fcron`, SysWOW64, what a registered task later runs) is
+still open and is not what this closure claims.
 
 ## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
 
@@ -2166,6 +2220,22 @@ which is the failure that produced limit 39 in the first place.
 
 ## 62. The self-mod matcher folds slashes and case, and stops there, so an equivalent path spelling is ungated
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`24bc4dae`, a whole-file Write of `src/policy/index.js`, re-staged in that
+shape after the limit 73 purge spent `58a75ca5`; branch
+`signing-sitting-2026-09-07`, commit "limits 62 and 63 closed"). `normalizePath`
+now collapses `/{2,}` except where the run follows `:` (the URL scheme
+separator, since the same function runs over whole command strings) and drops
+`./` segments at the start of the string or after a `/`. Seven of the eight
+tripwire cases in `test/policy-selfmod-separator-spellings.test.js` are
+inverted and green, with a URL-scheme control beside them. The eighth,
+`rm -rf src/./chain`, is deliberately NOT inverted: it folds to
+`rm -rf src/chain`, and that plain spelling is limit 72 (a core directory
+named without a trailing slash is free on the command side), which stays
+open. The case lives in limit 72's own tripwire block in the same file and
+flips when 72 does. The trailing-dot spelling and the resolver swap from
+limit 34 are not part of this closure.**
+
 Found 2026-09-01, by running fourteen spellings through the shipped matcher rather
 than reading it. Twelve seconds of probing, seven misses.
 
@@ -2230,6 +2300,20 @@ entry in the same change, never to delete the block.
 
 ## 63. The matcher version stamp hashes the rule entry points, not the code that decides
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`24bc4dae`, the same whole-file Write that closed limit 62, re-staged after
+`2666acdd` was purged under limit 73; commit "limits 62 and 63 closed").
+`matcherHashInputs()` is exported and names the self-mod deciders ahead of the
+rule entry points: the eight listed below plus `isSelfModCommand`, the
+brace-overflow fail-closed decider the list omitted. `MATCHER_SCHEMA` is
+`matcher/2`, because the hashing method changed; receipts stamped `matcher/1`
+stay honest about what they meant. `matcherVersionHash()` digests that
+exported text, and its docstring now says "the rules in this file".
+`test/policy-matcher-stamp-coverage.test.js` is inverted and asserts presence
+against the hashed bytes themselves, with a control that the stamp equals
+sha256 of those bytes (9 tests). The residual below stands as written and is
+limit 64's to carry.**
+
 Found 2026-09-02, by asking what `matcherVersionHash()` actually reads rather than
 what its comment says it reads.
 
@@ -2288,6 +2372,22 @@ being wrong about limit 62. A stamp that does not move when 62 is fixed is how a
 reader would fail to notice the fix landed.
 
 ## 64. The whole-tree fingerprint exists, and it is wired to the reader instead of the record
+
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`ae9c39f6`, the second hunk on `bin/hook-session-start.js`, re-signed as the
+only token for that file after the limit 73 purge spent `5ff3beee`; branch
+`signing-sitting-2026-09-07`, commit "limit 64 closed"). The `observer` block
+on every `session-open` receipt is now `observer/2` and carries
+`build: { schema: 'build/1', sourceDigest, sourceDigestShort, fileCount,
+byteCount }` from `buildIdentityAtOpen()` (the first hunk, `fc8511dd`, landed
+on the second pass); per-action receipts inherit it by session id, which
+limit 35's closure makes usable. `test/session-open-build-identity.test.js`
+runs the real hook against a throwaway home and matches `observer.build` to
+an independent `computeSourceDigest(ROOT)` (2 tests);
+`test/stamp-reach-coverage.test.js` is restored to its inverted form (4
+tests: three consumers, the session-open writer among them). The residuals
+below stand: `node_modules`, non-`.js` inputs, out-of-tree loads, and a
+digest that detects without explaining (limit 53).**
 
 Found 2026-09-02, following limit 63's own stated residual to the place it leads,
 and finding the fix already built and pointed the wrong way.
@@ -2353,7 +2453,26 @@ as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
 cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
 this is the wide one not being anywhere it matters.
 
+**NARROWED, not closed (2026-09-07, signing sitting).** The repair was staged
+as two Edits to `bin/hook-session-start.js` and Isaac signed both. The first
+(request `fc8511dd`) landed: the hook now imports `computeSourceDigest` and
+defines `buildIdentityAtOpen()`, which returns `{ schema: 'build/1',
+sourceDigest, sourceDigestShort, fileCount, byteCount }` and never throws. The
+second (request `5ff3beee`, the `observer` block moving to `observer/2` with a
+`build` field) was denied on replay because spending the first token purged
+the second (limit 73). So the function exists and nothing calls it;
+`session-open` still writes `observer/1` and the digest still reaches no
+receipt. The flipped tests (`test/session-open-build-identity.test.js`, new;
+`test/stamp-reach-coverage.test.js`, inverted) are parked in the brain, not in
+`test/`, because they assert the second half. One more signature on that one
+Edit finishes it.
+
 ## 65. The freshness pin binds the code, and never the log it lives in
+
+**Status: CLOSED 2026-09-07 at the signing sitting (request `41e5862e`, branch
+`signing-sitting-2026-09-07`, commit "limit 65: pin carries body-sha256, edited
+status"). The drafted repair below landed as a whole-file Write, byte-identical
+to the staged content; see the closing note at the end of this entry.**
 
 Limit 29 gave `KNOWN-LIMITS.md` a pin: a comment block at the top naming the commit
 the log was verified against, plus `npm run limits-pin -- --check` so a reader in a
@@ -2422,6 +2541,21 @@ silent gap into a prompt to re-verify; it does not perform the verification.
 without explaining. Limits 63 and 64 are the same family read three ways: 63 is a
 stamp narrower than it claims, 64 is a wide stamp wired somewhere it does not
 persist, and this is a stamp that covers the wrong artifact entirely.
+
+**CLOSED 2026-09-07, signing sitting.** `src/limits/pin.js` now exports
+`stripPinBlock` and `bodyDigest`; `writePin` stamps `body-sha256` over the file
+with the pin block removed; `readPin` parses it into `pin.bodySha256`; and
+`checkPin` returns the third status, `edited`, when the commit matches and the
+digest does not (`bin/limits-pin.js` already exits 1 on anything but
+`current`, so no change there). A v1 pin with no digest line keeps reading
+`current`, with the message now saying the log half is unverified.
+`test/known-limits-pin-body.test.js` was inverted from its tripwire form: an
+appended entry and a mangled entry both read `edited`, the digest is
+digest-stable across re-stamps, and the no-digest pin keeps v1 semantics
+(7 tests). The pin at the top of this file is still the 2026-08-23 one and
+carries no digest; re-stamping is a separate act on `main`, as limit 29
+intended, and nothing in `npm test` runs `--check` yet (the "nothing runs the
+check" paragraph above stays true).
 
 ---
 
@@ -2638,3 +2772,115 @@ Four things follow, and each is printed in the view's own output.
 Not a defect in the chain. It is the honest shape of a view that reads
 something the chain does not hold, and the reason the view ends with a block
 saying what it cannot tell you.
+
+**NARROWED 2026-09-07, signing sitting (Claude Code half witnessed; Codex and
+the CLI still open).** The receipt-side binding drafted in
+`proposals/chapters-witness-2026-09-07.md` is applied: `src/ingest/index.js`
+now puts `chapters: { schema: 'chapters/1', count, digest }` on every session
+receipt, the digest taken over the chapter list with every title removed, and
+`chaptersReport` verifies it (`chaptersDigestMatches` is `true` for a
+transcript whose bytes still match). `test/ingest-chapters-binding.test.js`
+asserts the field, the digest, the absence of operator words on the chain, and
+the round trip through the view. `src/ingest/` is not on the matcher's
+protected list, so this half landed without a ceremony; it was still queued
+for one on the basis that it writes every session receipt, and Isaac's go for
+the sitting covers it. What stays open: Codex sessions (no writer runs at
+Codex session end, so nothing can bind them), and `bin/chapters.js` with its
+`npm run chapters` script, which the gate denied at this sitting (requests
+`add2bcb4` and `19458a8f`, recorded in the brain) and which remain staged in
+`proposals/chapters-cli-staged-2026-09-07.md`. The four CLI tests keep
+skipping until those two land.
+
+**AMENDED 2026-09-07, second pass: the CLI landed.** Isaac signed both
+requests and the replays landed byte-identically: `bin/chapters.js` is the
+proposal's first block verbatim (sha256 checked against the proposal text),
+and `package.json` carries `"chapters": "node bin/chapters.js"`. The four
+tests in `test/chapters-cli.test.js` stopped skipping and pass against the
+real child process. Still open, unchanged: Codex sessions have no writer at
+session end and stay unwitnessed on every line the view prints about them.
+
+## 72. A core directory named without a trailing slash is free on the command side
+
+Found 2026-09-07 at the signing sitting, while flipping limit 62's tripwire
+and asking why its eighth case (`rm -rf src/./chain`) would not flip on the
+separator fix alone. Measured by running the shipped matcher, not by reading
+it:
+
+```
+FREE | rm -rf src/chain          <- the plain spelling
+FREE | rm -rf src/chain/         <- trailing slash: stripped at end of string
+FREE | rm -rf src/./chain        <- the limit 62 case, which folds to line 1
+GATE | rm -f  src/chain/index.js <- naming a FILE under the directory
+```
+
+Two things combine. Every directory on the command-side fragment list ends in
+`/` (`src/gate/`, `src/policy/`, `src/chain/`, `src/store/`, `src/grant/`,
+`src/charter/`, `src/limits/`, `src/publish/`), so a match needs the slash to
+be present in the command text. And `normalizePath` strips a trailing `/` at
+end of string, so even the operator who types the slash loses it before the
+comparison. The result is that **deleting, moving or chmod-ing a core directory
+wholesale is ungated in every spelling**, while touching any one file inside
+it is gated. The Edit side is unaffected: an Edit names a file.
+
+**Why this is its own entry and not folded into 62.** Limit 62 is about
+equivalent spellings of the same path being matched differently. This is the
+canonical spelling being unmatched. Fixing 62 (collapse `//`, drop `./`) is
+correct and does not touch this; a fix here is a different clause (match a
+directory fragment at a token boundary with or without its trailing slash) and
+carries its own blast radius, since `src/chain` as a bare token appears in
+prose (`git log -- src/chain`) far more often than `src/chain/` does. It is
+`src/policy` and therefore queues for a signing sitting rather than riding
+along with this record.
+
+`test/policy-selfmod-separator-spellings.test.js` carries a TRIPWIRE block for
+this entry asserting the three FREE lines above, with the file-level control
+beside them. When the clause lands, that block fails; invert it and amend this
+entry in the same change.
+
+## 73. Signing several edits to one file in a sitting yields one landing, because the limit 30 purge spends the siblings
+
+Found 2026-09-07, on the second pass of the signing sitting, when the replay
+of the second signed edit to `src/policy/index.js` was denied with "no valid
+token" seconds after the first had been approved. Confirmed by reading
+`purgeSurplusTokens` in `src/gate/index.js` and by listing
+`pending-approvals/` before and after: thirteen tokens went in, and the two
+whose canonical request matched the spent one were gone.
+
+The mechanism is the limit 30 repair working exactly as written. An Edit or
+Write token canonicalizes to the file_path alone (limit 27), so every token for
+a file carries the same request string. When one is spent, the gate deletes
+every other stored token with that request inside the same lock, so that a
+surplus signature cannot bank into a standing grant. That is right for the
+threat limit 30 names. It also means that **N signatures for N staged edits to
+the same file land exactly one edit**, whichever is replayed first, and the
+other N-1 are denied with the same reason a forged or missing token would get.
+The denial message does not say the token was purged; it says there is none.
+
+At this sitting, measured as it happened (rows added as each file was replayed):
+
+| file | staged | landed | purged on the first spend |
+|---|---|---|---|
+| `src/policy/index.js` | 3 (limits 44, 62, 63) | limit 44 | limits 62, 63 |
+| `bin/hook-session-start.js` | 2 (limit 64, two hunks) | first hunk | second hunk |
+| `src/gate/index.js` | 4 (limit 35, four receipt sites) | first site | three sites |
+
+**What this is not.** Not a bypass and not a false denial: every purged token
+was a real signature for a real edit, and nothing was done to the file that
+was not signed. It is the approval unit (one file) being coarser than the
+staging unit (one hunk), with the purge enforcing the coarser one.
+
+**What a signer should do until it is fixed.** Stage one edit per file per
+sitting, or stage the whole-file Write (one signature, as limit 65's fix did
+today). Re-signing a purged sibling after the first spend works, since it is
+then the only token for that file, but each further sibling needs its own
+sitting: the second spend purges the third.
+
+**The repair, and why it is not done here.** Either bind Edit tokens to
+file_path plus a digest of `old_string`/`content` so siblings have distinct
+requests (which reopens the limit 27 decision that content is deliberately
+unsigned), or have the purge skip tokens whose approval carries a
+`replay-set` marker the operator signed as a batch. Both are `src/gate` and
+non-delegable core, and both change what a signature means, so this queues for
+a reviewed sitting. The approve CLI could also warn at signing time when a
+second token for an already-staged file_path is being signed; that is
+`bin/approve.js` and gated too.

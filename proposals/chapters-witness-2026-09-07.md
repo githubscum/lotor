@@ -1,8 +1,10 @@
-# DRAFT: witnessing the chapter list on the session receipt
+# APPLIED 2026-09-07: witnessing the chapter list on the session receipt
 
-Drafted 2026-09-07 by the chapters-view work order. **Not applied.** Queued for
-Isaac's next signing sitting per AGENTS.md rule 5 (core changes accumulate into
-one ceremony). Companion to KNOWN-LIMITS 71.
+Drafted 2026-09-07 by the chapters-view work order. **Diff 1 applied the same
+day at the signing sitting, verbatim, on branch `signing-sitting-2026-09-07`**,
+with `test/ingest-chapters-binding.test.js` as the fail-first test named below.
+Diff 2 was not taken. Companion to KNOWN-LIMITS 71, now narrowed. Kept as the
+record of the reasoning.
 
 ## What is unwitnessed today
 

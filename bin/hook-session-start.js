@@ -67,6 +67,39 @@ import { resolveHome } from '../src/home.js';
 import { loadPolicy, MATCHER_SCHEMA, matcherVersionHash } from '../src/policy/index.js';
 import { PARSER_SCHEMA, parserVersionHash } from '../src/parser/index.js';
 import { verifyChain } from '../src/chain/index.js';
+import { computeSourceDigest } from '../src/mcp/build-identity.js';
+
+/**
+ * Whole-tree source identity at open (KNOWN-LIMITS 64, closed 2026-09-07).
+ * computeSourceDigest hashes every .js under src/ and bin/, which is every
+ * module that decides whether an action is allowed: the gate, the grant
+ * checker, the chain writer, the store, the hooks. The matcher stamp in
+ * `observer.matcher` covers one file. Until this change the tree digest
+ * reached only MCP tool responses, on a value discarded when the call
+ * returned; the permanent record carried the weak identity and the
+ * ephemeral reader the strong one. Now it lands here, once per session,
+ * and per-action receipts inherit it by session id.
+ *
+ * Short form plus full, per limit 50: the full digest is the evidence
+ * binding, the short one is for a glance, and they are not interchangeable.
+ * Best-effort like everything else in this hook: a tree that cannot be read
+ * records null, never a hash of nothing.
+ */
+function buildIdentityAtOpen() {
+  try {
+    const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const d = computeSourceDigest(root);
+    return {
+      schema: 'build/1',
+      sourceDigest: d.digest,
+      sourceDigestShort: typeof d.digest === 'string' ? d.digest.slice(0, 16) : null,
+      fileCount: d.fileCount,
+      byteCount: d.byteCount
+    };
+  } catch (e) {
+    return { schema: 'build/1', sourceDigest: null, sourceDigestShort: null, fileCount: 0, byteCount: 0 };
+  }
+}
 
 /**
  * Read this package's own version. Best-effort: an unreadable
@@ -333,11 +366,16 @@ async function main() {
         // not the matcher CODE). Absence on an older entry means "before
         // instrumentation was versioned", not an error: additive field on a
         // payload the chain hashes as-is, so old entries verify unchanged.
+        //
+        // observer/2 (2026-09-07): gained `build`, the whole-tree source
+        // digest (KNOWN-LIMITS 64). observer/1 entries carried the matcher
+        // and parser stamps only.
         observer: {
-          schema: 'observer/1',
+          schema: 'observer/2',
           packageVersion: readPackageVersion(),
           matcher: { schema: MATCHER_SCHEMA, hash: matcherVersionHash() },
-          parser: { schema: PARSER_SCHEMA, hash: parserVersionHash() }
+          parser: { schema: PARSER_SCHEMA, hash: parserVersionHash() },
+          build: buildIdentityAtOpen()
         },
         harness,
         lotorVersion: 1,

@@ -44,39 +44,34 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import crypto from 'node:crypto';
 import {
-  isSelfMod,
-  isModeChange,
-  isPushForce,
-  isPushProtected,
-  isPublish,
-  isEgressOther,
-  isDestructive,
-  isScopeEscalation,
   matcherVersionHash,
+  matcherHashInputs,
   MATCHER_SCHEMA
 } from '../src/policy/index.js';
 
 /**
- * The hashed inputs this test can reach.
+ * CLOSED 2026-09-07 at the signing sitting. `parts` now names the self-mod
+ * deciders (selfModFragmentsForBase, isSelfModEdit, selfModCommandHit,
+ * normalizePath, pathContainsFragment, expandBraces, stripHeredocBodies,
+ * stripMessageArgs) and MATCHER_SCHEMA is `matcher/2`, because the hashing
+ * METHOD changed. The joined text is exported as `matcherHashInputs()` so this
+ * file asserts PRESENCE against the exact bytes that are hashed, not against
+ * a subset reconstructed from exports. Every "NOT in the hashed text" below
+ * became "IS in the hashed text"; the controls are unchanged.
  *
- * `parts` in matcherVersionHash() also names five values this module does not
- * export (isScopeEscalationEdit, isPersistenceArtifactPath, isOpaqueExec,
- * extensionlessLocalFileKind, EXPLICIT_LOCAL_PATH) plus the two rule tables.
- * None of them is a self-mod decider, so the subset below is sufficient to
- * prove ABSENCE: a string missing from the whole hashed text is missing from
- * this subset too, and a string found here would be present in the full text.
- * The asymmetry runs the safe way for what is being asserted.
+ * Residual, still open and stated in entry 63: the hash covers THIS module.
+ * Behaviour that reaches a decision from outside it (git-context.js resolving
+ * a push target) remains unstamped; KNOWN-LIMITS 64 carries the whole-tree
+ * digest for that.
  */
-const hashedText = [
-  isSelfMod, isModeChange, isPushForce, isPushProtected,
-  isPublish, isEgressOther, isDestructive, isScopeEscalation
-].map(fn => fn.toString()).join(' ');
+const hashedText = matcherHashInputs();
 
-describe('matcher version stamp coverage (KNOWN-LIMITS 63)', () => {
+describe('matcher version stamp coverage (KNOWN-LIMITS 63, closed 2026-09-07)', () => {
   it('CONTROL: the hashed functions own bodies are in the hashed text', () => {
     // If a rename or a bad import empties `hashedText`, these fail first and
-    // the absence assertions below cannot pass vacuously.
+    // the presence assertions below cannot pass vacuously.
     assert.ok(hashedText.length > 1000, 'hashed text is implausibly short');
     assert.ok(hashedText.includes('isSelfModCommand'), 'isSelfMod body missing');
     assert.ok(hashedText.includes('git\\s+push'), 'push matcher body missing');
@@ -84,48 +79,53 @@ describe('matcher version stamp coverage (KNOWN-LIMITS 63)', () => {
   });
 
   it('CONTROL: the stamp is a stable 16-hex digest under the declared schema', () => {
-    assert.equal(MATCHER_SCHEMA, 'matcher/1');
+    assert.equal(MATCHER_SCHEMA, 'matcher/2');
     const a = matcherVersionHash();
     const b = matcherVersionHash();
     assert.match(a, /^[0-9a-f]{16}$/);
     assert.equal(a, b, 'the stamp must be stable within a process');
   });
 
-  // --- the defect: the deciders are outside the hash (invert when fixed) ---
+  it('CONTROL: the stamp IS the digest of the exported inputs, so the inputs are what is asserted on', () => {
+    const expected = crypto.createHash('sha256').update(hashedText).digest('hex').slice(0, 16);
+    assert.equal(matcherVersionHash(), expected);
+  });
 
-  it('the protected-path list is NOT in the hashed text (invert when fixed)', () => {
+  // --- the repair: the deciders are inside the hash ---
+
+  it('the protected-path list IS in the hashed text', () => {
     // Three live entries of selfModFragmentsForBase(). Adding or removing any
-    // of them changes what an Edit is allowed to touch.
-    assert.equal(hashedText.includes('src/chain/'), false);
-    assert.equal(hashedText.includes('src/limits/'), false);
-    assert.equal(hashedText.includes('src/charter/'), false);
+    // of them changes what an Edit is allowed to touch, and now moves the stamp.
+    assert.equal(hashedText.includes('src/chain/'), true);
+    assert.equal(hashedText.includes('src/limits/'), true);
+    assert.equal(hashedText.includes('src/charter/'), true);
   });
 
-  it('the fragment builder is NOT in the hashed text (invert when fixed)', () => {
-    assert.equal(hashedText.includes('selfModFragmentsForBase'), false);
+  it('the fragment builder IS in the hashed text', () => {
+    assert.equal(hashedText.includes('function selfModFragmentsForBase'), true);
   });
 
-  it('the Edit-path matcher body is NOT in the hashed text (invert when fixed)', () => {
-    // isSelfMod NAMES isSelfModEdit at its call site, which is why the name
-    // appears; the body that decides is the bin regex, and that is absent.
-    assert.equal(hashedText.includes('bin\\/[^/]+\\.(js'), false);
+  it('the Edit-path matcher body IS in the hashed text', () => {
+    assert.equal(hashedText.includes('function isSelfModEdit'), true);
+    assert.equal(hashedText.includes('bin\\/[^/]+\\.(js'), true);
   });
 
-  it('the command-path matcher body is NOT in the hashed text (invert when fixed)', () => {
-    assert.equal(hashedText.includes('refsLotorHome'), false);
-    assert.equal(hashedText.includes('approval-nonces'), false);
+  it('the command-path matcher body IS in the hashed text', () => {
+    assert.equal(hashedText.includes('function selfModCommandHit'), true);
+    assert.equal(hashedText.includes('refsLotorHome'), true);
+    assert.equal(hashedText.includes('approval-nonces'), true);
   });
 
-  it('the path normalizer is NOT in the hashed text (invert when fixed)', () => {
+  it('the path normalizer IS in the hashed text', () => {
     // How a path is folded before matching decides whether a spelling gates
-    // at all (KNOWN-LIMITS 62). Changing it leaves the stamp identical.
-    assert.equal(hashedText.includes('function normalizePath'), false);
-    assert.equal(hashedText.includes('function pathContainsFragment'), false);
+    // at all (KNOWN-LIMITS 62). Changing it now moves the stamp.
+    assert.equal(hashedText.includes('function normalizePath'), true);
+    assert.equal(hashedText.includes('function pathContainsFragment'), true);
   });
 
-  it('the brace expander and prose stripper are NOT in the hashed text (invert when fixed)', () => {
-    assert.equal(hashedText.includes('function expandBraces'), false);
-    assert.equal(hashedText.includes('function stripHeredocBodies'), false);
-    assert.equal(hashedText.includes('function stripMessageArgs'), false);
+  it('the brace expander and prose strippers ARE in the hashed text', () => {
+    assert.equal(hashedText.includes('function expandBraces'), true);
+    assert.equal(hashedText.includes('function stripHeredocBodies'), true);
+    assert.equal(hashedText.includes('function stripMessageArgs'), true);
   });
 });
