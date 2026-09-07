@@ -2728,6 +2728,14 @@ Codex session end, so nothing can bind them), and `bin/chapters.js` with its
 `proposals/chapters-cli-staged-2026-09-07.md`. The four CLI tests keep
 skipping until those two land.
 
+**AMENDED 2026-09-07, second pass: the CLI landed.** Isaac signed both
+requests and the replays landed byte-identically: `bin/chapters.js` is the
+proposal's first block verbatim (sha256 checked against the proposal text),
+and `package.json` carries `"chapters": "node bin/chapters.js"`. The four
+tests in `test/chapters-cli.test.js` stopped skipping and pass against the
+real child process. Still open, unchanged: Codex sessions have no writer at
+session end and stay unwitnessed on every line the view prints about them.
+
 ## 72. A core directory named without a trailing slash is free on the command side
 
 Found 2026-09-07 at the signing sitting, while flipping limit 62's tripwire

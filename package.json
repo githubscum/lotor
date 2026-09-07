@@ -39,6 +39,7 @@
     "charter": "node bin/charter.js",
     "mode": "node bin/mode.js",
     "receipts": "node bin/view.js --all",
+    "chapters": "node bin/chapters.js",
     "tokens": "node bin/tokens.js",
     "limits-pin": "node bin/limits-pin.js",
     "inflight": "node bin/inflight.js",

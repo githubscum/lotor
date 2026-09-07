@@ -51,6 +51,14 @@ each replay byte-identical to the staged edit).**
   beside a parent transcript is bound onto the receipt the real hook writes.
   `test/hook-session-end-subagents.test.js` inverted (1 test, real hook
   binary, totals 40/20).
+- Chapters CLI landed (`add2bcb4`, `19458a8f`): `bin/chapters.js` verbatim
+  from the staged proposal, `npm run chapters` in `package.json`. The four
+  tests in `test/chapters-cli.test.js` run instead of skipping. Limit 71
+  amended; Codex sessions stay open.
+
+Net for the sitting: limits 44 and 65 closed, the trace-bridge last mile and
+the chapters CLI landed, limits 64 and 35 half landed, limits 62 and 63 not
+applied, and limit 73 recorded for the reason the halves are halves.
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
@@ -60,8 +68,9 @@ mile (`bin/hook-session-end.js`), and `bin/chapters.js` with its
 `package.json` line. Every one has fail-first evidence recorded (the flipped
 test ran red against unfixed code), and every flipped test is parked in the
 session scratchpad in its inverted state, to be restored the moment the
-byte-identical retry lands. Nothing in this entry claims any of those fixes
-shipped; the entries keep their open status until they do.
+byte-identical retry lands. (Written at the first pass, before the
+signatures; the "Landed under signature" list above is the second pass and
+supersedes the open status this paragraph implied for the ones it names.)
 
 ## Unreleased — chapters: a cross-runtime prompt-by-prompt index, derived from transcripts
 
