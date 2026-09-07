@@ -10,7 +10,7 @@ It does not prove the agent's actions were correct. It records them, and makes l
 
 It also gates the actions you choose. Those stop and wait for an approval signed with a passphrase the model has never seen and cannot derive. An agent can request a consequential action. It cannot authorize one.
 
-**Local first, and not as a deployment option.** The receipt is written to your machine and nowhere else. No upload path, no account, no server component. Nothing leaves because nothing is built to send it. Most accountability tooling is cloud observability, which means your agent's history becomes inventory in someone else's books. The record of what your machines did for you should answer to your key, not to a vendor's retention policy.
+**Local first, and not as a deployment option.** The receipt is written to your machine and nowhere else. No upload path, no account, no server component. Nothing leaves because nothing is built to send it. Much accountability tooling is cloud observability, which means your agent's history becomes inventory in someone else's books. Lotor is not the only local one: Obsigna (agentreceipts.ai) ships a local, signed, tamper-evident record with a Claude Code hook, is formally verified, and predates this repo. What this repo adds on top of a record is the gate that blocks until a human signs, and a ledger that confesses its own limits. The record of what your machines did for you should answer to your key, not to a vendor's retention policy.
 
 Longer arguments for why that matters live at [ikeanalytics.com](https://ikeanalytics.com), including [the measurement behind them](https://ikeanalytics.com/articles/the-bones-do-remember/). This file is about running the thing.
 

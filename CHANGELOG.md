@@ -101,6 +101,10 @@ byte-identical retry lands. (Written at the first pass, before the
 signatures; the "Landed under signature" list above is the second pass and
 supersedes the open status this paragraph implied for the ones it names.)
 
+## Unreleased — README: names Obsigna as prior art on the local signed record
+
+Oracle row 60 (2026-09-07) found Obsigna / Agent Receipts, an independent, formally verified local signed record with a Claude Code hook, 110 days older than this repo's first commit. Isaac ruled it a stranger. The README's "most accountability tooling is cloud observability" line now reads "much," names the prior art, and claims only what is Lotor's: the block-until-signed gate and the confession ledger.
+
 ## Unreleased — chapters: a cross-runtime prompt-by-prompt index, derived from transcripts
 
 `src/views/chapters.js` lists each session as its operator prompts, with the
