@@ -2074,3 +2074,128 @@ reviewed sitting rather than in this entry.
 behavior with the plain spellings beside it as controls. **When the matcher is
 fixed, that file fails.** The repair is to invert its assertions and amend this
 entry in the same change, never to delete the block.
+
+## 63. The matcher version stamp hashes the rule entry points, not the code that decides
+
+Found 2026-09-02, by asking what `matcherVersionHash()` actually reads rather than
+what its comment says it reads.
+
+Every `gated-action`, `policy-warn`, grant and egress receipt carries a matcher
+version. It is the field a reader uses to answer the only question that makes two
+receipts comparable: **were these decided by the same rules?** The function's own
+docstring calls it the "content hash of the matcher logic in force right now."
+
+**It hashes thirteen top-level functions plus `RULE_TABLE` and `RULE_INFO`.**
+`Function.prototype.toString()` returns a function's own source and nothing it
+calls, so a helper is covered only if the `parts` array names it. The self-mod
+deciders are not named: `selfModFragmentsForBase` (the protected-path list
+itself), `isSelfModEdit`, `selfModCommandHit`, `normalizePath`,
+`pathContainsFragment`, `expandBraces`, `stripHeredocBodies`, `stripMessageArgs`.
+`isSelfMod` IS hashed and is a three-line dispatcher: it names the two matchers
+and contains neither.
+
+**Measured, not argued.** `test/policy-matcher-stamp-coverage.test.js` asserts the
+absence directly against the hashed inputs, with controls asserting the hashed
+bodies are present so the block cannot pass vacuously. On the build this entry was
+written against, the stamp is `matcher/1 95291ff6385151ca`.
+
+**What it costs.** Add a directory to the protected list, change how a path is
+folded before it is matched, or widen the brace expander, and the gate stops a
+different set of actions while the stamp stays byte-identical. Two receipts either
+side of that change agree on the matcher version and disagree on the behavior.
+**The failure runs the wrong way on purpose-built silence:** a matcher WEAKENED
+between two runs keeps stamping the old, stronger version, so the record's own
+account of why an action was allowed is wrong in the permissive direction. This is
+a witness defect rather than an enforcement one, which is what makes it worth its
+own entry: the gate still gates correctly, and the trace misdescribes it.
+
+A shipped change demonstrates it. The stamp was introduced 2026-08-09 (commit
+b1b7bf8, "Observer versioning: matcher hash and canonical params digest"). The
+protected-path list gained an entry on 2026-08-23, two weeks later, which changed
+what an unsigned Edit could touch. That list is not inside the hashed text, so a
+receipt written before that date and one written after carry the same matcher
+version and cannot be told apart by it.
+
+**The repair, and why it is not done here.** Add the helpers to `parts` and bump
+`MATCHER_SCHEMA` to `matcher/2` (the hashing METHOD changes, which is precisely
+what that marker exists to record; the value changing on its own would otherwise
+be indistinguishable from a rule edit). Historical receipts keep `matcher/1` and
+stay honest about what they meant. That edit is `src/policy` and therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with the disclosure.
+
+**Residual after the repair, stated now.** A hash over function source is still a
+hash over THIS module. Behavior that reaches the decision from outside it, such as
+`src/policy/git-context.js` resolving a push target, would remain unstamped. The
+honest ceiling is "the rules in this file", and the docstring should say that
+instead of "the matcher logic", which is what invited the gap in the first place.
+
+**Related.** Limit 62 is the same file being wrong about paths; this is the record
+being wrong about limit 62. A stamp that does not move when 62 is fixed is how a
+reader would fail to notice the fix landed.
+
+## 64. The whole-tree fingerprint exists, and it is wired to the reader instead of the record
+
+Found 2026-09-02, following limit 63's own stated residual to the place it leads,
+and finding the fix already built and pointed the wrong way.
+
+This repository computes **two** code identities, and they cover different things.
+
+| Stamp | Covers | Reaches |
+|---|---|---|
+| `matcherVersionHash()` | named functions in `src/policy/index.js` (and per limit 63, not all of them) | **every receipt**: `gated-action`, `policy-warn`, grant, egress, session-start |
+| `computeSourceDigest()` | **every `.js` file under `src/` and `bin/`** | MCP tool responses only, as `_lotorBuild` |
+
+**Measured, not argued.** `test/stamp-reach-coverage.test.js` asserts all of it
+against the tree. On the build this entry was written against: the build digest is
+`47ed7876d2652e68`, over **50 files / 522,651 bytes**; the matcher stamp is
+`matcher/1 95291ff6385151ca`. The digest's file set contains `src/gate/index.js`,
+`src/grant/check.js`, `src/chain/index.js`, `src/store/index.js` and
+`bin/hook-pre-tool-use.js` — every module that decides whether an action is
+allowed. The matcher stamp contains none of them. And the digest has exactly two
+consumers in the whole tree, `src/mcp/build-identity.js` and `src/mcp/server.js`,
+neither of which writes to the chain.
+
+**What it costs.** Change the gate, the grant checker, the chain writer, the store,
+or the pre-tool-use hook, and every receipt written after the change is
+byte-comparable with every receipt written before it. `matcherHash` is unmoved,
+because none of that code is in the policy module. A reader asking the question
+receipts exist to answer — *were these two decided by the same code?* — is told yes,
+and the honest answer is unknown. The MCP reader is told the truth in the same
+minute, on a response that is discarded when the call returns.
+
+**Why this is its own entry rather than limit 63's residual.** Limit 63 names the
+gap ("behavior that reaches the decision from outside it would remain unstamped")
+and treats it as an accepted ceiling. It is not a ceiling. **The instrument that
+closes it is already in this repository, already tested, already computing the
+right value on every MCP call.** The defect is not a missing capability, it is a
+wire going to the wrong consumer, and that is a different and much cheaper thing to
+fix. Limit 63's repair (widening `parts`) does not touch this and should not be
+read as covering it.
+
+**The asymmetry is the sharpest part.** The ephemeral artifact carries the strong
+identity. The permanent artifact carries the weak one. That is exactly backwards
+for a project whose thesis is that the record outlives the reader, and it is the
+same shape as limit 41's original incident: the chain was intact and signed the
+whole time, and what could not be trusted was the account of which code produced
+the answer.
+
+**The repair, and why it is not done here.** Carry the source digest (short form
+plus full, per limit 50) onto `session-open` at minimum, where it costs one field
+per session rather than one per action, and let per-action receipts inherit it by
+session id. That edit touches `src/gate` and `bin/hook-*` and is therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with this disclosure.
+
+**Residual after that repair, stated now.** A digest over `src/` and `bin/` still
+misses `node_modules` (a dependency upgrade moves nothing), anything loaded by
+absolute path from outside the repository, and every non-`.js` input: policy files,
+settings, the chain itself. All 50 source files are `.js` today, so the extension
+filter has no live hole; a future `.mjs` or `.cjs` under either directory would be
+unstamped and nothing would say so. And a digest detects without explaining, which
+is limit 53 again.
+
+**Related.** Limit 41 shipped this digest to stop a stale reader misreporting a fix
+as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
+cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
+this is the wide one not being anywhere it matters.
