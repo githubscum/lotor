@@ -1,29 +1,27 @@
 /**
  * KNOWN-LIMITS 35 — a gate decision carries no session id, so a denial cannot
- * be attributed. HALF LANDED 2026-09-07 at the signing sitting.
+ * be attributed. CLOSED 2026-09-07 at the signing sitting.
  *
- * This was a TRIPWIRE asserting the uniform defective state (gatedAction()
- * dropped meta.sessionId at every site; the hook never passed it). Five edits
- * were staged and signed. Two landed:
- *   - bin/hook-pre-tool-use.js: all three `const meta = { ruleId, heldMs };`
- *     sites became `const meta = { ruleId, heldMs, sessionId: parsed.sessionId };`
- *     (request 1725d400).
- *   - src/gate/index.js: the NO-TOKEN DENIAL receipt gained
- *     `sessionId: meta.sessionId || null,` (request 0892f44a).
- * Three did not: the stale-or-mismatch denial, the replay denial and the
- * approved receipt (requests 3614fcb7, 76404e71, b3891aac) were denied on
- * replay because spending the first gate token purged the other three
- * (KNOWN-LIMITS 73).
+ * This was a TRIPWIRE asserting the defective state (gatedAction() dropped
+ * meta.sessionId; the hook never passed it). The three-part repair landed as
+ * the tripwire named it, and every assertion here is the inverted one:
+ *   1. src/gate/index.js: every `chain.append({ type: 'gated-action', ... })`
+ *      site (denied / stale-or-mismatch / replay / approved, four of them)
+ *      carries `sessionId: meta.sessionId || null,` beside `ruleId` and
+ *      `heldMs`. meta stays informational: it never enters
+ *      canonicalizeRequest or verifyApproval, so a session id cannot be
+ *      forged into an approval and costs nothing to add.
+ *   2. bin/hook-pre-tool-use.js: the three `const meta = { ruleId, heldMs };`
+ *      sites became `const meta = { ruleId, heldMs, sessionId: parsed.sessionId };`.
+ *   3. This file asserts the id survives on both decision paths, that an
+ *      absent id lands as `null` rather than being invented, and that no
+ *      bare meta site remains in the hook (a partial fix would leave some
+ *      decisions attributable and others silently not, which is worse than
+ *      the uniform gap).
  *
- * So this file now asserts the PARTIAL state exactly, which the old tripwire
- * itself called "worse than the uniform gap": one receipt shape attributable,
- * three not. The assertions marked TRIPWIRE below fail again the moment the
- * remaining gate edits land, and must be inverted then, not deleted. The fully
- * inverted version is parked in the brain
- * (projects/lotor/wo/signing-2026-09-07-tests/fix6-known-limits-35-session-attribution.test.js).
- *
- * meta stays informational: it never enters canonicalizeRequest or
- * verifyApproval, so a session id cannot be forged into an approval.
+ * Attribution is still self-report at the hook's altitude: the id is whatever
+ * the harness put in `session_id`. That is the same trust the session
+ * receipts already run on (limit 1) and is not new here.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -80,12 +78,12 @@ function setupTestKey(baseDir, pubB64) {
   fs.writeFileSync(path.join(keysDir, 'approval.pub'), `ed25519:${pubB64}:fingerprint:${fp}\n`);
 }
 
-describe('KNOWN-LIMITS 35 — gate receipts carry the session id on one shape of four (half landed 2026-09-07)', () => {
+describe('KNOWN-LIMITS 35 — gate receipts carry the session id (closed 2026-09-07)', () => {
   let testDirs = [];
 
   beforeEach(() => { testDirs = []; });
 
-  it('no-token DENIED receipt carries meta.sessionId, per the ruleId/heldMs precedent (landed)', () => {
+  it('DENIED receipt carries meta.sessionId, per the ruleId/heldMs precedent', () => {
     const baseDir = createTempTestDir();
     testDirs.push(baseDir);
     const keypair = generateTestKeypair();
@@ -99,14 +97,16 @@ describe('KNOWN-LIMITS 35 — gate receipts carry the session id on one shape of
     assert.strictEqual(result.decision, 'denied');
 
     const receipt = chain.entries[chain.entries.length - 1].payload;
+    // Controls: the sibling informational fields DO already survive today.
     assert.strictEqual(receipt.ruleId, 'some-rule', 'control: ruleId already threads through meta');
     assert.strictEqual(receipt.heldMs, 12, 'control: heldMs already threads through meta');
+    // The repair: sessionId survives alongside them.
     assert.strictEqual(receipt.sessionId, 'sess-abc123',
-      'gatedAction() must copy meta.sessionId onto the no-token denial receipt (KNOWN-LIMITS 35). ' +
-      'If this fails, the landed half regressed.');
+      'gatedAction() must copy meta.sessionId onto the denial receipt (KNOWN-LIMITS 35). ' +
+      'If this fails, the core fix regressed.');
   });
 
-  it('a meta with no sessionId lands as null on the no-token denial, never invented (landed)', () => {
+  it('a meta with no sessionId lands as null on the receipt, never invented', () => {
     const baseDir = createTempTestDir();
     testDirs.push(baseDir);
     const keypair = generateTestKeypair();
@@ -119,7 +119,7 @@ describe('KNOWN-LIMITS 35 — gate receipts carry the session id on one shape of
     assert.strictEqual(receipt.sessionId, null, 'absence is null, the same shape ruleId uses');
   });
 
-  it('APPROVED receipt still drops meta.sessionId (TRIPWIRE for the unlanded b3891aac edit)', () => {
+  it('APPROVED receipt carries meta.sessionId (same field, opposite decision path)', () => {
     const baseDir = createTempTestDir();
     testDirs.push(baseDir);
     const keypair = generateTestKeypair();
@@ -135,20 +135,28 @@ describe('KNOWN-LIMITS 35 — gate receipts carry the session id on one shape of
 
     const receipt = chain.entries[chain.entries.length - 1].payload;
     assert.strictEqual(receipt.ruleId, 'another-rule', 'control: ruleId already threads through on approval too');
-    assert.strictEqual(receipt.sessionId, undefined,
-      'TRIPWIRE: the approved receipt does not carry meta.sessionId yet (gate edit b3891aac denied on replay, ' +
-      'KNOWN-LIMITS 73). If this now fails, that edit landed: invert to sess-def456 and amend entry 35.');
+    assert.strictEqual(receipt.sessionId, 'sess-def456',
+      'approved receipts must carry meta.sessionId too; both decision paths, not just denial.');
   });
 
-  it('the hook passes sessionId in meta at every gatedAction() call site (landed)', () => {
+  it('the hook passes sessionId in meta at every gatedAction() call site', () => {
+    // Static-source check, not a live hook invocation: proves the SECOND half
+    // of the repair (the caller, not just the callee) without needing to spawn
+    // the actual CLI hook binary. `parsed.sessionId` is computed once near
+    // the top of the file and was already used for the both-layers-permissive
+    // policy-warn receipt; now it is forwarded to gatedAction's meta as well.
     const hookPath = path.join(process.cwd(), 'bin', 'hook-pre-tool-use.js');
     const src = fs.readFileSync(hookPath, 'utf8');
 
+    // Control: the file does compute a session id and does use it elsewhere.
     assert.match(src, /const sessionId = typeof payload\.session_id/,
       'control: the hook extracts session_id from the payload');
     assert.match(src, /sessionId: parsed\.sessionId,/,
       'control: parsed.sessionId is threaded onto the policy-warn receipt');
 
+    // No bare meta site may remain, and all three must carry the id. A count
+    // between 1 and 2 on either side is a PARTIAL fix: some gate decisions
+    // attributable and others silently not, which is worse than a uniform gap.
     const bareMetaSites = (src.match(/const meta = \{ ruleId, heldMs \};/g) || []).length;
     const fullMetaSites = (src.match(/const meta = \{ ruleId, heldMs, sessionId: parsed\.sessionId \};/g) || []).length;
     assert.strictEqual(bareMetaSites, 0,
@@ -157,18 +165,13 @@ describe('KNOWN-LIMITS 35 — gate receipts carry the session id on one shape of
       `expected 3 meta sites carrying sessionId, found ${fullMetaSites}`);
   });
 
-  it('the gate copies the id onto one of the four gated-action receipt shapes (TRIPWIRE: must become four)', () => {
+  it('the gate copies the id onto every gated-action receipt shape it writes (static)', () => {
     // Four append sites: denied (no token), stale-or-mismatch, replay, approved.
-    // Only the first carries the id today.
     const gatePath = path.join(process.cwd(), 'src', 'gate', 'index.js');
     const src = fs.readFileSync(gatePath, 'utf8');
     const appendSites = (src.match(/type: 'gated-action'/g) || []).length;
     const idSites = (src.match(/sessionId: meta\.sessionId \|\| null,/g) || []).length;
     assert.strictEqual(appendSites, 4, 'control: four gated-action receipt shapes');
-    assert.strictEqual(idSites, 1,
-      `TRIPWIRE: expected exactly 1 receipt shape carrying sessionId (the no-token denial), found ${idSites}. ` +
-      'If this is now 4, the remaining gate edits landed: invert this and the APPROVED case above, and ' +
-      'amend KNOWN-LIMITS 35 to CLOSED in the same change. If it is 2 or 3, the partial got more partial; ' +
-      'record which sites in entry 35 and update this number.');
+    assert.strictEqual(idSites, 4, 'every one of them carries sessionId');
   });
 });

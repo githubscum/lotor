@@ -1198,6 +1198,23 @@ and a list is only as good as the last person to remember it.
 
 ## 35. A gate decision carries no session id, so a denial cannot be attributed
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`1493de45`, a whole-file Write of `src/gate/index.js` carrying the three
+receipt sites the second pass could not land, re-staged in that shape after
+the limit 73 purge spent `3614fcb7`, `76404e71` and `b3891aac`; branch
+`signing-sitting-2026-09-07`, commit "limit 35 closed"). All four
+`gated-action` receipt shapes (no-token denial, stale-or-mismatch, replay
+denial, approved) now carry `sessionId: meta.sessionId || null`, and the
+pre-tool-use hook passes `meta.sessionId` at all three call sites (landed on
+the second pass, `1725d400`). `meta` stays informational: it never enters
+`canonicalizeRequest` or `verifyApproval`, so the id cannot be forged into an
+approval. `test/known-limits-35-session-attribution.test.js` is the fully
+inverted tripwire (5 tests: both decision paths carry the id, absence lands
+as `null`, 0 bare meta sites and 3 carrying ones in the hook, 4 of 4 receipt
+shapes in the gate). Attribution stays self-report at the hook's altitude
+(limit 1); receipts written before this date carry no id and `since.js`
+should keep listing those unattributed.**
+
 Found 2026-07-26 building the cross-session view.
 
 Every `gated-action` receipt written in `src/gate/index.js` (four call sites, lines

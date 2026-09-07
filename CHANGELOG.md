@@ -73,6 +73,12 @@ normalizing CRLF to LF and the LF digests matching the record).**
   kept in limit 72's own block, still open) and
   `test/policy-matcher-stamp-coverage.test.js` (9 tests, asserting against the
   hashed bytes). Suite 1045/1045.
+- Limit 35 CLOSED (`1493de45`, whole-file Write of `src/gate/index.js`): the
+  stale-or-mismatch, replay and approved receipts gain
+  `sessionId: meta.sessionId || null`, so all four `gated-action` shapes are
+  attributable; the hook half landed on the second pass.
+  `test/known-limits-35-session-attribution.test.js` restored to its fully
+  inverted form (5 tests, replacing the half-state rewrite).
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
