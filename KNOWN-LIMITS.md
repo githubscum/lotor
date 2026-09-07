@@ -1,10 +1,13 @@
 <!-- known-limits:pin v1
- This file describes commit 2173d2316c1923998d473e2c8351543bce9c1c47
- stamped 2026-08-23
- subject: opaque-exec: gate local scripts handed to a script interpreter (#28)
+ This file describes commit e8415ed8b533e1c2374193e4d9a03a8a5ff5c675
+ stamped 2026-09-07
+ subject: limit 35 closed: stale-or-mismatch, replay and approved gate receipts carry sessionId, so all four gated-action shapes a
+ body-sha256: b90d7acf87f022e2af27fa5b953cc5f895e6b64c5dd5b3910f988b7844d8f013
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
+
+
 
 # Known Limits
 
