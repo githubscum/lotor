@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — chapters: a cross-runtime prompt-by-prompt index, derived from transcripts
+
+`src/views/chapters.js` lists each session as its operator prompts, with the
+tool calls, touched paths and failures that followed each one. Claude Code
+sessions are located through the chain's `session-open.transcriptPath`,
+chaptered from the transcript, and marked `witnessed` when a receipt exists,
+with the receipt's `transcriptHash` recomputed against the file on disk. Codex
+rollout files can be added from disk and are reported unwitnessed, with the
+caveat printed on every one, because Codex writes nothing to the chain.
+
+A chapter carries a title (the operator's first ~80 characters, quoted) and
+counts. No assistant text and no tool parameters beyond the file paths
+`touched` already records. `chaptersBinding()` produces the
+`{ schema, count, digest }` a receipt would carry, digest taken over the
+list with titles removed; the view verifies that binding if a receipt has one.
+No receipt has one today: the ingest change is drafted in
+`proposals/chapters-witness-2026-09-07.md` and queued for a signing sitting.
+
+`bin/chapters.js` and its `npm run chapters` script were denied by the gate
+(all of `bin/` is self-mod protected, not only the hooks, and so is
+`package.json`). Both are staged verbatim in
+`proposals/chapters-cli-staged-2026-09-07.md`; `test/chapters-cli.test.js`
+skips, visibly, until they land.
+
+KNOWN-LIMITS 71 records what this view is and is not. Twenty-three tests in
+`test/chapters.test.js`; four more in the CLI suite wait on the signature.
+
 ## 1.0.2 — 2026-07-25 — the version was hardcoded, and 1.0.1 fixed the wrong file
 
 1.0.1 corrected `manifest.json`, on the assumption that the server read its
