@@ -172,8 +172,12 @@ const DEFAULT_POLICY = {
  * they're joined). Bumped only if that method changes. A rule moving from
  * warn to gate, a regex edit, or a new matcher function changes the HASH
  * VALUE below automatically and needs no edit here.
+ *
+ * matcher/2 (2026-09-07, KNOWN-LIMITS 63): the self-mod deciders joined the
+ * hashed inputs. Receipts stamped matcher/1 were hashed over the rule entry
+ * points only, and stay honest about what they meant.
  */
-export const MATCHER_SCHEMA = 'matcher/1';
+export const MATCHER_SCHEMA = 'matcher/2';
 
 function sortKeysDeep(value) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
@@ -184,17 +188,37 @@ function sortKeysDeep(value) {
   return value;
 }
 
+let cachedMatcherInputs = null;
 let cachedMatcherHash = null;
 
 /**
- * Content hash of the matcher logic in force right now. Pure and in-memory:
- * no disk I/O, so it is safe to call on every gate/warn/grant/egress
- * receipt, not just once per session. Cached after first call in a process.
+ * The exact text matcherVersionHash() digests: the rules in THIS FILE, joined.
+ * Exported so a test can assert coverage against the bytes that are hashed
+ * rather than against a reconstruction from the export surface.
+ *
+ * Function.prototype.toString() returns a function's own source and nothing it
+ * calls, so every helper a rule decides through has to be named here or it is
+ * outside the stamp. Until 2026-09-07 the self-mod deciders were not named
+ * (KNOWN-LIMITS 63): the protected-path list could gain an entry, or the path
+ * folding could change what a spelling matched, and the stamp stayed
+ * byte-identical.
  */
-export function matcherVersionHash() {
-  if (cachedMatcherHash) return cachedMatcherHash;
+export function matcherHashInputs() {
+  if (cachedMatcherInputs) return cachedMatcherInputs;
   const parts = [
     isSelfMod.toString(),
+    // The self-mod deciders isSelfMod dispatches to. The protected-path list,
+    // the two matchers, the path folding and the prose/brace pre-processing all
+    // decide what an unsigned edit can touch (KNOWN-LIMITS 63).
+    isSelfModCommand.toString(),
+    isSelfModEdit.toString(),
+    selfModCommandHit.toString(),
+    selfModFragmentsForBase.toString(),
+    normalizePath.toString(),
+    pathContainsFragment.toString(),
+    expandBraces.toString(),
+    stripHeredocBodies.toString(),
+    stripMessageArgs.toString(),
     isModeChange.toString(),
     isPushForce.toString(),
     isPushProtected.toString(),
@@ -210,8 +234,25 @@ export function matcherVersionHash() {
     JSON.stringify(sortKeysDeep(RULE_TABLE)),
     JSON.stringify(sortKeysDeep(RULE_INFO))
   ];
+  cachedMatcherInputs = parts.join(' ');
+  return cachedMatcherInputs;
+}
+
+/**
+ * Content hash of the rules in this file, in force right now. Pure and
+ * in-memory: no disk I/O, so it is safe to call on every gate/warn/grant/egress
+ * receipt, not just once per session. Cached after first call in a process.
+ *
+ * The honest ceiling is "the rules in this file", not "the matcher logic":
+ * behaviour that reaches a decision from outside this module (git-context.js
+ * resolving a push target, the gate, the grant checker) is not in this hash.
+ * The whole-tree source digest on the session-open receipt covers that
+ * (KNOWN-LIMITS 64).
+ */
+export function matcherVersionHash() {
+  if (cachedMatcherHash) return cachedMatcherHash;
   cachedMatcherHash = crypto.createHash('sha256')
-    .update(parts.join(' '))
+    .update(matcherHashInputs())
     .digest('hex')
     .slice(0, 16);
   return cachedMatcherHash;
@@ -226,12 +267,27 @@ function defaultPolicyCopy() {
 
 /**
  * Normalize a file path for substring matching: lowercase, all backslashes to
- * forward slashes, strip trailing separator. Both Windows and POSIX forms
- * collapse to a single form so .toLowerCase() comparisons work uniformly.
+ * forward slashes, collapse doubled separators, drop `./` segments, strip
+ * trailing separator. Both Windows and POSIX forms collapse to a single form
+ * so .toLowerCase() comparisons work uniformly.
+ *
+ * The collapse and the dot-drop were added 2026-09-07 (KNOWN-LIMITS 62): a
+ * doubled separator (`src//policy`) or a dot segment (`src/./policy`) defeated
+ * every fragment match while the operating system opened exactly the same
+ * file. This function also runs over WHOLE COMMAND STRINGS (selfModCommandHit,
+ * isScopeEscalation), so the collapse spares a `//` that follows `:`, which is
+ * the scheme separator of every URL the other matchers read: `https://x` must
+ * stay `https://x`. A `./` is dropped only at the start of the string or after
+ * a `/`, so it can only ever remove a no-op path segment.
  */
 function normalizePath(p) {
   if (typeof p !== 'string' || p === '') return '';
-  return p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+  return p
+    .replace(/\\/g, '/')
+    .toLowerCase()
+    .replace(/(?<!:)\/{2,}/g, '/')
+    .replace(/(^|\/)(?:\.\/)+/g, '$1')
+    .replace(/\/+$/, '');
 }
 
 /**

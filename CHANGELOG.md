@@ -60,6 +60,20 @@ Net for the sitting: limits 44 and 65 closed, the trace-bridge last mile and
 the chapters CLI landed, limits 64 and 35 half landed, limits 62 and 63 not
 applied, and limit 73 recorded for the reason the halves are halves.
 
+**Landed under signature, fourth pass (the six unlanded hunks re-staged as one
+operation per file, so the limit 73 purge had no sibling to eat; Isaac signed
+the three; each replay byte-identical to the staged content, the Write tool
+normalizing CRLF to LF and the LF digests matching the record).**
+
+- Limits 62 and 63 CLOSED (`24bc4dae`, whole-file Write of `src/policy/index.js`):
+  `normalizePath` collapses doubled separators (sparing `://`) and drops `./`
+  segments; `matcherHashInputs()` is exported and names the nine self-mod
+  deciders, `MATCHER_SCHEMA` moves to `matcher/2`. Tripwires inverted:
+  `test/policy-selfmod-separator-spellings.test.js` (17 tests, the eighth case
+  kept in limit 72's own block, still open) and
+  `test/policy-matcher-stamp-coverage.test.js` (9 tests, asserting against the
+  hashed bytes). Suite 1045/1045.
+
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
 (`src/policy`), 64 (`bin/hook-session-start.js`), 65 (`src/limits/pin.js`),

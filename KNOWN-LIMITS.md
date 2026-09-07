@@ -2203,6 +2203,22 @@ which is the failure that produced limit 39 in the first place.
 
 ## 62. The self-mod matcher folds slashes and case, and stops there, so an equivalent path spelling is ungated
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`24bc4dae`, a whole-file Write of `src/policy/index.js`, re-staged in that
+shape after the limit 73 purge spent `58a75ca5`; branch
+`signing-sitting-2026-09-07`, commit "limits 62 and 63 closed"). `normalizePath`
+now collapses `/{2,}` except where the run follows `:` (the URL scheme
+separator, since the same function runs over whole command strings) and drops
+`./` segments at the start of the string or after a `/`. Seven of the eight
+tripwire cases in `test/policy-selfmod-separator-spellings.test.js` are
+inverted and green, with a URL-scheme control beside them. The eighth,
+`rm -rf src/./chain`, is deliberately NOT inverted: it folds to
+`rm -rf src/chain`, and that plain spelling is limit 72 (a core directory
+named without a trailing slash is free on the command side), which stays
+open. The case lives in limit 72's own tripwire block in the same file and
+flips when 72 does. The trailing-dot spelling and the resolver swap from
+limit 34 are not part of this closure.**
+
 Found 2026-09-01, by running fourteen spellings through the shipped matcher rather
 than reading it. Twelve seconds of probing, seven misses.
 
@@ -2266,6 +2282,20 @@ fixed, that file fails.** The repair is to invert its assertions and amend this
 entry in the same change, never to delete the block.
 
 ## 63. The matcher version stamp hashes the rule entry points, not the code that decides
+
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`24bc4dae`, the same whole-file Write that closed limit 62, re-staged after
+`2666acdd` was purged under limit 73; commit "limits 62 and 63 closed").
+`matcherHashInputs()` is exported and names the self-mod deciders ahead of the
+rule entry points: the eight listed below plus `isSelfModCommand`, the
+brace-overflow fail-closed decider the list omitted. `MATCHER_SCHEMA` is
+`matcher/2`, because the hashing method changed; receipts stamped `matcher/1`
+stay honest about what they meant. `matcherVersionHash()` digests that
+exported text, and its docstring now says "the rules in this file".
+`test/policy-matcher-stamp-coverage.test.js` is inverted and asserts presence
+against the hashed bytes themselves, with a control that the stamp equals
+sha256 of those bytes (9 tests). The residual below stands as written and is
+limit 64's to carry.**
 
 Found 2026-09-02, by asking what `matcherVersionHash()` actually reads rather than
 what its comment says it reads.

@@ -137,7 +137,7 @@ test('the two stamps are different values over different inputs', () => {
   const build = computeSourceDigest(ROOT).digest;
   const matcher = matcherVersionHash();
   assert.notEqual(build, matcher);
-  assert.equal(MATCHER_SCHEMA, 'matcher/1');
+  assert.equal(MATCHER_SCHEMA, 'matcher/2');
   // Stable across calls, so a receipt comparison is meaningful at all.
   assert.equal(matcherVersionHash(), matcher);
 });
