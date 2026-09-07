@@ -124,7 +124,7 @@ async function main() {
   resolveHome();
 
   try {
-    const result = ingestSession(text, { transcriptBytes: bytes });
+    const result = ingestSession(text, { transcriptBytes: bytes, transcriptPath });
     if (result.skipped) {
       note(`no new activity for session ${result.sessionId}; nothing appended`);
     } else {

@@ -46,6 +46,11 @@ each replay byte-identical to the staged edit).**
   the no-token denial receipt carries it. The other three receipt shapes
   (stale-or-mismatch, replay, approved) were DENIED on replay (`501a9314`,
   `25788493`, `6c0c3bc0`), purged by the first gate spend (limit 73).
+- WO-TRACE-BRIDGE-01 last mile CLOSED (`93a7432c`): `bin/hook-session-end.js`
+  now passes `transcriptPath` to `ingestSession`, so the subagents sidecar
+  beside a parent transcript is bound onto the receipt the real hook writes.
+  `test/hook-session-end-subagents.test.js` inverted (1 test, real hook
+  binary, totals 40/20).
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
