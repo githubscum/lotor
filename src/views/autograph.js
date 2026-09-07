@@ -15,18 +15,39 @@
  *   person. This is counting pointed at the operator's own load, which is the
  *   most on-thesis metric available and did not exist in any form.
  *
- * WHAT CANNOT BE COMPUTED, AND WHY IT IS NOT A TODO
- *   An approved gate receipt carries { decision, action, approvalNonce }. It
- *   records THAT a signature was spent and on which tool. It does not record
- *   WHAT was approved: no path, no command, no params. Verified by reading the
- *   chain, not assumed.
+ * WHY THIS VIEW REPORTS BOTH A WINDOW AND A PER-SIGNATURE COUNT (KNOWN-LIMITS 36)
+ *   As of 2026-08-15 (commit 9a934f2) an approved gate receipt also carries
+ *   `paramsDigestCanonical`, a SHA-256 digest of the approved params. A
+ *   reviewer holding a CANDIDATE (e.g. one enumerated charter item, which
+ *   carries the same { action, params } shape) can re-derive that digest and
+ *   compare — that IS per-signature attribution against a known candidate,
+ *   and it is computed, not guessed (test/limit-36-digest-attribution.test.js
+ *   proves it against the real functions, not a description of them).
  *
- *   So a signature cannot be matched against a charter's declared items after
- *   the fact. Per-signature classification is not merely unbuilt, it is not
- *   derivable from the record as it stands, and any tool claiming to do it
- *   would be guessing.
+ *   As of 2026-09-04 (this change) this view uses it: every approved receipt
+ *   signed inside a charter's window is tested against that charter's own
+ *   declared items (action match plus digest match), and the count of
+ *   receipts that actually match a declared item — `signatures.confirmed` —
+ *   is reported beside the window split, not instead of it. Two real limits
+ *   on what that count can mean, both proven in the same test file rather
+ *   than merely asserted here:
+ *   (1) it can only ever answer "does this receipt match a candidate I am
+ *   holding" — there is no reverse index from a digest back to an item, so
+ *   nothing here enumerates a receipt's target from the chain alone, and a
+ *   charter with items nobody thought to declare leaves those signatures
+ *   correctly counted as unmatched rather than invisible;
+ *   (2) a charter item with `params` omitted and a receipt whose action
+ *   genuinely took no params digest DIFFERENTLY if the comparison naively
+ *   defaults a missing params to `{}` (`digestParamsCanonical(undefined)`
+ *   returns the literal `'empty'`, `digestParamsCanonical({})` hashes
+ *   `"{}"`) — `matchesItem` below passes `item.params` straight through,
+ *   never defaulting it, specifically to avoid that false negative.
  *
- *   What IS derivable is the window. A charter carries issuedAt and expiresAt.
+ *   The window split is kept because it is still the only thing that can
+ *   speak to charters issued without per-item digest candidates worth
+ *   testing, and because a signature the matcher counts as unmatched is not
+ *   thereby proven unrelated to the charter — only unproven related to any
+ *   of its declared items. A charter carries issuedAt and expiresAt.
  *   Signatures spent while a charter was live were, by construction, spent
  *   inside a reviewed plan; signatures spent outside any charter were not. That
  *   is the comparison the complaint was actually about: 33 approvals in one
@@ -40,6 +61,8 @@
  *   session is correct. The same rate during a long build is the thing worth
  *   noticing. The tool shows the trend and leaves the reading to the reader.
  */
+
+import { digestParamsCanonical } from '../parser/index.js';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -55,12 +78,56 @@ function charterWindows(charters, nowMs) {
       // cannot observe. Treating it as open-ended to `now` is the honest
       // reading and is stated in the output.
       to: typeof c.expiresAt === 'number' ? c.expiresAt : nowMs,
-      openEnded: typeof c.expiresAt !== 'number'
+      openEnded: typeof c.expiresAt !== 'number',
+      // Kept for per-signature matching below. Absent or malformed items
+      // just mean nothing in this window is matchable, not an error.
+      items: Array.isArray(c.items) ? c.items : []
     }))
     .sort((a, b) => a.from - b.from);
 }
 
-const inAnyWindow = (ts, windows) => windows.some(w => ts >= w.from && ts <= w.to);
+/**
+ * Does an approved receipt match one charter item's own declared params?
+ * Action must agree, and the receipt's stored digest must equal an
+ * independently re-derived digest of the item's params.
+ *
+ * Deliberately does NOT reuse `canonicalizeItem`'s `item.params || {}`
+ * default (src/charter/index.js). That default is correct for the
+ * enumeration hash, which needs every item to canonicalize to *something*.
+ * It is wrong here: an item that never declared a `params` field at all
+ * must digest as `'empty'`, matching a receipt whose action genuinely took
+ * no params — collapsing it to `{}` would digest it as `hash("{}")`
+ * instead, which is a DIFFERENT candidate, and the match would silently
+ * fail on every no-arg action. Passing `item.params` straight through
+ * keeps the two cases apart. Proven in
+ * test/limit-36-digest-attribution.test.js.
+ */
+function matchesItem(receipt, item) {
+  return !!receipt && !!item
+    && receipt.action === item.action
+    && typeof receipt.paramsDigestCanonical === 'string'
+    && receipt.paramsDigestCanonical === digestParamsCanonical(item.params);
+}
+
+/**
+ * Every (charter, item) pair a receipt matches, across only the windows
+ * active at its own timestamp. Zero hits means the signature was spent
+ * during a charter's window but is not one of that charter's declared
+ * items — an incidental action, or a charter that did not enumerate
+ * everything it should have. More than one hit means the digest alone
+ * cannot tell two candidates apart (two items sharing the same action and
+ * params) — a real ambiguity KNOWN-LIMITS 36 already names, not a defect in
+ * this function.
+ */
+function matchingItems(receipt, activeWindows) {
+  const hits = [];
+  for (const w of activeWindows) {
+    for (const item of w.items) {
+      if (matchesItem(receipt, item)) hits.push({ charterId: w.id, itemId: item.id });
+    }
+  }
+  return hits;
+}
 
 /**
  * Sum the hours covered by the windows, merging overlaps so two concurrent
@@ -103,12 +170,23 @@ export function autographReport(entries, charters, opts = {}) {
   const chartered = { approved: 0, denied: 0 };
   const unchartered = { approved: 0, denied: 0 };
   const byAction = {};
+  const signatures = { confirmed: 0, ambiguous: 0, unmatched: 0 };
 
   for (const e of rows) {
     const p = e.payload;
-    const bucket = inAnyWindow(e.timestamp, windows) ? chartered : unchartered;
-    if (p.decision === 'approved') bucket.approved++;
-    else bucket.denied++;
+    const activeWindows = windows.filter(w => e.timestamp >= w.from && e.timestamp <= w.to);
+    const bucket = activeWindows.length ? chartered : unchartered;
+    if (p.decision === 'approved') {
+      bucket.approved++;
+      if (activeWindows.length) {
+        const hits = matchingItems(p, activeWindows);
+        if (hits.length === 0) signatures.unmatched++;
+        else {
+          signatures.confirmed++;
+          if (hits.length > 1) signatures.ambiguous++;
+        }
+      }
+    } else bucket.denied++;
 
     const key = p.action || '?';
     byAction[key] = byAction[key] || { approved: 0, denied: 0 };
@@ -146,8 +224,15 @@ export function autographReport(entries, charters, opts = {}) {
     charters: windows.map(w => ({
       id: w.id, title: w.title, from: w.from, to: w.to, openEnded: w.openEnded
     })),
+    signatures: {
+      label: 'approved signatures signed inside a charter window, matched against that charter\'s own declared items by paramsDigestCanonical',
+      confirmed: signatures.confirmed,
+      ambiguous: signatures.ambiguous,
+      unmatched: signatures.unmatched
+    },
     caveats: [
-      'An approved receipt records the tool, not the target. A signature cannot be matched to a charter item after the fact, so this attributes by WINDOW, never per signature.',
+      'Per-signature matching (KNOWN-LIMITS 36) can only confirm or deny a candidate you already hold — an item a charter never declared cannot be found this way, so an "unmatched" signature is not proven unrelated to the charter, only unproven against what it enumerated.',
+      `${signatures.ambiguous} confirmed match(es) hit more than one declared item with the same action and params — the digest alone cannot tell those apart.`,
       'Charters issued as markdown rather than through the signing tool leave no record here and their windows cannot be counted.',
       'There is no target ratio. A high decision rate in a design session is correct; the same rate through a long build is the thing worth noticing.'
     ]
@@ -176,6 +261,12 @@ export function renderAutograph(r) {
   };
   row('DECISIONS   signed outside any charter', r.decisions);
   row('CONFIRMATIONS   signed while a charter was live', r.confirmations);
+
+  L.push('  PER-SIGNATURE MATCH   confirmed against a declared charter item, by digest');
+  L.push(`    confirmed     ${r.signatures.confirmed}`);
+  L.push(`    ambiguous     ${r.signatures.ambiguous}  (matched more than one declared item)`);
+  L.push(`    unmatched     ${r.signatures.unmatched}  (signed in-window, matches no declared item)`);
+  L.push('');
 
   if (r.charters.length) {
     L.push('  CHARTERS IN WINDOW');
