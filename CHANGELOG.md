@@ -24,7 +24,7 @@ No receipt has one today: the ingest change is drafted in
 `proposals/chapters-cli-staged-2026-09-07.md`; `test/chapters-cli.test.js`
 skips, visibly, until they land.
 
-KNOWN-LIMITS 62 records what this view is and is not. Twenty-three tests in
+KNOWN-LIMITS 71 records what this view is and is not. Twenty-three tests in
 `test/chapters.test.js`; four more in the CLI suite wait on the signature.
 
 ## 1.0.2 — 2026-07-25 — the version was hardcoded, and 1.0.1 fixed the wrong file

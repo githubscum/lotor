@@ -1220,6 +1220,21 @@ change to `src/gate`, which is one signature per edit and belongs in a reviewed
 sitting rather than riding along with a view. Until then, denials are a timeline and
 not a per-session fact.
 
+**NARROWED, not closed (2026-09-04, lotor lane).** `gatedAction()` already carries
+an informational side-channel for exactly this shape of field: `meta.ruleId` and
+`meta.heldMs` reach the receipt without ever entering `canonicalizeRequest` or
+`verifyApproval`, so they cannot be forged into an approval and cost nothing to add.
+`meta.sessionId` does not exist yet, but the precedent it would follow is already
+shipped and tested. Confirmed by reading, not reasoning: `bin/hook-pre-tool-use.js`
+already computes `sessionId` from `payload.session_id` and already threads it onto
+one receipt type (`policy-warn`, the `both-layers-permissive` case) — the value is
+in hand at every one of the three `gatedAction()` call sites, it is simply not
+passed. The three-part fix is named verbatim, with file and approximate line
+numbers, in `test/known-limits-35-session-attribution.test.js`, which ships a
+tripwire proving the gap against the live source (three assertions, all passing
+against today's code) rather than describing it in prose alone. **Core. Queues for
+the signing sitting**, same as the rest of this file's open core items.
+
 ## 36. An approved receipt records the tool, never the target
 
 Found 2026-07-26 building the autograph ratio, by reading `src/gate/index.js:209`.
@@ -1244,6 +1259,69 @@ the chain leaks nothing about what was approved. Recording the target would make
 attribution possible and would put command strings in the log, which limit 18 already
 flags as a disclosure surface. The fix is a digest, not the string, and it is a core
 change.
+
+**NARROWED 2026-09-04 (Lotor lane run 26). The fix named above already shipped, six
+weeks before this entry was re-read.** Commit `9a934f2` (2026-08-15,
+"denial-enrichment") added `paramsDigestCanonical` — a SHA-256 digest of the
+approved params, exactly the digest this entry called for and not the string —
+to every `gated-action` receipt: denied, stale, and approved alike
+(`src/gate/index.js`). Charter items already carry the matching `{ action, params }`
+shape (`src/charter/index.js`'s `canonicalizeItem`). **A reviewer holding a
+candidate — one enumerated charter item — can now re-derive
+`digestParamsCanonical(item.params)` and compare it against a receipt's
+`paramsDigestCanonical` to confirm or deny "was this signature for THIS", which is
+per-signature attribution against a known target, computed rather than guessed.**
+Proven by running the real functions, not by reading them:
+`test/limit-36-digest-attribution.test.js`.
+
+**Nobody told the tool that reads the chain.** `src/views/autograph.js` — the one
+consumer of this entry, and the reason it was written — still asserted the
+pre-fix state as current, in its own header comment AND in the caveat line it
+prints to the operator: *"An approved receipt records the tool, not the target. A
+signature cannot be matched to a charter item after the fact."* That is false as
+of 2026-08-15 and was still shipping as of this morning. `test/autograph.test.js`
+pinned the same false claim as an explicit *"honesty requirement."* This is limit
+39's class one level up: not the gate misreporting its own coverage, but a
+downstream view misreporting the chain's own capability, inside the exact caveat
+block that exists to be trusted. Both are corrected on this branch.
+
+**Genuinely still open as of the prior amendment, not closed by it:** the digest
+answers "was this receipt for THIS candidate," never "list every receipt's
+target" — it cannot replace `autograph.js`'s window view, only sit beside it,
+because there is no enumeration of candidates to test against without a charter
+(limit 37's class: markdown-issued charters leave no record here). And matching
+has a real edge-case gap, proven in the same test file: a charter item with
+`params` omitted digests as `hash("{}")` while a receipt whose action took no
+params at all digests as the literal string `'empty'` — an unguarded matcher
+false-negatives on every no-arg action. **`autograph.js` itself has NOT been
+upgraded to compute per-signature matches; only its own honesty about that fact
+has been corrected.** Building the matcher is a further WO, not this one.
+
+**NARROWED FURTHER, same day (Lotor lane run 28). The matcher named above is now
+built.** `src/views/autograph.js` tests every approved receipt signed inside a
+charter's window against that charter's own `items` (action match plus a
+re-derived `digestParamsCanonical(item.params)` match) and reports
+`signatures.confirmed` / `.ambiguous` / `.unmatched` beside the existing window
+split, not instead of it. The no-arg edge case named above is guarded by
+construction, not merely documented: the comparison passes `item.params` straight
+through rather than reusing `canonicalizeItem`'s `item.params || {}` default, so
+an item with `params` omitted digests as `'empty'` and correctly matches a
+receipt whose action took no params. Proven in six new assertions across
+`test/autograph.test.js` (confirmed / unmatched / ambiguous / the no-arg case)
+and `test/limit-36-digest-attribution.test.js` (unchanged, still proves the
+underlying digest functions). Suite 948/948.
+
+**What is still open, and it is the same two limits, sharpened rather than
+closed.** (1) No reverse index exists from a digest back to an item — a charter
+with real items nobody declared correctly reports those signatures as
+`unmatched`, not as evidence the signature was unrelated to the charter; that
+gap cannot be closed from inside the chain, only by better charter discipline.
+(2) Two declared items sharing identical `action`+`params` produce the same
+digest and both register as hits on one receipt — reported honestly as
+`ambiguous` rather than silently attributed to whichever item happened to be
+enumerated first. Neither is a defect in the matcher; both are what a one-way
+digest can and cannot buy, stated where the count is printed rather than only
+in this file.
 
 ## 37. The chain accepts entries from writers outside this repository
 
@@ -1595,8 +1673,10 @@ charters cannot supply it for the non-delegable core by construction.
 
 ## 44. Scheduled task and cron operations are not gated
 
-**Status: closed for the honest-agent class 2026-08-25 (stdio42-codex-
-20260821), residuals below. Found 2026-07-29 by an agent expecting a gate
+**Status: NARROWED, not closed. Was recorded "closed for the honest-agent
+class" 2026-08-25 (stdio42-codex-20260821); downgraded 2026-09-01 when four
+forms of the same class were measured walking past the closing change — see
+the amendment at the end of this entry. Residuals below. Found 2026-07-29 by an agent expecting a gate
 ceremony on `Register-ScheduledTask` that never materialized; the task
 registered clean, no staged approval, no receipt of a denial.**
 
@@ -1650,6 +1730,79 @@ grazing mode these warn, as crontab always did. Residuals, stated:
 - **What a registered task later RUNS is still outside any hook**, exactly as
   this entry said: registration-time gating bounds what gets installed, not
   what installed things do at 03:00.
+
+**AMENDED 2026-09-01: "closed for the honest-agent class" was too strong, and
+the four forms that disprove it are one token from the closing change's own
+worked examples.** Found by probing the merged matcher during the post-merge
+review of the change above, rather than by reading it. Measured against `main`
+at `6d77e64`:
+
+```
+GATE | systemd-run --on-active=30 touch /tmp/m      <- the closing PR's example
+FREE | systemd-run --on-active 30 touch /tmp/m      <- the same flag, no '='
+FREE | systemd-run --on-calendar "*:0/5" touch /tmp/m
+GATE | echo x | at 03:00                            <- the closing PR's example
+FREE | echo x | at 3pm
+FREE | echo x | at 1730
+FREE | echo x | at 10am tomorrow
+```
+
+Two causes, both narrow. The systemd guard is `/(^|\s)--on-[-a-z]+=/` and
+requires the `=`; systemd parses with getopt_long and `required_argument`,
+which takes `--on-active 30` just as readily, registering the same timer. And
+the at(1) time-spec alternation carries `now|noon|midnight|teatime|today|
+tomorrow|HH:MM|+N` but not the am/pm forms or a bare `HHMM`, both of which
+at(1) accepts.
+
+**Why this is an amendment and not a new entry.** These are not a new class.
+They are the class this entry says is closed, reached by a spelling the matcher
+did not remember — which is the exact failure mode the closing change was
+written to fix, recurring one level down. Deciding by what the thing IS rather
+than by a remembered spelling is right; the time spec and the flag separator
+are still remembered spellings.
+
+**Against an honest agent this matters more than it looks.** The distinction
+between `--on-active=30` and `--on-active 30` is not a choice anyone makes on
+purpose. An agent that reaches for the space form is not evading anything and
+gets no receipt, so the operator's record shows a clean session where the gated
+one should have been. The residual list above is otherwise scrupulous and does
+not mention either form, so a reader of this entry currently believes something
+slightly stronger than what ships.
+
+**The fix is two one-line widenings and it is NOT in this change, because it is
+core.** `src/policy` is on the non-delegable list, and the self-mod gate
+blocked the edit unsigned during the run that found this — correctly, and the
+command was not reshaped to get around it. Named here instead, per the standing
+practice that a docs-only confession lands without a ceremony while the code it
+describes waits for one:
+
+1. make the separator optional in the systemd guard (`--on-[-a-z]+[=\s]`);
+2. add `\d{1,2}(:[0-5]\d)?\s*(am|pm)` and a bare four-digit `HHMM` to the at(1)
+   alternation.
+
+Each needs a control landing beside it, because widening a time spec is exactly
+where prose starts firing: `at 12 files`, `grep at 1200 log.txt`. The existing
+controls (`/tmp/at-the-market.txt`, `systemd-run --wait`, `systemctl status`)
+must stay free. **Whoever lands the code should treat the probe above as the
+fail-first evidence and convert it to cases in
+`test/policy-scheduled-task.test.js`; this amendment deliberately ships no
+test, because a test asserting the fixed behavior would land red.**
+
+**Amended the same day: the five uncovered forms are now asserted as
+uncovered.** A test of the fixed behavior would land red, and a confession
+that only exists in prose is one someone can close by editing prose. The
+third option is the one that shipped: `test/policy-scheduled-task.test.js`
+carries a TRIPWIRE block asserting that these forms are still FREE, with the
+covered forms (`--on-active=30`, `at 03:00`, `at noon`) beside them as
+controls so the block cannot pass because the matcher died. **When the two
+widenings land, that block fails**, and the instruction in it is to invert
+the assertions and amend this entry in the same change rather than delete the
+test. The gap is now executable, and closing it silently is no longer
+available.
+
+**Still not covered, unchanged by this amendment:** `systemctl enable` on an
+existing unit, `batch`, `anacron`, `fcron`, SysWOW64's task store, and what a
+registered task runs later.
 
 ## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
 
@@ -2011,7 +2164,439 @@ That is one sentence longer and it is true. Deriving the list from the policy ta
 rather than hardcoding it would also keep the sentence honest if the table changes,
 which is the failure that produced limit 39 in the first place.
 
-## 62. The chapters view is read off transcripts, and the chain does not witness it
+## 62. The self-mod matcher folds slashes and case, and stops there, so an equivalent path spelling is ungated
+
+Found 2026-09-01, by running fourteen spellings through the shipped matcher rather
+than reading it. Twelve seconds of probing, seven misses.
+
+`normalizePath()` in `src/policy/index.js` converts backslashes to forward slashes,
+lowercases, and strips a trailing slash. The self-mod fragment list is then matched
+as a plain substring on both paths: `cmdNorm.includes(frag)` for a command,
+`pathContainsFragment()` for an `Edit`. **A doubled separator or a `.` segment
+defeats both**, because neither is removed before the comparison and neither breaks
+the path for the operating system:
+
+| Spelling | Gated today | Opens the protected file |
+|---|---|---|
+| `<repo>/src/policy/index.js` | yes | yes |
+| `<repo>/src//policy/index.js` | **no** | yes |
+| `<repo>/src/./policy/index.js` | **no** | yes |
+| `<repo>/src/./chain/index.js` | **no** | yes |
+| `<repo>/bin//charter.js` | **no** | yes |
+| `<repo>/./bin/./charter.js` | **no** | yes |
+
+The right-hand column is measured, not argued: the test asserts it by writing a
+canary file and reading it back through all three spellings.
+
+**The `Edit` half is the one that matters.** The command half is a shell matcher and
+the file already concedes (limit 34) that a command cannot be resolved. `Edit`,
+`Write` and `NotebookEdit` carry a `file_path`, and limit 34 says outright that a
+path **can be proven contained** and that the resolver in `core-paths.js` is the
+better answer, not taken because it couples `src/policy` to `src/grant`. This entry
+is what that deferral costs: not a theoretical drift in a hand-maintained list, but
+a live, one-character bypass of the rule that protects the gate, the chain, the
+store, the grant verifier and every script in `bin/`. `src/policy` stays at `gate`
+in every mode including loose, and this walks around it in every mode.
+
+**Not a new class, and that is the uncomfortable part.** Limit 22 was tilde and
+`$HOME` spellings. LOTOR-C2 was brace expansion. This is a third spelling escape in
+the same matcher, and all three were found the same way: by executing the matcher,
+never by reading it. The pattern says the substring approach will keep leaking on
+the command side, where it has to, and that the `Edit` side should stop being a
+matcher at all.
+
+**Also unfixed and less certain:** `src/policy./index.js` is ungated and Windows
+strips trailing dots from a path component (the mechanism named in limit 22), but
+`fs.existsSync` refused that spelling on the machine where this was found, so
+whether a real write lands is **unverified**. Recorded so it is not lost, marked so
+it is not quoted as proven.
+
+**The fix is `src/policy` and therefore non-delegable core.** It is one clause in
+`normalizePath` (collapse `/+`, drop `./` segments) plus the resolver swap limit 34
+already specifies for the `Edit` path. It was attempted on 2026-09-01 and **the gate
+refused it unsigned, correctly**. The bypass proved above was not used to land the
+fix; it is queued for a signing sitting.
+
+**Caution for whoever writes that clause:** `normalizePath` is applied to whole
+command strings, not only to paths. Collapsing `/+` globally rewrites `https://x` to
+`https:/x`, and other matchers in the same file read command text. The change needs
+its blast radius checked across every caller, which is exactly why it belongs in a
+reviewed sitting rather than in this entry.
+
+`test/policy-selfmod-separator-spellings.test.js` asserts the current, defective
+behavior with the plain spellings beside it as controls. **When the matcher is
+fixed, that file fails.** The repair is to invert its assertions and amend this
+entry in the same change, never to delete the block.
+
+## 63. The matcher version stamp hashes the rule entry points, not the code that decides
+
+Found 2026-09-02, by asking what `matcherVersionHash()` actually reads rather than
+what its comment says it reads.
+
+Every `gated-action`, `policy-warn`, grant and egress receipt carries a matcher
+version. It is the field a reader uses to answer the only question that makes two
+receipts comparable: **were these decided by the same rules?** The function's own
+docstring calls it the "content hash of the matcher logic in force right now."
+
+**It hashes thirteen top-level functions plus `RULE_TABLE` and `RULE_INFO`.**
+`Function.prototype.toString()` returns a function's own source and nothing it
+calls, so a helper is covered only if the `parts` array names it. The self-mod
+deciders are not named: `selfModFragmentsForBase` (the protected-path list
+itself), `isSelfModEdit`, `selfModCommandHit`, `normalizePath`,
+`pathContainsFragment`, `expandBraces`, `stripHeredocBodies`, `stripMessageArgs`.
+`isSelfMod` IS hashed and is a three-line dispatcher: it names the two matchers
+and contains neither.
+
+**Measured, not argued.** `test/policy-matcher-stamp-coverage.test.js` asserts the
+absence directly against the hashed inputs, with controls asserting the hashed
+bodies are present so the block cannot pass vacuously. On the build this entry was
+written against, the stamp is `matcher/1 95291ff6385151ca`.
+
+**What it costs.** Add a directory to the protected list, change how a path is
+folded before it is matched, or widen the brace expander, and the gate stops a
+different set of actions while the stamp stays byte-identical. Two receipts either
+side of that change agree on the matcher version and disagree on the behavior.
+**The failure runs the wrong way on purpose-built silence:** a matcher WEAKENED
+between two runs keeps stamping the old, stronger version, so the record's own
+account of why an action was allowed is wrong in the permissive direction. This is
+a witness defect rather than an enforcement one, which is what makes it worth its
+own entry: the gate still gates correctly, and the trace misdescribes it.
+
+A shipped change demonstrates it. The stamp was introduced 2026-08-09 (commit
+b1b7bf8, "Observer versioning: matcher hash and canonical params digest"). The
+protected-path list gained an entry on 2026-08-23, two weeks later, which changed
+what an unsigned Edit could touch. That list is not inside the hashed text, so a
+receipt written before that date and one written after carry the same matcher
+version and cannot be told apart by it.
+
+**The repair, and why it is not done here.** Add the helpers to `parts` and bump
+`MATCHER_SCHEMA` to `matcher/2` (the hashing METHOD changes, which is precisely
+what that marker exists to record; the value changing on its own would otherwise
+be indistinguishable from a rule edit). Historical receipts keep `matcher/1` and
+stay honest about what they meant. That edit is `src/policy` and therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with the disclosure.
+
+**Residual after the repair, stated now.** A hash over function source is still a
+hash over THIS module. Behavior that reaches the decision from outside it, such as
+`src/policy/git-context.js` resolving a push target, would remain unstamped. The
+honest ceiling is "the rules in this file", and the docstring should say that
+instead of "the matcher logic", which is what invited the gap in the first place.
+
+**Related.** Limit 62 is the same file being wrong about paths; this is the record
+being wrong about limit 62. A stamp that does not move when 62 is fixed is how a
+reader would fail to notice the fix landed.
+
+## 64. The whole-tree fingerprint exists, and it is wired to the reader instead of the record
+
+Found 2026-09-02, following limit 63's own stated residual to the place it leads,
+and finding the fix already built and pointed the wrong way.
+
+This repository computes **two** code identities, and they cover different things.
+
+| Stamp | Covers | Reaches |
+|---|---|---|
+| `matcherVersionHash()` | named functions in `src/policy/index.js` (and per limit 63, not all of them) | **every receipt**: `gated-action`, `policy-warn`, grant, egress, session-start |
+| `computeSourceDigest()` | **every `.js` file under `src/` and `bin/`** | MCP tool responses only, as `_lotorBuild` |
+
+**Measured, not argued.** `test/stamp-reach-coverage.test.js` asserts all of it
+against the tree. On the build this entry was written against: the build digest is
+`47ed7876d2652e68`, over **50 files / 522,651 bytes**; the matcher stamp is
+`matcher/1 95291ff6385151ca`. The digest's file set contains `src/gate/index.js`,
+`src/grant/check.js`, `src/chain/index.js`, `src/store/index.js` and
+`bin/hook-pre-tool-use.js` — every module that decides whether an action is
+allowed. The matcher stamp contains none of them. And the digest has exactly two
+consumers in the whole tree, `src/mcp/build-identity.js` and `src/mcp/server.js`,
+neither of which writes to the chain.
+
+**What it costs.** Change the gate, the grant checker, the chain writer, the store,
+or the pre-tool-use hook, and every receipt written after the change is
+byte-comparable with every receipt written before it. `matcherHash` is unmoved,
+because none of that code is in the policy module. A reader asking the question
+receipts exist to answer — *were these two decided by the same code?* — is told yes,
+and the honest answer is unknown. The MCP reader is told the truth in the same
+minute, on a response that is discarded when the call returns.
+
+**Why this is its own entry rather than limit 63's residual.** Limit 63 names the
+gap ("behavior that reaches the decision from outside it would remain unstamped")
+and treats it as an accepted ceiling. It is not a ceiling. **The instrument that
+closes it is already in this repository, already tested, already computing the
+right value on every MCP call.** The defect is not a missing capability, it is a
+wire going to the wrong consumer, and that is a different and much cheaper thing to
+fix. Limit 63's repair (widening `parts`) does not touch this and should not be
+read as covering it.
+
+**The asymmetry is the sharpest part.** The ephemeral artifact carries the strong
+identity. The permanent artifact carries the weak one. That is exactly backwards
+for a project whose thesis is that the record outlives the reader, and it is the
+same shape as limit 41's original incident: the chain was intact and signed the
+whole time, and what could not be trusted was the account of which code produced
+the answer.
+
+**The repair, and why it is not done here.** Carry the source digest (short form
+plus full, per limit 50) onto `session-open` at minimum, where it costs one field
+per session rather than one per action, and let per-action receipts inherit it by
+session id. That edit touches `src/gate` and `bin/hook-*` and is therefore
+non-delegable core, so it queues for a signing sitting rather than riding along
+with this disclosure.
+
+**Residual after that repair, stated now.** A digest over `src/` and `bin/` still
+misses `node_modules` (a dependency upgrade moves nothing), anything loaded by
+absolute path from outside the repository, and every non-`.js` input: policy files,
+settings, the chain itself. All 50 source files are `.js` today, so the extension
+filter has no live hole; a future `.mjs` or `.cjs` under either directory would be
+unstamped and nothing would say so. And a digest detects without explaining, which
+is limit 53 again.
+
+**Related.** Limit 41 shipped this digest to stop a stale reader misreporting a fix
+as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
+cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
+this is the wide one not being anywhere it matters.
+
+## 65. The freshness pin binds the code, and never the log it lives in
+
+Limit 29 gave `KNOWN-LIMITS.md` a pin: a comment block at the top naming the commit
+the log was verified against, plus `npm run limits-pin -- --check` so a reader in a
+different checkout is told they are reading a description of somewhere else. That
+works, and the design decision underneath it is right: the pin names **the last
+commit that touched `src/`**, not `HEAD`, because stamping is itself a commit that
+edits only this file. A `HEAD`-based pin could only ever name its own parent and
+would read `diverged` for every reader forever, training them to ignore it.
+
+**The consequence was not carried through.** A commit that edits only this log does
+not move the last `src/` commit either. So the pin cannot notice it. The check
+answers "has the code moved since the log was stamped?" and has no way to answer
+"is this the log that was stamped?"
+
+**Measured on a synthetic tree, not reasoned** (the real repository was not written
+to; `writePin`/`checkPin` were the shipped functions, and the commit resolution was
+reproduced verbatim from `resolvePinTarget`):
+
+| what changed after stamping | `src/` commit | reported |
+|---|---|---|
+| nothing | unmoved | `current` |
+| a new entry appended | unmoved | `current` |
+| an entry deleted, and another's claim reversed | unmoved | `current` |
+| a source file edited | moved | `diverged` |
+
+The third row is the one that matters. An entry can be added that was never held
+against any code, an entry can be deleted, and a limit's claim can be inverted from
+"this is not covered" to "this is covered", and the checker reports `current` and
+exits **0**. It does not merely fail to complain. It certifies.
+
+**What a reader should not conclude from `current`.** Not that the entries were
+verified. Not that the log is the one the stamp was applied to. Only that `src/` has
+not moved since somebody last ran `--stamp`. The pin block's own wording invites the
+stronger reading, because it says entry numbering, entry presence, and every claim
+are guaranteed for the pinned commit, and a reader who sees `current` will take that
+guarantee as live.
+
+**Why this is not the residual already declared.** `src/limits/pin.js` declares two:
+that a commit can carry a false pin, which review catches, and that touching code
+without re-stamping leaves a stale pin, which `--check` surfaces as divergence. Both
+are about the code half. This is the log half, it is silent rather than surfaced, and
+it needs no liar and no reviewer error. The mechanism working exactly as designed
+produces it.
+
+**Aggravating, and worth stating plainly: nothing runs the check.** It is not in
+`npm test`, and this repository has no CI at all. The shipped pin has been diverged
+since 2026-08-23 (pinned `2173d23`, last `src/` commit `9b8b862` at the time of
+writing) and no automated reader has said so once.
+
+**The repair, drafted and gated.** Add `body-sha256` to the pin block, covering the
+file with the pin block itself removed so that stamping stays stable and limit 29's
+self-invalidation problem does not return. A pin whose commit matches but whose
+digest does not is a third status, `edited`: the code is where the log says it is,
+and the log is not. Exit 1, like divergence, so a future CI can gate on it. A v1 pin
+with no digest keeps v1 semantics exactly, so old pins are not retroactively failed;
+re-stamping upgrades them. **The patch was written and the gate refused it** as a
+self-modification of `src/`, correctly, so it queues for a signing sitting rather
+than landing with this disclosure.
+
+**Residual after that repair.** A digest binds the text and says nothing about
+whether the text is true, which is limit 1 in a different coat. Re-stamping still
+asserts verification that nobody checks, and a liar re-stamps. The digest converts a
+silent gap into a prompt to re-verify; it does not perform the verification.
+
+**Related.** Limit 29 is the pin this extends. Limit 53 is why a digest detects
+without explaining. Limits 63 and 64 are the same family read three ways: 63 is a
+stamp narrower than it claims, 64 is a wide stamp wired somewhere it does not
+persist, and this is a stamp that covers the wrong artifact entirely.
+
+---
+
+## 66. Subagent tool use is outside the witness entirely
+
+**Found 2026-09-02**, on a real dispatch: one parent session, three concurrent
+children, chain rows counted across the window.
+
+Three Bash calls executed inside the measured window and produced **zero chain
+rows**. The parent's own calls in the same minutes produced a row every time,
+which is the control that makes the absence a measurement rather than an
+impression. **The gate cannot see, record, or stop anything a subagent does.**
+
+In LOOSE mode nothing was being stopped anyway, so today this reads as
+bookkeeping. Under a herded configuration it is a hole in **enforcement**:
+dispatching would be a way to do ungated work inside a gated session. The
+gap is the same size either way; only the consequence changes with posture.
+
+**The measurement.** The three children (`a0113e1c3f129f638`,
+`acd87cfd8747b4605`, `aeea528ee5379e3dc`) each wrote a transcript carrying
+`sidechain=true`, the parent session id, and the parent's `tool_use` uuid. The
+material to attribute them exists on disk and is correctly keyed. **What does
+not exist is any row in the chain.** The reader that proved this
+(`projects/meter/tools/trace-bridge.py`) lives outside this repository, so a
+reader of this log cannot re-run it from here; the evidence is the absence of
+chain rows, which anyone can check on their own dispatch.
+
+**Amended 2026-09-02: the reachability probe ran, and the floor came off.** This
+entry originally said that an honest agent reaching the hole by accident was
+**not established** and was the next probe. It is now measured. Every subagent
+transcript on this machine was replayed through Lotor's own matcher
+(`evaluate()`) under a policy with all nine rules set to `gate`: 3,962 tool calls
+from 1,073 child transcripts across 104 parent sessions, six weeks, zero read,
+parse or evaluate failures. **519 of those calls (13.1%) would have gated the
+parent had the parent made them**, sitting in 110 child transcripts and touching
+40 of the 104 parent sessions (38.5%). By rule: opaque-exec 339, self-mod 171,
+destructive 4, egress-other 4, scope-escalation 1. **377 of the 519 are after the
+gate was armed on 2026-07-23.** The upgrade is duller and stronger than "the gate
+can be bypassed": **the bypass does not require intent, and it is the normal
+case.** 519 is a floor rather than a point estimate, and the same-command
+asymmetry it exposes is filed separately as limit 70.
+
+**Related.** Limit 67 is the same dispatch reporting numbers that do not match
+its own transcripts. Limit 44 is the other enforcement gap found by probing
+rather than by reading.
+
+## 67. The harness's reported subagent token figure does not reconcile with the transcript
+
+**Found 2026-09-02**, comparing what the harness reports per child against what
+the child's own transcript records.
+
+Reported per child: **32,395 / 32,481 / 32,504**. Three near-identical numbers.
+The transcripts, summed excluding cache reads, give **32,512 / 25,069 /
+25,132**. Two of the three are off by about **7,400**, and the reported figures
+do not track the observed spread at all.
+
+**The arithmetic, so it can be checked.** Child one recorded `in=4 out=149
+cache_write=32359`, summing to 32,512. Child two recorded `in=6 out=456
+cache_write=24607`, summing to 25,069. Child three recorded `in=6 out=495
+cache_write=24631`, summing to 25,132. Cache reads (28,799 / 65,449 / 65,451)
+are excluded from the sum because they are priced separately.
+
+**The convenient number is not the auditable one.** Anything priced from the
+harness notification is wrong for two of these three calls.
+
+**What a reader should not conclude.** This does not establish which side is
+correct. It establishes that they disagree by a margin large enough to change a
+price, and therefore that a receipt must be built from the transcript, which is
+the artifact the work actually left behind.
+
+**Related.** Limit 66 is the same dispatch leaving no chain row at all. Limit 69
+is what happens to the dollars once the tokens are settled.
+
+## 68. The subagent reader depends on an undocumented harness path layout, and fails to a false zero
+
+**Found 2026-09-02**, by reading the reader rather than trusting it.
+
+Child transcripts are located at
+`<project-slug>/<parent-session-id>/subagents/agent-<agentId>.jsonl`. That
+layout is an internal detail of the harness and can change in any release
+without notice. The reader as written **globs that pattern and reports a count**
+(`projects/meter/tools/trace-bridge.py`, the glob at line 24 and the
+`children found :` print at line 73). Across all 91 lines it reads **no version
+or schema marker** before walking the directory.
+
+**So its failure mode is a false zero.** Rename the directory, change the
+suffix, move the level, and the reader reports `children found : 0` and exits
+clean. **Silence would read as "no subagents ran."** That is not hypothetical:
+the first scan of this layout on 2026-09-02 reported zero sidechain entries
+anywhere, and it was wrong. The absence was in the query, not in the world.
+
+**A reader must distinguish "no children" from "cannot find children."** The two
+are the same output today and mean opposite things.
+
+**What a reader should not conclude.** Not that the layout is unstable. Only
+that nothing here would notice if it moved, and that the noticing has to be
+built rather than assumed.
+
+**Related.** Limit 41 is the same class: a reader that could not say which build
+answered. Limit 53 is why a detector that cannot explain itself is still worth
+having, and why this one is not yet one.
+
+## 69. Subagent cost is derived rather than reported, and the derivation carries a price table's staleness
+
+**Found 2026-09-02**, by tracing which inputs produce the dollar figures.
+
+No harness output contains a dollar figure for a subagent call. Every dollar in
+the trace-bridge report is **computed**: measured tokens multiplied by a price
+table at `drive/lotor/price-table.json`, whose own `"date"` field reads
+**2026-08-29**, with `"basis": "public list prices, USD per million tokens"`.
+Four days stale at the time of measurement, and list prices rather than billed
+ones.
+
+**The tokens are measured. The dollars are computed.** The three children
+priced at $0.341734, $0.290224 and $0.291440, totalling **$0.923399** for three
+`echo` calls. The cache-write to hand each child its context is the entire bill;
+the work is free.
+
+**The consequence for any receipt this produces.** A receipt carrying a dollar
+figure without the price-table date beside it will be read as measured when it
+is computed. That is not a hypothetical misreading: it is the exact defect
+caught twice inside the run that produced these numbers.
+
+**What a reader should not conclude.** Not that the figures are wrong. Staleness
+is not error. The claim is narrower and harder to dismiss: **a reader cannot
+tell whether they are wrong without being handed the table's date**, so the date
+travels with the number or the number is not evidence.
+
+**Related.** Limit 68 is the same reader trusting an undocumented path without a
+schema stamp; this is the same reader trusting a table without a freshness
+stamp.
+
+## 70. The protected-path rules are enforced against the parent and structurally unenforced against a child
+
+**Found 2026-09-02**, by replaying six weeks of real dispatches through the
+matcher rather than by staging a probe.
+
+The gate evaluates the calls the session itself makes. A subagent's calls never
+reach it (limit 66). The consequence is not a rate, it is an asymmetry: **the
+same command, on the same machine, in the same minute, is gated or ungated
+depending only on who runs it.** During the run that measured this, the self-mod
+rule stopped the parent twice, on an `ls` of two protected directories and on a
+grep of the policy source. Both were handled by switching to the dedicated tools
+rather than by reshaping the command. **The identical call issued from inside a
+child goes through silently.**
+
+**The measurement.** 519 of 3,962 replayed subagent tool calls would have gated
+the parent; 171 of those hit the self-mod rule. Re-read at raw-transcript level
+rather than trusted as an aggregate, **51 are real `Write`/`Edit` calls into this
+repository from inside child sessions** (`isSidechain: true`), across 24 distinct
+files. **Nine of them landed in the non-delegable core** (the signing code, the
+session-end hook, and the store's index and lock).
+
+**The caveat that guts the easy headline, stated before anyone quotes the nine.**
+All nine are dated 2026-07-22, one day *before* the gate was armed. Lotor was a
+recorder then and there was nothing to walk around. **They are not evidence that
+anyone bypassed an armed gate.** What they show is the shape: a subagent editing
+the signing code is a thing that happens in ordinary work, and today that same
+edit would still produce no chain row and no prompt. The live class is August's
+44 self-mod hits, all command-shaped, reads and listings naming the protected
+paths rather than writes.
+
+**What this does not establish.** Not that anything harmful happened: every hit
+is a call an operator would very likely have approved, and the gate's job is to
+be asked rather than to say no. Not a fresh enforcement claim either, because
+this machine runs LOOSE, so nothing was being stopped anyway. Under a herded
+configuration these 519 are an enforcement hole; today they are 519 missing rows.
+The replay tool lives outside this repository, so a reader of this log cannot
+re-run it from here.
+
+**Related.** Limit 66 is the same blindness stated as a recording gap rather than
+an enforcement one. Limit 62 is the other way a protected path escapes the
+self-mod rule: by spelling rather than by caller.
+
+## 71. The chapters view is read off transcripts, and the chain does not witness it
 
 Found 2026-09-07, while building `src/views/chapters.js`.
 

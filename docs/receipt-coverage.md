@@ -136,7 +136,7 @@ inside it is not on the chain. `src/views/chapters.js` reconstructs that
 sequence from the transcript file named in `session-open.transcriptPath`, and
 what it prints is a claim about that file, cross-checked against the receipt's
 `transcriptHash`, never a claim the chain itself makes. Codex sessions have no
-chain rows at all. See KNOWN-LIMITS 62.
+chain rows at all. See KNOWN-LIMITS 71.
 
 ---
 

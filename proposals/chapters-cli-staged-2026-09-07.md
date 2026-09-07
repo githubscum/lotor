@@ -10,7 +10,7 @@ and the `package.json` line wait on a signature.
 The work order assumed only `bin/hook-*.js` was protected. The gate's own
 denial says otherwise:
 
-> WHAT    Write: C:\Users\liemi\agent-receipts\bin\chapters.js
+> WHAT    Write: <repo>\bin\chapters.js
 > WHY     a tool in the protected bin/ directory. It reports rather than
 >         enforces, so it cannot change what the gate permits. It is gated
 >         because it is what you read to judge whether the work matched the plan

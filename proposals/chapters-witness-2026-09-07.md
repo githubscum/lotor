@@ -2,7 +2,7 @@
 
 Drafted 2026-09-07 by the chapters-view work order. **Not applied.** Queued for
 Isaac's next signing sitting per AGENTS.md rule 5 (core changes accumulate into
-one ceremony). Companion to KNOWN-LIMITS 62.
+one ceremony). Companion to KNOWN-LIMITS 71.
 
 ## What is unwitnessed today
 
@@ -74,7 +74,7 @@ it is strictly more code for the same digest and is not the recommendation.
      };
    }
 +
-+  // Chapter binding (2026-09-07, KNOWN-LIMITS 62). The chapter list is
++  // Chapter binding (2026-09-07, KNOWN-LIMITS 71). The chapter list is
 +  // derived from the same text the receipt summarises; the receipt carries
 +  // its digest so a reader recomputing chapters from the transcript can
 +  // tell whether they got the list the hook saw. Titles are stripped
@@ -140,7 +140,7 @@ current main because no receipt carries `chapters`.
 ## What it does not do
 
 - It does not witness Codex. Nothing runs at Codex session end; a binding
-  needs a writer, and there is none. KNOWN-LIMITS 62 stays true for Codex.
+  needs a writer, and there is none. KNOWN-LIMITS 71 stays true for Codex.
 - It does not bind titles, on purpose, and so it cannot detect a transcript
   whose prompts were reworded but whose counts were untouched. That is the
   `transcriptHash` bind's job, and it already does it.
