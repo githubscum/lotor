@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parseSession } from '../parser/index.js';
 import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
+import { summarizeSubagents } from './subagents.js';
 
 /**
  * src/ingest/index.js
@@ -53,6 +54,22 @@ function ingestSession(jsonlText, opts = {}) {
       count: rows.length,
       digest: crypto.createHash('sha256').update(sidecarText, 'utf-8').digest('hex')
     };
+  }
+
+  // Subagent sidecar (2026-09-03). Same precedent as the thought sidecar:
+  // the parent transcript may sit beside a <sessionId>/subagents/ directory
+  // of child transcripts, and when it does we bind a summary onto the
+  // receipt. summarizeSubagents returns null when no such directory exists,
+  // in which case the field is omitted entirely — never a false zero —
+  // mirroring the convention in subagents.js. opts.transcriptPath may be
+  // absent for existing callers; then we never call it.
+  if (typeof opts.transcriptPath === 'string' && opts.transcriptPath) {
+    const subagentsSummary = summarizeSubagents(opts.transcriptPath, {
+      priceTableDate: opts.priceTableDate
+    });
+    if (subagentsSummary !== null) {
+      receiptSummary.subagents = subagentsSummary;
+    }
   }
 
   // Atomic check-then-append under the chain lock. buildPayload runs
