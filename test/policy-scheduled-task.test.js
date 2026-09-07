@@ -191,3 +191,70 @@ describe('scope-escalation: controls that must stay free, before and after', () 
     assert.strictEqual(isScopeEscalation(cmd('sc create sync binPath= x')), true);
   });
 });
+
+/**
+ * TRIPWIRE, not a blessing.
+ *
+ * These assertions record that four forms of the class entry 44 once called
+ * "closed" still walk past the shipped matcher. They were measured on
+ * 2026-09-01 by running strings through `isScopeEscalation`, not by reading
+ * the regexes — reading would not have caught either cause:
+ *
+ *   - the systemd-run guard requires a literal `=` after `--on-<flag>`, while
+ *     getopt_long accepts `--on-active 30` with a space just the same;
+ *   - the at(1) time-spec alternation carries `noon`, `HH:MM` and `+N`, and
+ *     has no am/pm form and no bare `HHMM` form, both of which at(1) accepts.
+ *
+ * Each case is one token from a worked example in the change that closed the
+ * entry. The fix is two widenings inside `src/policy`, which is the
+ * non-delegable core and waits for a signing sitting.
+ *
+ * WHEN THAT FIX LANDS, THIS BLOCK FAILS. That is the whole point and it is
+ * the correct response: invert the assertion, move the case up into the
+ * "must gate" block above, and amend KNOWN-LIMITS 44 in the same change. Do
+ * not delete the block to get green — a deletion closes the confession
+ * without closing the hole, which is the failure entry 44 already has once.
+ *
+ * The controls below are load-bearing: they stop this block from passing
+ * because the matcher stopped working altogether rather than because these
+ * specific forms are uncovered.
+ */
+describe('scope-escalation: KNOWN-LIMITS 44 residual timespec forms (TRIPWIRE)', () => {
+  const stillFree = [
+    ['systemd-run --on-active 30 /usr/bin/backup.sh', 'systemd-run --on-active, space form'],
+    ['systemd-run --on-calendar daily /usr/bin/backup.sh', 'systemd-run --on-calendar, space form'],
+    ["echo 'echo backup ran' | at 3pm", 'at(1) pm form'],
+    ["echo 'echo backup ran' | at 10am tomorrow", 'at(1) am form with a day word'],
+    ["echo 'echo backup ran' | at 1730", 'at(1) bare HHMM form']
+  ];
+
+  for (const [command, label] of stillFree) {
+    it(`is still uncovered: ${label}`, () => {
+      assert.strictEqual(
+        isScopeEscalation(cmd(command)),
+        false,
+        `${label} now gates. If you widened the matcher on purpose: invert this ` +
+        'assertion, move the case into the "must gate" block, and amend ' +
+        'KNOWN-LIMITS 44 in the same change. Do not delete this test.'
+      );
+    });
+  }
+
+  it('controls: the forms the matcher does cover still gate', () => {
+    assert.strictEqual(
+      isScopeEscalation(cmd('systemd-run --on-active=30 /usr/bin/backup.sh')),
+      true,
+      'the equals form must still gate, or the tripwire above is measuring a dead matcher'
+    );
+    assert.strictEqual(
+      isScopeEscalation(cmd("echo 'echo backup ran' | at 03:00")),
+      true,
+      'the HH:MM form must still gate'
+    );
+    assert.strictEqual(
+      isScopeEscalation(cmd("echo 'echo backup ran' | at noon")),
+      true,
+      'the noon form must still gate'
+    );
+  });
+});
