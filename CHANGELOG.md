@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — signing sitting 2026-09-07: the chapter binding lands; eight core fixes staged under request ids
+
+Isaac's go for the sitting covered every queued core fix. One landed without a
+ceremony and the rest stopped at the gate, correctly, one request id each.
+
+**Landed.** `src/ingest/index.js` binds the chapter list onto every session
+receipt as `chapters: { schema: 'chapters/1', count, digest }`, digest taken
+over the list with titles removed (proposal
+`chapters-witness-2026-09-07.md`, diff 1, applied verbatim). `chaptersReport`
+now reports `chaptersDigestMatches: true` for a witnessed transcript whose
+bytes still match. `test/ingest-chapters-binding.test.js`, four tests. Limit 71
+narrowed: the Claude Code half is witnessed; Codex and the CLI stay open.
+
+**Staged, denied unsigned, request ids in the brain
+(`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
+(`src/policy`), 64 (`bin/hook-session-start.js`), 65 (`src/limits/pin.js`),
+35 (`src/gate` and `bin/hook-pre-tool-use.js`), the WO-TRACE-BRIDGE-01 last
+mile (`bin/hook-session-end.js`), and `bin/chapters.js` with its
+`package.json` line. Every one has fail-first evidence recorded (the flipped
+test ran red against unfixed code), and every flipped test is parked in the
+session scratchpad in its inverted state, to be restored the moment the
+byte-identical retry lands. Nothing in this entry claims any of those fixes
+shipped; the entries keep their open status until they do.
+
 ## Unreleased — chapters: a cross-runtime prompt-by-prompt index, derived from transcripts
 
 `src/views/chapters.js` lists each session as its operator prompts, with the
@@ -15,8 +39,8 @@ counts. No assistant text and no tool parameters beyond the file paths
 `touched` already records. `chaptersBinding()` produces the
 `{ schema, count, digest }` a receipt would carry, digest taken over the
 list with titles removed; the view verifies that binding if a receipt has one.
-No receipt has one today: the ingest change is drafted in
-`proposals/chapters-witness-2026-09-07.md` and queued for a signing sitting.
+(Applied at the 2026-09-07 sitting; see the entry above. Receipts written
+before that carry no binding and read as unrecorded.)
 
 `bin/chapters.js` and its `npm run chapters` script were denied by the gate
 (all of `bin/` is self-mod protected, not only the hooks, and so is

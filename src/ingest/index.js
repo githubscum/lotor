@@ -5,6 +5,7 @@ import { parseSession } from '../parser/index.js';
 import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
+import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
 
 /**
  * src/ingest/index.js
@@ -71,6 +72,14 @@ function ingestSession(jsonlText, opts = {}) {
       receiptSummary.subagents = subagentsSummary;
     }
   }
+
+  // Chapter binding (2026-09-07, KNOWN-LIMITS 71). The chapter list is
+  // derived from the same text the receipt summarises; the receipt carries
+  // its digest so a reader recomputing chapters from the transcript can
+  // tell whether they got the list the hook saw. Titles are stripped
+  // before hashing: operator words never enter the chain. No sidecar is
+  // written, because the transcript already is one.
+  receiptSummary.chapters = chaptersBinding(chaptersFromClaudeTranscript(jsonlText));
 
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot

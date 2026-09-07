@@ -2638,3 +2638,21 @@ Four things follow, and each is printed in the view's own output.
 Not a defect in the chain. It is the honest shape of a view that reads
 something the chain does not hold, and the reason the view ends with a block
 saying what it cannot tell you.
+
+**NARROWED 2026-09-07, signing sitting (Claude Code half witnessed; Codex and
+the CLI still open).** The receipt-side binding drafted in
+`proposals/chapters-witness-2026-09-07.md` is applied: `src/ingest/index.js`
+now puts `chapters: { schema: 'chapters/1', count, digest }` on every session
+receipt, the digest taken over the chapter list with every title removed, and
+`chaptersReport` verifies it (`chaptersDigestMatches` is `true` for a
+transcript whose bytes still match). `test/ingest-chapters-binding.test.js`
+asserts the field, the digest, the absence of operator words on the chain, and
+the round trip through the view. `src/ingest/` is not on the matcher's
+protected list, so this half landed without a ceremony; it was still queued
+for one on the basis that it writes every session receipt, and Isaac's go for
+the sitting covers it. What stays open: Codex sessions (no writer runs at
+Codex session end, so nothing can bind them), and `bin/chapters.js` with its
+`npm run chapters` script, which the gate denied at this sitting (requests
+`add2bcb4` and `19458a8f`, recorded in the brain) and which remain staged in
+`proposals/chapters-cli-staged-2026-09-07.md`. The four CLI tests keep
+skipping until those two land.
