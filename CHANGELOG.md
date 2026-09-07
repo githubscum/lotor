@@ -35,6 +35,12 @@ each replay byte-identical to the staged edit).**
   30 repair deletes every sibling token with the same canonical request, and
   an Edit token's request is the file_path alone. Recorded as limit 73. Not
   applied; the tripwires for 62 and 63 stay in place.
+- Limit 64 NARROWED, half landed (`fc8511dd`): `bin/hook-session-start.js`
+  gains `buildIdentityAtOpen()` over `computeSourceDigest`. The second hunk
+  (`observer/2` with the `build` field) was DENIED on replay (`3845747d`),
+  purged by the first spend (limit 73). The function is defined and not yet
+  called; the session-open receipt is unchanged. Its two flipped tests stay
+  parked until the second hunk lands.
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63

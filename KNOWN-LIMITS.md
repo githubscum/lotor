@@ -2373,6 +2373,20 @@ as a defect; it did that, and stopped at the reader. Limit 53 is why the digest
 cannot say what changed. Limit 63 is the narrow stamp being narrower than it claims;
 this is the wide one not being anywhere it matters.
 
+**NARROWED, not closed (2026-09-07, signing sitting).** The repair was staged
+as two Edits to `bin/hook-session-start.js` and Isaac signed both. The first
+(request `fc8511dd`) landed: the hook now imports `computeSourceDigest` and
+defines `buildIdentityAtOpen()`, which returns `{ schema: 'build/1',
+sourceDigest, sourceDigestShort, fileCount, byteCount }` and never throws. The
+second (request `5ff3beee`, the `observer` block moving to `observer/2` with a
+`build` field) was denied on replay because spending the first token purged
+the second (limit 73). So the function exists and nothing calls it;
+`session-open` still writes `observer/1` and the digest still reaches no
+receipt. The flipped tests (`test/session-open-build-identity.test.js`, new;
+`test/stamp-reach-coverage.test.js`, inverted) are parked in the brain, not in
+`test/`, because they assert the second half. One more signature on that one
+Edit finishes it.
+
 ## 65. The freshness pin binds the code, and never the log it lives in
 
 **Status: CLOSED 2026-09-07 at the signing sitting (request `41e5862e`, branch
@@ -2759,6 +2773,7 @@ At this sitting, measured as it happened (rows added as each file was replayed):
 | file | staged | landed | purged on the first spend |
 |---|---|---|---|
 | `src/policy/index.js` | 3 (limits 44, 62, 63) | limit 44 | limits 62, 63 |
+| `bin/hook-session-start.js` | 2 (limit 64, two hunks) | first hunk | second hunk |
 
 **What this is not.** Not a bypass and not a false denial: every purged token
 was a real signature for a real edit, and nothing was done to the file that
