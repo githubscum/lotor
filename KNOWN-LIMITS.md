@@ -2375,6 +2375,11 @@ this is the wide one not being anywhere it matters.
 
 ## 65. The freshness pin binds the code, and never the log it lives in
 
+**Status: CLOSED 2026-09-07 at the signing sitting (request `41e5862e`, branch
+`signing-sitting-2026-09-07`, commit "limit 65: pin carries body-sha256, edited
+status"). The drafted repair below landed as a whole-file Write, byte-identical
+to the staged content; see the closing note at the end of this entry.**
+
 Limit 29 gave `KNOWN-LIMITS.md` a pin: a comment block at the top naming the commit
 the log was verified against, plus `npm run limits-pin -- --check` so a reader in a
 different checkout is told they are reading a description of somewhere else. That
@@ -2442,6 +2447,21 @@ silent gap into a prompt to re-verify; it does not perform the verification.
 without explaining. Limits 63 and 64 are the same family read three ways: 63 is a
 stamp narrower than it claims, 64 is a wide stamp wired somewhere it does not
 persist, and this is a stamp that covers the wrong artifact entirely.
+
+**CLOSED 2026-09-07, signing sitting.** `src/limits/pin.js` now exports
+`stripPinBlock` and `bodyDigest`; `writePin` stamps `body-sha256` over the file
+with the pin block removed; `readPin` parses it into `pin.bodySha256`; and
+`checkPin` returns the third status, `edited`, when the commit matches and the
+digest does not (`bin/limits-pin.js` already exits 1 on anything but
+`current`, so no change there). A v1 pin with no digest line keeps reading
+`current`, with the message now saying the log half is unverified.
+`test/known-limits-pin-body.test.js` was inverted from its tripwire form: an
+appended entry and a mangled entry both read `edited`, the digest is
+digest-stable across re-stamps, and the no-digest pin keeps v1 semantics
+(7 tests). The pin at the top of this file is still the 2026-08-23 one and
+carries no digest; re-stamping is a separate act on `main`, as limit 29
+intended, and nothing in `npm test` runs `--check` yet (the "nothing runs the
+check" paragraph above stays true).
 
 ---
 
@@ -2714,3 +2734,49 @@ along with this record.
 this entry asserting the three FREE lines above, with the file-level control
 beside them. When the clause lands, that block fails; invert it and amend this
 entry in the same change.
+
+## 73. Signing several edits to one file in a sitting yields one landing, because the limit 30 purge spends the siblings
+
+Found 2026-09-07, on the second pass of the signing sitting, when the replay
+of the second signed edit to `src/policy/index.js` was denied with "no valid
+token" seconds after the first had been approved. Confirmed by reading
+`purgeSurplusTokens` in `src/gate/index.js` and by listing
+`pending-approvals/` before and after: thirteen tokens went in, and the two
+whose canonical request matched the spent one were gone.
+
+The mechanism is the limit 30 repair working exactly as written. An Edit or
+Write token canonicalizes to the file_path alone (limit 27), so every token for
+a file carries the same request string. When one is spent, the gate deletes
+every other stored token with that request inside the same lock, so that a
+surplus signature cannot bank into a standing grant. That is right for the
+threat limit 30 names. It also means that **N signatures for N staged edits to
+the same file land exactly one edit**, whichever is replayed first, and the
+other N-1 are denied with the same reason a forged or missing token would get.
+The denial message does not say the token was purged; it says there is none.
+
+At this sitting, measured as it happened (rows added as each file was replayed):
+
+| file | staged | landed | purged on the first spend |
+|---|---|---|---|
+| `src/policy/index.js` | 3 (limits 44, 62, 63) | limit 44 | limits 62, 63 |
+
+**What this is not.** Not a bypass and not a false denial: every purged token
+was a real signature for a real edit, and nothing was done to the file that
+was not signed. It is the approval unit (one file) being coarser than the
+staging unit (one hunk), with the purge enforcing the coarser one.
+
+**What a signer should do until it is fixed.** Stage one edit per file per
+sitting, or stage the whole-file Write (one signature, as limit 65's fix did
+today). Re-signing a purged sibling after the first spend works, since it is
+then the only token for that file, but each further sibling needs its own
+sitting: the second spend purges the third.
+
+**The repair, and why it is not done here.** Either bind Edit tokens to
+file_path plus a digest of `old_string`/`content` so siblings have distinct
+requests (which reopens the limit 27 decision that content is deliberately
+unsigned), or have the purge skip tokens whose approval carries a
+`replay-set` marker the operator signed as a batch. Both are `src/gate` and
+non-delegable core, and both change what a signature means, so this queues for
+a reviewed sitting. The approve CLI could also warn at signing time when a
+second token for an already-staged file_path is being signed; that is
+`bin/approve.js` and gated too.

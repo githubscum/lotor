@@ -26,6 +26,15 @@ each replay byte-identical to the staged edit).**
   a bare four-digit `HHMM`; the systemd-run guard accepts `=` or whitespace
   after `--on-<flag>`. Tripwire in `test/policy-scheduled-task.test.js`
   inverted: seven forms must gate, ten controls stay free (28 tests).
+- Limit 65 CLOSED (`41e5862e`): the KNOWN-LIMITS pin carries `body-sha256`
+  over the file with the pin block removed; `checkPin` gains the `edited`
+  status (commit matches, log does not); old digest-less pins keep v1
+  semantics. `test/known-limits-pin-body.test.js` inverted (7 tests).
+- Limits 62 and 63: DENIED on replay (`1766ce0a`, `19bdf38f`). Their tokens
+  were purged when limit 44's token for the same file was spent: the limit
+  30 repair deletes every sibling token with the same canonical request, and
+  an Edit token's request is the file_path alone. Recorded as limit 73. Not
+  applied; the tripwires for 62 and 63 stay in place.
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
