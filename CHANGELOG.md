@@ -41,6 +41,11 @@ each replay byte-identical to the staged edit).**
   purged by the first spend (limit 73). The function is defined and not yet
   called; the session-open receipt is unchanged. Its two flipped tests stay
   parked until the second hunk lands.
+- Limit 35 NARROWED, half landed (`0892f44a`, `1725d400`): the pre-tool-use
+  hook passes `meta.sessionId` at all three `gatedAction()` call sites, and
+  the no-token denial receipt carries it. The other three receipt shapes
+  (stale-or-mismatch, replay, approved) were DENIED on replay (`501a9314`,
+  `25788493`, `6c0c3bc0`), purged by the first gate spend (limit 73).
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63

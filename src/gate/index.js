@@ -222,8 +222,11 @@ function purgeSurplusTokens(spentRequest, spentNonce, baseDir = DEFAULT_BASE_DIR
  */
 function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE_DIR, meta = {}) {
   // meta is informational only. It never enters canonicalizeRequest and never
-  // appears in verifyApproval. Fields read from meta today: ruleId, heldMs.
-  // Anything the receipt needs that is NOT part of the signed action lives here.
+  // appears in verifyApproval. Fields read from meta today: ruleId, heldMs,
+  // sessionId (added 2026-09-07, KNOWN-LIMITS 35: a gate decision with no
+  // session id could not be attributed once sessions overlapped; the hook
+  // already had the id in hand and now passes it). Anything the receipt needs
+  // that is NOT part of the signed action lives here.
   const action = actionRequest?.action || 'unknown';
   const timestamp = Date.now();
 
@@ -234,6 +237,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       decision: 'denied',
       action,
       ruleId: meta.ruleId || null,
+      sessionId: meta.sessionId || null,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
       matcherHash: matcherVersionHash(),

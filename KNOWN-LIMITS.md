@@ -1235,6 +1235,23 @@ tripwire proving the gap against the live source (three assertions, all passing
 against today's code) rather than describing it in prose alone. **Core. Queues for
 the signing sitting**, same as the rest of this file's open core items.
 
+**NARROWED again, not closed (2026-09-07, signing sitting).** Five Edits were
+staged and Isaac signed all five: four receipt sites in `src/gate/index.js`
+(the entry counted three; there are four `gated-action` shapes, the replay
+denial being the one it missed) and the three `meta` sites in
+`bin/hook-pre-tool-use.js`. What landed: the hook edit (request `1725d400`),
+so every call into `gatedAction()` now passes `meta.sessionId`; and the first
+gate edit (request `0892f44a`), so the **no-token denial** receipt carries
+`sessionId` (null when the hook had none). What did not: the stale-or-mismatch
+denial, the replay denial and the approved receipt (requests `3614fcb7`,
+`76404e71`, `b3891aac`), denied on replay because spending the first gate
+token purged the other three (limit 73). So today one of the four receipt
+shapes is attributable and three are not, and a reader must check
+`reason` before trusting an absent `sessionId` as "no session" rather than
+"site not yet threaded". The test file above was adjusted to assert exactly
+that state; the fully inverted version is parked in the brain. Three more
+signatures, one per sitting or one whole-file Write, finish it.
+
 ## 36. An approved receipt records the tool, never the target
 
 Found 2026-07-26 building the autograph ratio, by reading `src/gate/index.js:209`.
@@ -2774,6 +2791,7 @@ At this sitting, measured as it happened (rows added as each file was replayed):
 |---|---|---|---|
 | `src/policy/index.js` | 3 (limits 44, 62, 63) | limit 44 | limits 62, 63 |
 | `bin/hook-session-start.js` | 2 (limit 64, two hunks) | first hunk | second hunk |
+| `src/gate/index.js` | 4 (limit 35, four receipt sites) | first site | three sites |
 
 **What this is not.** Not a bypass and not a false denial: every purged token
 was a real signature for a real edit, and nothing was done to the file that

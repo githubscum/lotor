@@ -929,7 +929,7 @@ async function main() {
       };
       const stagedAt = readStagedAt(home, requestId);
       const heldMs = stagedAt ? Date.now() - stagedAt : null;
-      const meta = { ruleId, heldMs };
+      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
       try {
         gatedAction(actionRequest, null, chain, home, meta);
       } catch (e) {
@@ -955,7 +955,7 @@ async function main() {
       const reason = tokenResult.rejected.reason || 'token invalid';
       const stagedAt = readStagedAt(home, requestId);
       const heldMs = stagedAt ? Date.now() - stagedAt : null;
-      const meta = { ruleId, heldMs };
+      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
 
       const store = createStore(home);
       const chain = {
@@ -992,7 +992,7 @@ async function main() {
     };
     const stagedAt = readStagedAt(home, requestId);
     const heldMs = stagedAt ? Date.now() - stagedAt : null;
-    const meta = { ruleId, heldMs };
+    const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
     let result;
     try {
       result = gatedAction(actionRequest, tokenResult.token, chain, home, meta);
