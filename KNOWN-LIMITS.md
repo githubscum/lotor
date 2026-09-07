@@ -2373,6 +2373,22 @@ reader would fail to notice the fix landed.
 
 ## 64. The whole-tree fingerprint exists, and it is wired to the reader instead of the record
 
+**Status: CLOSED 2026-09-07 at the signing sitting, fourth pass (request
+`ae9c39f6`, the second hunk on `bin/hook-session-start.js`, re-signed as the
+only token for that file after the limit 73 purge spent `5ff3beee`; branch
+`signing-sitting-2026-09-07`, commit "limit 64 closed"). The `observer` block
+on every `session-open` receipt is now `observer/2` and carries
+`build: { schema: 'build/1', sourceDigest, sourceDigestShort, fileCount,
+byteCount }` from `buildIdentityAtOpen()` (the first hunk, `fc8511dd`, landed
+on the second pass); per-action receipts inherit it by session id, which
+limit 35's closure makes usable. `test/session-open-build-identity.test.js`
+runs the real hook against a throwaway home and matches `observer.build` to
+an independent `computeSourceDigest(ROOT)` (2 tests);
+`test/stamp-reach-coverage.test.js` is restored to its inverted form (4
+tests: three consumers, the session-open writer among them). The residuals
+below stand: `node_modules`, non-`.js` inputs, out-of-tree loads, and a
+digest that detects without explaining (limit 53).**
+
 Found 2026-09-02, following limit 63's own stated residual to the place it leads,
 and finding the fix already built and pointed the wrong way.
 

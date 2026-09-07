@@ -79,6 +79,15 @@ normalizing CRLF to LF and the LF digests matching the record).**
   attributable; the hook half landed on the second pass.
   `test/known-limits-35-session-attribution.test.js` restored to its fully
   inverted form (5 tests, replacing the half-state rewrite).
+- Limit 64 CLOSED (`ae9c39f6`, the second hunk on `bin/hook-session-start.js`,
+  Edit preserved byte-for-byte including CRLF): `session-open` writes
+  `observer/2` with `build: buildIdentityAtOpen()`, the whole-tree source
+  digest in short and full form plus file and byte counts. New
+  `test/session-open-build-identity.test.js` (2 tests, real hook binary);
+  `test/stamp-reach-coverage.test.js` restored to its inverted form (4 tests).
+
+Net for the fourth pass: limits 62, 63, 35 and 64 CLOSED; limit 72 stays open
+and keeps its tripwire; no denials. Suite 1047 tests, 1047 pass, 0 skipped.
 
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63

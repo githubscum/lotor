@@ -18,10 +18,6 @@
  * that actually decides whether an action is allowed moves nothing a future
  * reader of the chain can see.
  *
- * 2026-09-07: half of the repair landed (the hook can compute the digest);
- * the half that writes it onto session-open did not (limit 73). The third
- * block below asserts that exact state.
- *
  * These assertions are written so the absence claims cannot pass vacuously:
  * every "X does not reference the build digest" is paired with a control
  * asserting that something else does, and that X references the matcher hash.
@@ -86,34 +82,34 @@ test('the build digest covers every decider, including the ones outside the poli
   assert.equal(typeof d.digest, 'string');
 });
 
-test('the matcher hash is the only code identity that reaches a receipt', () => {
-  // Every module that writes a receipt names matcherVersionHash...
+test('the whole-tree digest reaches the record through session-open (closed 2026-09-07)', () => {
+  // Per-action writers still stamp the matcher hash and still do not carry
+  // the tree digest themselves: they inherit it by session id from the open
+  // receipt, one field per session rather than one per action.
   for (const rel of ['src/gate/index.js', 'bin/hook-pre-tool-use.js', 'bin/hook-post-tool-use.js']) {
     const src = read(rel);
     assert.match(src, /matcherVersionHash/, `${rel} should stamp receipts with the matcher hash (control)`);
-    // ...and none of them names the whole-tree digest.
     assert.doesNotMatch(
       src,
       /computeSourceDigest|captureBuildIdentity|sourceDigest/,
-      `${rel} does not carry the build digest onto the record — this is limit 64`
+      `${rel} inherits the build digest by session id rather than repeating it per action`
     );
   }
+  // The session-open writer is the one that carries it.
+  assert.match(
+    read('bin/hook-session-start.js'),
+    /computeSourceDigest/,
+    'bin/hook-session-start.js writes the whole-tree digest onto session-open (limit 64 repair)'
+  );
 });
 
-test('the whole-tree digest is referenced by the session-open writer and still not written by it (limit 64, half landed 2026-09-07)', () => {
-  // Control: the consumer that does exist.
+test('the whole-tree digest is consumed by the MCP response path AND the session-open writer', () => {
+  // Control: the consumer that always existed.
   assert.match(
     read('src/mcp/server.js'),
     /captureBuildIdentity|_lotorBuild/,
     'the MCP server should attach the build stamp (control)'
   );
-  // The first half of the limit 64 repair landed under signature on
-  // 2026-09-07: bin/hook-session-start.js imports computeSourceDigest and
-  // defines buildIdentityAtOpen(). The second half (the observer block moving
-  // to observer/2 with a `build` field) was denied on replay (limit 73), so
-  // the function is defined and not called, and the digest still reaches no
-  // receipt. Both facts are asserted here, so this block fails again the
-  // moment the second half lands and must be inverted then, not deleted.
   const all = [...jsUnder(path.join(ROOT, 'src')), ...jsUnder(path.join(ROOT, 'bin'))];
   const consumers = all.filter((rel) =>
     /computeSourceDigest|captureBuildIdentity/.test(read(rel))
@@ -121,16 +117,8 @@ test('the whole-tree digest is referenced by the session-open writer and still n
   assert.deepEqual(
     consumers.sort(),
     ['bin/hook-session-start.js', 'src/mcp/build-identity.js', 'src/mcp/server.js'],
-    'the session-open writer references the build digest (half of the limit 64 repair)'
+    'exactly two consumers outside the module: the ephemeral reader and the durable record'
   );
-  const hook = read('bin/hook-session-start.js');
-  assert.match(hook, /function buildIdentityAtOpen\(\)/, 'the helper is defined (first hunk landed)');
-  assert.doesNotMatch(
-    hook,
-    /build: buildIdentityAtOpen\(\)/,
-    'the helper is not yet called from the observer block — this is the unlanded second hunk'
-  );
-  assert.match(hook, /schema: 'observer\/1'/, 'session-open still writes observer/1 until the second hunk lands');
 });
 
 test('the two stamps are different values over different inputs', () => {

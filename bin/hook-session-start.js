@@ -366,11 +366,16 @@ async function main() {
         // not the matcher CODE). Absence on an older entry means "before
         // instrumentation was versioned", not an error: additive field on a
         // payload the chain hashes as-is, so old entries verify unchanged.
+        //
+        // observer/2 (2026-09-07): gained `build`, the whole-tree source
+        // digest (KNOWN-LIMITS 64). observer/1 entries carried the matcher
+        // and parser stamps only.
         observer: {
-          schema: 'observer/1',
+          schema: 'observer/2',
           packageVersion: readPackageVersion(),
           matcher: { schema: MATCHER_SCHEMA, hash: matcherVersionHash() },
-          parser: { schema: PARSER_SCHEMA, hash: parserVersionHash() }
+          parser: { schema: PARSER_SCHEMA, hash: parserVersionHash() },
+          build: buildIdentityAtOpen()
         },
         harness,
         lotorVersion: 1,
