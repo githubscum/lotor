@@ -130,6 +130,14 @@ recorded rather than nothing happened.
 **Cost per model or per harness.** A session touching several models reports one
 blended total under whichever ran last.
 
+**Turn boundaries.** No entry says where one operator prompt ended and the next
+began. A session is an open row and a close receipt with totals; the sequence
+inside it is not on the chain. `src/views/chapters.js` reconstructs that
+sequence from the transcript file named in `session-open.transcriptPath`, and
+what it prints is a claim about that file, cross-checked against the receipt's
+`transcriptHash`, never a claim the chain itself makes. Codex sessions have no
+chain rows at all. See KNOWN-LIMITS 62.
+
 ---
 
 ## Consequences already acted on

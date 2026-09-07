@@ -2010,3 +2010,46 @@ sitting rather than riding along with a documentation change.
 That is one sentence longer and it is true. Deriving the list from the policy table
 rather than hardcoding it would also keep the sentence honest if the table changes,
 which is the failure that produced limit 39 in the first place.
+
+## 62. The chapters view is read off transcripts, and the chain does not witness it
+
+Found 2026-09-07, while building `src/views/chapters.js`.
+
+The chain has no per-turn rows. A session is one `session-open` and, if the
+hook fired, one receipt with `counts`, `touched` and `transcriptHash`. Nothing
+in between says where one operator prompt ended and the next began. So the
+chapters view, which lists a session as a sequence of prompts with the work
+each one produced, cannot come from the chain. **It comes from the transcript
+file on disk**, located through `session-open.transcriptPath`, and every line
+it prints is a claim about that file rather than about the record.
+
+Four things follow, and each is printed in the view's own output.
+
+- **The chain witnesses the session receipt, not the chapter list.** The
+  receipt's `transcriptHash` binds the bytes the hook hashed at session end.
+  If the file on disk still hashes to that value, the chapters were derived
+  from witnessed bytes. If it does not (a resumed session keeps writing after
+  the receipt, which is the common case, not the tampering case), the view
+  says so and the chapters after the receipt are unwitnessed. Either way the
+  chain never signed the chapter list itself. A receipt-side binding is drafted
+  in `proposals/chapters-witness-2026-09-07.md` and is not applied.
+- **Codex sessions are not on the chain at all.** No hook runs in Codex, so
+  no `session-open`, no receipt, no hash. A Codex rollout is read from disk
+  under `--codex` and reported with `witnessed: false` and a caveat. It is a
+  convenience for the reader, not evidence.
+- **A chapter title is quoted operator text.** It is the first eighty
+  characters of what the operator typed, and that is all it is. It is not a
+  statement of what the agent did; the counts on the same line are the
+  nearest thing to that, and they are behavioural metadata like every other
+  count here. Titles never enter the chain, by design: the drafted binding
+  hashes the list with titles removed.
+- **The Codex boundary and file-path rules are heuristics on a format nobody
+  published.** A prompt is recognised by the harness's own `user.*` content
+  kinds; touched paths come from `*** Update File:` lines inside patch
+  bodies; a failure is an output opening with a non-zero `Exit code:`. All
+  three were read off two rollout files on 2026-09-07 and will drift the day
+  the format does.
+
+Not a defect in the chain. It is the honest shape of a view that reads
+something the chain does not hold, and the reason the view ends with a block
+saying what it cannot tell you.

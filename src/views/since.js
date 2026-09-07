@@ -36,7 +36,7 @@ import { loadChain } from '../store/index.js';
  * An untyped payload carrying `session` is the original receipt shape and
  * predates both. Reading only one convention silently mislabels the other.
  */
-function typeOf(payload) {
+export function typeOf(payload) {
   return payload?.type ?? payload?.kind ?? (payload?.session ? 'session' : 'unknown');
 }
 
@@ -45,7 +45,7 @@ function typeOf(payload) {
  * Accepts: ms number, ISO string, or `{ seq }` to start after a chain sequence.
  * Returns null for "from the beginning", which is a legitimate ask.
  */
-function resolveSince(since, entries) {
+export function resolveSince(since, entries) {
   if (since === undefined || since === null) return null;
   if (typeof since === 'number') return since;
   if (typeof since === 'string') {
