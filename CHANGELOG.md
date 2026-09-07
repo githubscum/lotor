@@ -13,6 +13,12 @@ now reports `chaptersDigestMatches: true` for a witnessed transcript whose
 bytes still match. `test/ingest-chapters-binding.test.js`, four tests. Limit 71
 narrowed: the Claude Code half is witnessed; Codex and the CLI stay open.
 
+**Recorded.** Limit 72: a core directory named on the command side without a
+trailing slash (`rm -rf src/chain`, and `src/chain/` too, since the slash is
+stripped) is free in every spelling while any file under it is gated. Found
+while preparing limit 62's flip. Tripwire in
+`test/policy-selfmod-separator-spellings.test.js`.
+
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
 (`src/policy`), 64 (`bin/hook-session-start.js`), 65 (`src/limits/pin.js`),

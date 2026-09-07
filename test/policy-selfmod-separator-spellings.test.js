@@ -146,3 +146,28 @@ describe('KNOWN-LIMITS 62: equivalent spellings are NOT gated (tripwire)', () =>
     assert.equal(cmdGated('echo x > ./bin/./charter.js'), false);
   });
 });
+
+/**
+ * TRIPWIRE, a different gap (KNOWN-LIMITS 72). Found 2026-09-07 while
+ * preparing to flip the block above: `rm -rf src/./chain` would not flip on
+ * the separator fix alone, because it folds to `rm -rf src/chain`, and THAT
+ * was never gated either. Every directory fragment on the command side ends
+ * in `/`, and normalizePath strips a trailing slash at end of string, so a
+ * core directory named wholesale is free in every spelling while any file
+ * under it is gated. The Edit side is unaffected (an Edit names a file).
+ * When the boundary-matching clause lands, invert these three and amend 72;
+ * do not delete the block.
+ */
+describe('KNOWN-LIMITS 72: a core directory named without a trailing slash is FREE on the command side (tripwire)', () => {
+  it('plain spelling, no trailing slash, is FREE (invert when fixed)', () => {
+    assert.equal(cmdGated(`rm -rf ${CHN}`), false);
+  });
+
+  it('trailing slash is stripped at end of string, so it is FREE too (invert when fixed)', () => {
+    assert.equal(cmdGated(`rm -rf ${CHN}/`), false);
+  });
+
+  it('control: naming a FILE under the directory is gated', () => {
+    assert.equal(cmdGated(`rm -f ${CHN}/index.js`), true);
+  });
+});

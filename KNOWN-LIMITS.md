@@ -2656,3 +2656,41 @@ Codex session end, so nothing can bind them), and `bin/chapters.js` with its
 `add2bcb4` and `19458a8f`, recorded in the brain) and which remain staged in
 `proposals/chapters-cli-staged-2026-09-07.md`. The four CLI tests keep
 skipping until those two land.
+
+## 72. A core directory named without a trailing slash is free on the command side
+
+Found 2026-09-07 at the signing sitting, while flipping limit 62's tripwire
+and asking why its eighth case (`rm -rf src/./chain`) would not flip on the
+separator fix alone. Measured by running the shipped matcher, not by reading
+it:
+
+```
+FREE | rm -rf src/chain          <- the plain spelling
+FREE | rm -rf src/chain/         <- trailing slash: stripped at end of string
+FREE | rm -rf src/./chain        <- the limit 62 case, which folds to line 1
+GATE | rm -f  src/chain/index.js <- naming a FILE under the directory
+```
+
+Two things combine. Every directory on the command-side fragment list ends in
+`/` (`src/gate/`, `src/policy/`, `src/chain/`, `src/store/`, `src/grant/`,
+`src/charter/`, `src/limits/`, `src/publish/`), so a match needs the slash to
+be present in the command text. And `normalizePath` strips a trailing `/` at
+end of string, so even the operator who types the slash loses it before the
+comparison. The result is that **deleting, moving or chmod-ing a core directory
+wholesale is ungated in every spelling**, while touching any one file inside
+it is gated. The Edit side is unaffected: an Edit names a file.
+
+**Why this is its own entry and not folded into 62.** Limit 62 is about
+equivalent spellings of the same path being matched differently. This is the
+canonical spelling being unmatched. Fixing 62 (collapse `//`, drop `./`) is
+correct and does not touch this; a fix here is a different clause (match a
+directory fragment at a token boundary with or without its trailing slash) and
+carries its own blast radius, since `src/chain` as a bare token appears in
+prose (`git log -- src/chain`) far more often than `src/chain/` does. It is
+`src/policy` and therefore queues for a signing sitting rather than riding
+along with this record.
+
+`test/policy-selfmod-separator-spellings.test.js` carries a TRIPWIRE block for
+this entry asserting the three FREE lines above, with the file-level control
+beside them. When the clause lands, that block fails; invert it and amend this
+entry in the same change.
