@@ -13,9 +13,11 @@
  *   denied the Write of bin/chapters.js with "a tool in the protected bin/
  *   directory"). The CLI is therefore staged in
  *   proposals/chapters-cli-staged-2026-09-07.md and lands only under a
- *   signature. Until it lands, this suite SKIPS with that reason rather than
- *   failing, and the skip shows in the runner's counts. A silent pass would be
- *   the lie; a visible skip is the state of the world.
+ *   signature. Until it lands, every test here SKIPS with that reason rather
+ *   than failing, and the skips show in the runner's `skipped` count. (A
+ *   suite-level skip prints a line but counts as zero skipped tests, which
+ *   is the invisible kind; per-test skips are the visible kind.) A silent
+ *   pass would be the lie; a visible skip is the state of the world.
  */
 
 import { describe, it, before, after } from 'node:test';
@@ -50,7 +52,13 @@ function run(args, home) {
   });
 }
 
-describe('bin/chapters.js', { skip: CLI_PRESENT ? false : SKIP_REASON }, () => {
+/** Wrap a test body so it skips, loudly and countably, until the CLI lands. */
+const gated = fn => async (t) => {
+  if (!CLI_PRESENT) { t.skip(SKIP_REASON); return; }
+  await fn(t);
+};
+
+describe('bin/chapters.js', () => {
   let home;
   let transcript;
   let codexDir;
@@ -78,7 +86,7 @@ describe('bin/chapters.js', { skip: CLI_PRESENT ? false : SKIP_REASON }, () => {
   });
   after(() => { fs.rmSync(home, { recursive: true, force: true }); });
 
-  it('--json reports the chain session with its chapters and witness flag', async () => {
+  it('--json reports the chain session with its chapters and witness flag', gated(async () => {
     const { code, stdout, stderr } = await run(['--json'], home);
     assert.equal(code, 0, stderr);
     const report = JSON.parse(stdout);
@@ -88,9 +96,9 @@ describe('bin/chapters.js', { skip: CLI_PRESENT ? false : SKIP_REASON }, () => {
     assert.equal(s.witnessed, true);
     assert.equal(s.chapters.length, 2);
     assert.equal(s.chapters[0].title, 'Please fix the config flag and clean the temp dir');
-  });
+  }));
 
-  it('--codex <dir> globs rollout-*.jsonl recursively and reports them unwitnessed', async () => {
+  it('--codex <dir> globs rollout-*.jsonl recursively and reports them unwitnessed', gated(async () => {
     const { code, stdout } = await run(['--json', '--codex', path.join(home, 'codex')], home);
     assert.equal(code, 0);
     const report = JSON.parse(stdout);
@@ -98,22 +106,22 @@ describe('bin/chapters.js', { skip: CLI_PRESENT ? false : SKIP_REASON }, () => {
     assert.equal(codex.length, 1, 'only rollout-*.jsonl files are picked up');
     assert.equal(codex[0].sessionId, 'codex-001');
     assert.equal(codex[0].witnessed, false);
-  });
+  }));
 
-  it('--since and --session narrow the report', async () => {
+  it('--since and --session narrow the report', gated(async () => {
     const later = await run(['--json', '--since', String(T0 + 700000)], home);
     assert.equal(JSON.parse(later.stdout).sessions.length, 0);
     const iso = await run(['--json', '--since', '2026-09-06T09:00:00Z'], home);
     assert.equal(JSON.parse(iso.stdout).sessions.length, 1);
     const other = await run(['--json', '--session', 'nobody'], home);
     assert.equal(JSON.parse(other.stdout).sessions.length, 0);
-  });
+  }));
 
-  it('without --json it renders the plain view', async () => {
+  it('without --json it renders the plain view', gated(async () => {
     const { code, stdout } = await run([], home);
     assert.equal(code, 0);
     assert.match(stdout, /CHAPTERS: WHAT WAS ASKED/);
     assert.match(stdout, /"Please fix the config flag and clean the temp dir"/);
     assert.match(stdout, /WHAT THIS DOES NOT TELL YOU/);
-  });
+  }));
 });
