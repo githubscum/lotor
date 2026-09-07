@@ -1289,15 +1289,23 @@ const AT_INVOCATION = new RegExp(
   '(^|[\\s;(])(?:sudo\\s+|doas\\s+|env\\s+\\S+=\\S+\\s+)*' +
   'at(?:\\.exe)?\\s+' +
   '(?:-{1,2}[a-z]+(?:\\s+\\S*)?\\s+)*' +
-  '(?:now|noon|midnight|teatime|today|tomorrow|[0-2]?\\d:[0-5]\\d|\\+\\s*\\d+)' +
+  // Widened 2026-09-07 (KNOWN-LIMITS 44 amendment of 2026-09-01): the am/pm
+  // forms (`3pm`, `5:30pm`, `10am tomorrow`) and a bare four-digit HHMM
+  // (`1730`), both of which at(1) accepts, were missing from this alternation.
+  // Ordered so `H[:MM]am|pm` is tried before the bare `HH:MM`, and the HHMM
+  // form is exactly four digits so `at 12 files` stays free.
+  '(?:now|noon|midnight|teatime|today|tomorrow|[0-2]?\\d(?::[0-5]\\d)?\\s*(?:am|pm)|[0-2]?\\d:[0-5]\\d|[0-2]\\d[0-5]\\d|\\+\\s*\\d+)' +
   '(?=\\s|$)'
 );
 
 // systemd-run schedules future execution only through its --on-* flags; a
 // plain transient run happens once, now, in sight of every other rule, so it
-// stays free. Both tokens required together.
+// stays free. Both tokens required together. The separator after the flag is
+// `=` OR whitespace (widened 2026-09-07, KNOWN-LIMITS 44): systemd parses with
+// getopt_long and required_argument, so `--on-active 30` registers the same
+// timer as `--on-active=30`, and the space form was walking past this guard.
 const SYSTEMD_RUN = /\bsystemd-run\b/;
-const SYSTEMD_RUN_SCHEDULED = /(^|\s)--on-[-a-z]+=/
+const SYSTEMD_RUN_SCHEDULED = /(^|\s)--on-[-a-z]+[=\s]/
 
 // launchd registration verbs. list/start/stop/kickstart are control or read
 // operations and stay free; these three install something that runs later.

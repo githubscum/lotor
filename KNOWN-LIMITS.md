@@ -1673,12 +1673,17 @@ charters cannot supply it for the non-delegable core by construction.
 
 ## 44. Scheduled task and cron operations are not gated
 
-**Status: NARROWED, not closed. Was recorded "closed for the honest-agent
-class" 2026-08-25 (stdio42-codex-20260821); downgraded 2026-09-01 when four
-forms of the same class were measured walking past the closing change — see
-the amendment at the end of this entry. Residuals below. Found 2026-07-29 by an agent expecting a gate
-ceremony on `Register-ScheduledTask` that never materialized; the task
-registered clean, no staged approval, no receipt of a denial.**
+**Status: CLOSED 2026-09-07 for the honest-agent class, at the signing
+sitting (request `f256a65a`, branch `signing-sitting-2026-09-07`, commit
+"limit 44: at(1) am/pm and HHMM forms, systemd-run space separator"). The two
+widenings named in the 2026-09-01 amendment landed under signature and the
+tripwire in `test/policy-scheduled-task.test.js` was inverted to assert the
+seven forms gate; see the closing note at the end of this entry. History: recorded
+"closed" 2026-08-25 (stdio42-codex-20260821); downgraded to NARROWED
+2026-09-01 when four forms of the same class were measured walking past the
+closing change. Found 2026-07-29 by an agent expecting a gate ceremony on
+`Register-ScheduledTask` that never materialized; the task registered clean,
+no staged approval, no receipt of a denial.**
 
 Persistent unattended execution paths — Windows scheduled tasks
 (`Register-ScheduledTask`, `schtasks /Create`, `New-JobTrigger`), POSIX cron
@@ -1803,6 +1808,21 @@ available.
 **Still not covered, unchanged by this amendment:** `systemctl enable` on an
 existing unit, `batch`, `anacron`, `fcron`, SysWOW64's task store, and what a
 registered task runs later.
+
+**CLOSED 2026-09-07, signing sitting.** Both widenings landed in `src/policy`
+under Isaac's signature (request `f256a65a`, byte-identical replay of the
+staged edit): the systemd guard is now `--on-[-a-z]+[=\s]`, and the at(1)
+alternation carries `H[:MM]am|pm` (tried before the bare `HH:MM`) and a bare
+four-digit `HHMM`. The tripwire block was inverted, not deleted: seven forms
+now MUST gate (the five measured on 2026-09-01 plus `--on-calendar "*:0/5"`
+and `5:30pm`), the three previously covered forms stay as controls, and seven
+prose controls (`ls at 12 files`, `echo "meet at 5"`, `grep at 1730.log`,
+`echo --on-call rota`, plus the three existing ones) stay free. Declared
+over-gate, unchanged in kind from the `at noon` residual: `grep at 1200
+log.txt` fires, because the bare HHMM is a valid spec after a
+whitespace-preceded `at`. The list two paragraphs up (`systemctl enable`,
+`batch`, `anacron`, `fcron`, SysWOW64, what a registered task later runs) is
+still open and is not what this closure claims.
 
 ## 45. A QR is a broadcast medium, and PAP enforces acknowledgment, not privacy
 

@@ -19,6 +19,14 @@ stripped) is free in every spelling while any file under it is gated. Found
 while preparing limit 62's flip. Tripwire in
 `test/policy-selfmod-separator-spellings.test.js`.
 
+**Landed under signature, second pass (Isaac signed every staged request;
+each replay byte-identical to the staged edit).**
+
+- Limit 44 CLOSED (`f256a65a`): the at(1) alternation gains `H[:MM]am|pm` and
+  a bare four-digit `HHMM`; the systemd-run guard accepts `=` or whitespace
+  after `--on-<flag>`. Tripwire in `test/policy-scheduled-task.test.js`
+  inverted: seven forms must gate, ten controls stay free (28 tests).
+
 **Staged, denied unsigned, request ids in the brain
 (`projects/lotor/wo/SIGNING-2026-09-07-REQUESTS.md`).** Limits 44, 62, 63
 (`src/policy`), 64 (`bin/hook-session-start.js`), 65 (`src/limits/pin.js`),
