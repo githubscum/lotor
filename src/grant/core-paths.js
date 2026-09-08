@@ -195,6 +195,17 @@ function resolveRepoRoot() {
  *               invitation to try harder; a grant naming it is rejected.
  */
 function classifyPath(inputPath, repoRoot = resolveRepoRoot()) {
+  const native = classifyPathSpelling(inputPath, repoRoot);
+  // A backslash is a real filename character on POSIX and a separator on
+  // Windows. Protect BOTH readings: folding first could turn the native core
+  // filename `bin/..\README.md` into a grantable root-level README.md.
+  if (native.verdict !== 'grantable' || typeof inputPath !== 'string' || !inputPath.includes('\\')) {
+    return native;
+  }
+  return classifyPathSpelling(inputPath.replace(/\\/g, '/'), repoRoot);
+}
+
+function classifyPathSpelling(inputPath, repoRoot) {
   if (typeof inputPath !== 'string' || inputPath.length === 0) {
     return { verdict: 'refused', reason: 'not a non-empty string', relative: null };
   }

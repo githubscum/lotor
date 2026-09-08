@@ -1498,7 +1498,15 @@ function extensionlessLocalFileKind(segment, cwd) {
   if (!candidate || path.extname(candidate) !== '') return null;
 
   try {
-    const resolved = fs.realpathSync(path.resolve(cwd, candidate));
+    let resolved;
+    try {
+      resolved = fs.realpathSync(path.resolve(cwd, candidate));
+    } catch (error) {
+      // Preserve an existing native filename containing literal backslashes.
+      // Only fall back to the portable separator spelling when it is absent.
+      if (process.platform === 'win32' || !candidate.includes('\\') || error.code !== 'ENOENT') throw error;
+      resolved = fs.realpathSync(path.resolve(cwd, candidate.replace(/\\/g, '/')));
+    }
     if (!fs.statSync(resolved).isFile()) return null;
     const fd = fs.openSync(resolved, 'r');
     try {

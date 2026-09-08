@@ -37,6 +37,18 @@ describe('policy: extensionless local execution reads the resolved file header',
     assert.equal(isOpaqueExec({ command: '.\\deploy' }, cwd), true);
   });
 
+  it('inspects an existing native backslash filename before the portable spelling', { skip: process.platform === 'win32' }, () => {
+    // On POSIX these are distinct files. Normalizing first would inspect the
+    // ELF fixture `native` and incorrectly allow this actual shebang script.
+    const literal = path.join(cwd, '.\\native');
+    fs.writeFileSync(literal, '#!/bin/sh\necho literal\n');
+    try {
+      assert.equal(isOpaqueExec({ command: '".\\native"' }, cwd), true);
+    } finally {
+      fs.unlinkSync(literal);
+    }
+  });
+
   it('gates a quoted explicit local path', () => {
     assert.equal(isOpaqueExec({ command: '"./deploy" --target production' }, cwd), true);
   });

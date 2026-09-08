@@ -69,6 +69,11 @@ describe('core: paths on the non-delegable list', () => {
     assert.strictEqual(verdict(`src\\${G}\\sign.js`), 'core');
   });
 
+  it('preserves native core protection when portable separators would escape it', { skip: process.platform === 'win32' }, () => {
+    assert.strictEqual(verdict('bin/..\\README.md'), 'core');
+    assert.strictEqual(verdict('src/gate/..\\..\\README.md'), 'core');
+  });
+
   it('matches a core file that lives outside any core directory', () => {
     assert.strictEqual(verdict('src/home.js'), 'core');
     assert.strictEqual(verdict('src/registration.js'), 'core');

@@ -8,6 +8,8 @@
  * USAGE
  *   node bin/limits-pin.js --stamp    # write/replace the pin from the last src commit
  *   node bin/limits-pin.js --check    # reader-side verdict; exit 1 on divergence
+ *   LOTOR_LIMITS_FILE=/path/to/copy.md node bin/limits-pin.js --check
+ *     Select a scratch log; git resolution remains anchored to this repository.
  *
  * WHY A CLI AND NOT AUTOMATIC: stamping is a claim about verification, and a
  * hook that stamps silently would make the pin say "verified" without anyone
@@ -32,7 +34,9 @@ import { fileURLToPath } from 'node:url';
 import { writePin, readPin, checkPin } from '../src/limits/pin.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const LOG = path.join(REPO, 'KNOWN-LIMITS.md');
+const LOG = process.env.LOTOR_LIMITS_FILE
+  ? path.resolve(process.env.LOTOR_LIMITS_FILE)
+  : path.join(REPO, 'KNOWN-LIMITS.md');
 
 // Resolve the commit the pin should name: the last commit that changed src/.
 // Falls back to HEAD only if `src/` has no history (empty repo edge case).
