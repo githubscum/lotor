@@ -1,17 +1,55 @@
 <!-- known-limits:pin v1
- This file describes commit e8415ed8b533e1c2374193e4d9a03a8a5ff5c675
- stamped 2026-09-07
- subject: limit 35 closed: stale-or-mismatch, replay and approved gate receipts carry sessionId, so all four gated-action shapes a
- body-sha256: b90d7acf87f022e2af27fa5b953cc5f895e6b64c5dd5b3910f988b7844d8f013
+ This file describes commit fa8d1a996f3bc4720c549917e64ce635c19d35d7
+ stamped 2026-09-08
+ subject: fix: isolate limits-pin tests and preserve portable path protection
+ body-sha256: 784d2bb3f879d64464328156d254f87a3c72a12730d1e0d3d9d1683daee13df2
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
 
-
-
 # Known Limits
 
 This document lists the v1 limitations of the receipt layer. Honesty about limits is a feature.
+
+### Current reading guide — 2026-09-08 audit
+
+This document retains historical discoveries and amendments alongside current
+defects. Read the latest dated status together with the qualifications
+below. Earlier incident descriptions remain historical assertions by their
+authors; they are not independent observations by the author of this audit.
+
+The accompanying [entry-by-entry audit](docs/known-limits-audit-2026-09-08.md)
+checks all 73 entries against repository source and regression tests. Its scope
+is current implementation behavior. It does **not** authenticate private session
+transcripts, historical counts, signing events, outside programs, deployed hook
+registration, or the absence of unknown evasions. A matching freshness pin binds
+this text to the named source commit; it does not prove those historical claims.
+
+The following current-state corrections take precedence over older prose below:
+
+| Entries | Current state and remaining limit |
+| --- | --- |
+| 2, 11 | Query-data GET heuristics and implicit protected-push detection are implemented. Ordinary reads remain exempt; unknown encodings, shell semantics and matcher evasions remain possible. See 56 and 57. |
+| 5 | Duplicate-session suppression measures transcript-entry growth. It does not distinguish an equal-length revision of existing input. |
+| 12, 13 | The current parser emits `cost/4`, retaining deduplication and per-model buckets. Flat mixed-model token totals also remain; these are not dollar totals. Earlier `cost/2` and `cost/3` statements describe those versions. |
+| 19 | Removing a grant file revokes the file-backed capability, but a shell tool naming Lotor's home is itself subject to self-mod gating. Direct filesystem access outside the hooks is a different boundary. |
+| 21, 26 | Selected inert commit-message and heredoc prose is stripped before matching. Real protected-path reads and unsupported prose or executable expansions can still match. |
+| 24 | The flag scanner's behavior is a description of this implementation, not an authoritative specification of every underlying CLI's option semantics. |
+| 27, 28 | Variant-denial detection is in the checked source. A grant still binds one exact session; it does not create reusable scheduled-task authority or guarantee unattended approval. |
+| 29, 65 | The CLI compares the last commit touching `src/` and checks the log-body digest. It does not pin all repository files, detect uncommitted source edits in that normal path, or authenticate claims merely by stamping them. The September 1 incident and earlier pins below are historical states. |
+| 30, 43, 73 | Consuming an approval purges sibling tokens for the same canonical request under the nonce lock. The old suggestion to add this purge is implemented. Best-effort deletion and path-only edit binding remain; signing does not bind future edit contents. |
+| 31, 44 | Named scheduling verbs and persistence-file paths are detected. Wrapper programs, unknown persistence mechanisms and runtime effects remain outside this textual check. |
+| 38, 39 | File reconciliation still distinguishes exact, suffix and ambiguous evidence. Candidate command attribution can now use canonical parameter digests through 36; that is not recovery of plaintext targets or unrestricted reconciliation of all commands. |
+| 47 | A verifiable chain bundle can be checked against its head. PAP unpack does not fetch or validate arbitrary memoir URL contents, and provides no availability guarantee. |
+| 51 | Missing enriched fields alone do not authenticate a receipt's age or writer. The schema progression describes this writer; the chain accepts arbitrary supplied payloads (37). |
+| 59 | Header classification remains a pre-execution observation, not a binding to the bytes later executed. Separator portability checks do not eliminate filesystem aliases or time-of-check/time-of-use changes. |
+| 64 | The current session-opening hook calls `buildIdentityAtOpen` and records `observer/2`. The later-looking NARROWED paragraph below refers to an earlier partial state, not today's hook. |
+| 66, 68, 70 | Ingest now includes a post-session child summary when sidecar data is available. Missing child directory and present-empty directory are distinguished by the in-repo reader. This is not interception or enforcement of child tools; the external historical reader and private counts were not independently audited. |
+| 67, 69 | Historical notification totals and external price estimates are unverified here. The current child summary sums tokens and computes no dollar cost. |
+
+The detailed audit states the evidence and qualifications for entries unchanged
+by this table as well. Neither passing fixtures nor a fresh pin establishes
+completeness of live capture or correctness of private historical testimony.
 
 ## 1. Self-attested capture
 
