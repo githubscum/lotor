@@ -214,6 +214,9 @@ export function matcherHashInputs() {
     isSelfModEdit.toString(),
     selfModCommandHit.toString(),
     selfModFragmentsForBase.toString(),
+    // The settings-file classifier decides what an unsigned edit can touch
+    // (KNOWN-LIMITS 57): a change to what it recognizes must move the stamp.
+    claudeSettingsHit.toString(),
     normalizePath.toString(),
     pathContainsFragment.toString(),
     expandBraces.toString(),
@@ -440,7 +443,13 @@ export function matchableCommand(toolInput) {
  */
 function selfModFragmentsForBase(baseDir) {
   return [
-    '.claude/settings.json',
+    // (removed 2026-09-15, KNOWN-LIMITS 57 / listing 15) '.claude/settings.json'
+    // was a literal fragment here, and as a substring it was wrong in both
+    // directions: `.claude/settings.local.json` carries permission rules of
+    // equal power and walked through ungated, while `my.claude/settings.json`
+    // gated on a directory that was never a Claude Code settings directory.
+    // Settings files are classified by claudeSettingsHit() now, the same way
+    // bin/ scripts are classified by shape below.
     // Repo source that decides what the gate permits. This set must stay in
     // step with core-paths.js CORE_DIRS/CORE_FILES (the list a grant may never
     // cover). They drifted: core-paths protected chain, store and grant while
@@ -503,6 +512,57 @@ function selfModFragmentsForBase(baseDir) {
 }
 
 /**
+ * Classify a normalized path or command as naming a Claude Code settings file
+ * that can carry permission rules (KNOWN-LIMITS 57).
+ *
+ * WHY CLASSIFICATION, NOT A SPELLING. The protected list named one literal
+ * spelling, `.claude/settings.json`. Claude Code reads a settings file per
+ * scope, and each scope also has a local variant; an allow or deny rule in
+ * `.claude/settings.local.json` suppresses prompts exactly as the main file
+ * does, so an unsigned edit to it rewrites what the gate permits just as
+ * thoroughly. Measured 2026-09-15 against main: Edit, Write, NotebookEdit and
+ * a shell edit of `.claude/settings.local.json` in the same directory as the
+ * gated `.claude/settings.json` all matched no rule. Same lesson as
+ * KNOWN-LIMITS 34 (a path fragment standing in for a resolved path) and the
+ * 2026-07-26 directory finding: gate the thing, not a remembered name for it.
+ *
+ * Managed (enterprise) settings can carry permission rules too and live
+ * outside a `.claude` directory, so they are matched by their own two-segment
+ * shape rather than by a scope-specific path.
+ *
+ * RESIDUAL, stated honestly: a settings file reached by a copy, rename or
+ * symlink whose FINAL path does not carry the `.claude/settings*.json` shape
+ * is not classified here (a write names its destination, so the ordinary case
+ * is covered); and a non-`.json` sibling such as `settings.local.json.bak` is
+ * a data file, not a settings file, and is deliberately not gated by this
+ * rule.
+ */
+function claudeSettingsHit(text) {
+  if (!text) return false;
+  // `.claude` directory component at any depth, then a settings JSON:
+  // settings.json, settings.local.json, and any settings.<variant>.json.
+  // The terminator is a NEGATIVE assertion (this repo's standing rule since
+  // the 2026-07-24 terminator leak): `.` is deliberately absent from the class
+  // so `settings.local.json.bak` is a different file and does not match, and
+  // the Windows trailing-dot spelling is handled by its own pattern below.
+  if (/(^|[/\\])\.claude[/\\]settings[^/\\\s'"=()]*\.json([\s'"(),;]|$)/i.test(text)) {
+    return true;
+  }
+  // Windows strips trailing dots from a path's last component, so
+  // `...settings.local.json.` names the real settings file (KNOWN-LIMITS 22).
+  // Exactly one trailing dot, and nothing filename-shaped after it.
+  if (/(^|[/\\])\.claude[/\\]settings[^/\\\s'"=()]*\.json\.([\s'"(),;]|$)/i.test(text)) {
+    return true;
+  }
+  // Managed (enterprise) settings: ClaudeCode/managed-settings.json under the
+  // platform's program-data root, on either separator.
+  if (/(^|[/\\])(claudecode|claude-code)[/\\]managed-settings\.json([\s'"(),;]|$)/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Check whether an Edit/Write/NotebookEdit tool_input hits the self-mod rule.
  */
 function isSelfModEdit(toolName, toolInput, baseDir) {
@@ -540,6 +600,12 @@ function isSelfModEdit(toolName, toolInput, baseDir) {
   // this module to the grant module and is a larger change; recorded in
   // KNOWN-LIMITS rather than done here.
   if (/(?<![.\w])bin\/[^/]+\.(js|mjs|cjs|ps1|sh)$/.test(fp)) {
+    return true;
+  }
+
+  // Any Claude Code settings file that can carry permission rules, by
+  // classification rather than by remembered spelling (KNOWN-LIMITS 57).
+  if (claudeSettingsHit(fp)) {
     return true;
   }
 
@@ -705,6 +771,13 @@ function selfModCommandHit(cmd, baseDir) {
   // The lookbehind is the same one the Edit path uses: refuse a preceding '.' or
   // word character so `node_modules/.bin/` and `sbin/` are not swept in.
   if (/(?<![.\w])bin\/[^/\s'"]+\.(js|mjs|cjs|ps1|sh)(?![a-z0-9_-])/i.test(cmdNorm)) return true;
+
+  // Any Claude Code settings file that can carry permission rules, by
+  // classification rather than by remembered spelling (KNOWN-LIMITS 57). The
+  // command-side half: closing only the Edit path would let
+  // `sed -i ... .claude/settings.local.json` rewrite the policy unsigned.
+  if (claudeSettingsHit(cmdNorm)) return true;
+
   return false;
 }
 
