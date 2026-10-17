@@ -82,6 +82,26 @@ function withBuild(result) {
 }
 
 /**
+ * Carry a payload field onto a summary exactly as written.
+ *
+ * KNOWN-LIMITS 74. `sessionId` on a gate row has three states and they are
+ * different facts:
+ *   key absent  the row predates limit 35 (2026-09-07), or its writer never
+ *               sets one
+ *   null        the writer set the key and had no id to put in it
+ *   a string    the session that caused the row
+ * A truthiness check collapses the first two, and omitting the field (what the
+ * gated-action and policy-warn cases did until 2026-09-28) collapses all three
+ * into absent, which is how a session-filtered query came to drop every gate
+ * row a session had. `hasOwn`, so null survives as null and absent stays
+ * absent. JSON.stringify keeps a null and drops an undefined, so the same
+ * distinction reaches the wire.
+ */
+function asWritten(p, key) {
+  return Object.hasOwn(p, key) ? { [key]: p[key] } : {};
+}
+
+/**
  * The chain holds several kinds of entry and they do not share a shape.
  *
  *   (untyped)      the original session receipt. No `type` field, because it
@@ -143,32 +163,50 @@ function summarizeEntry(entry) {
     case 'session-open':
       return {
         ...base,
-        sessionId: p.sessionId,
+        ...asWritten(p, 'sessionId'),
         ...(p.source ? { source: p.source } : {}),
         ...(p.cwd ? { cwd: p.cwd } : {})
       };
 
     case 'gated-action':
-      // There is no rule id on this payload. decision + action + reason is the
-      // whole of what was recorded, and reporting a rule name here would be
-      // inventing one.
+      // decision + action + reason (or approvalNonce, which is not surfaced) is
+      // what the gate records, plus two fields this case used to drop:
+      //   sessionId  every shape since limit 35 (2026-09-07); null when the
+      //              writer had none (a hook call without session_id, or the
+      //              gated_action tool). See asWritten.
+      //   ruleId     every shape since the 2026-08-15 enrichment; null when the
+      //              call came through gated_action rather than a rule. The
+      //              comment here said there was no rule id on this payload,
+      //              which stopped being true on that date.
+      // A row written before a field's date has no key for it and reports none.
       return {
         ...base,
+        ...asWritten(p, 'sessionId'),
+        ...asWritten(p, 'ruleId'),
         ...(p.decision ? { decision: p.decision } : {}),
         ...(p.action ? { action: p.action } : {}),
         ...(p.reason ? { reason: p.reason } : {})
       };
 
     case 'policy-warn':
-      return { ...base, ...(p.ruleId ? { ruleId: p.ruleId } : {}) };
+      // Only the both-layers-permissive warn carries sessionId today; the other
+      // warn shapes have no key and report none.
+      return {
+        ...base,
+        ...asWritten(p, 'sessionId'),
+        ...(p.ruleId ? { ruleId: p.ruleId } : {})
+      };
 
     default:
       // Unknown or future types still report their type and anything from the
       // small set of fields that recur across payloads. Silently dropping a row
-      // would be worse than describing it thinly.
+      // would be worse than describing it thinly. The attempt-ledger's
+      // `ledger-head` rows land here and carry no session id in either
+      // spelling (checked against the live chain 2026-09-28), so none is
+      // reported and no snake_case mapping is invented for one.
       return {
         ...base,
-        ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+        ...asWritten(p, 'sessionId'),
         ...(p.ruleId ? { ruleId: p.ruleId } : {}),
         ...(p.decision ? { decision: p.decision } : {}),
         ...(p.action ? { action: p.action } : {})
@@ -243,7 +281,8 @@ function handleSessionsLive(args) {
 /**
  * Tool handler: query_receipts
  * Returns receipt summaries from the persisted chain (most recent first).
- * Optional filter by sessionId, which now matches session-open rows too.
+ * Optional filter by sessionId, which matches session receipts, session-open,
+ * and gate decisions and warnings that carry the id (KNOWN-LIMITS 74).
  */
 function handleQueryReceipts(args) {
   const { limit, sessionId } = args || {};
@@ -253,9 +292,14 @@ function handleQueryReceipts(args) {
 
   let receipts = entries.map(summarizeEntry);
 
-  // Filter by sessionId if provided. session-open carries it at payload level
-  // and the session receipt carries it under session.id; summarizeEntry has
-  // already normalised both onto `sessionId`, so one comparison covers them.
+  // Filter by sessionId if provided. session-open, gated-action and the
+  // both-layers-permissive policy-warn carry it at payload level and the
+  // session receipt carries it under session.id; summarizeEntry normalises all
+  // of them onto `sessionId`, so one comparison covers them. The filter can
+  // only be as complete as the summary: until 2026-09-28 the gate cases
+  // dropped the field and this returned a session's open and close rows with
+  // none of its denials (KNOWN-LIMITS 74). A gate row written before
+  // 2026-09-07 carries no id and matches no filter; a null id matches none.
   if (sessionId) {
     receipts = receipts.filter(r => r.sessionId === sessionId);
   }
@@ -414,7 +458,7 @@ function createMcpServer() {
               },
               sessionId: {
                 type: 'string',
-                description: 'Filter by specific session ID'
+                description: 'Filter by specific session ID. Matches that session\'s receipts, its open row, and its gate decisions and warnings. Gate decisions recorded before 2026-09-07 carry no session id and never match, so an older session with no gate rows here may still have had some.'
               }
             }
           }

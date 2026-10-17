@@ -2887,3 +2887,84 @@ non-delegable core, and both change what a signature means, so this queues for
 a reviewed sitting. The approve CLI could also warn at signing time when a
 second token for an already-staged file_path is being signed; that is
 `bin/approve.js` and gated too.
+
+## 74. The session filter on `query_receipts` dropped every gate row, so a session read as having done nothing gated
+
+**Status: CLOSED 2026-09-28, branch `query-session-filter`.** `summarizeEntry`
+in `src/mcp/server.js` now carries `sessionId` on the `gated-action` and
+`policy-warn` summaries exactly as written: a key that is absent stays absent,
+`null` stays `null`, a string is the string. The default branch, which carried
+a truthy id and dropped a `null` one, now carries both, and `session-open`
+goes through the same helper. `test/known-limits-74-query-session-filter.test.js`
+puts thirteen rows on a real signed chain (gate rows for two sessions, a
+pre-limit-35 denial with no key, a denial with `null`, warn and egress shapes
+that never carry one, a grant, a future type with `null`) and asserts the
+filter returns exactly the matching rows and each summary shows the field as
+written. Written first, it failed 6 of 9 against the unpatched file, with the
+three controls passing. Non-core: `src/mcp/` is not on the protected list. A
+running MCP server keeps answering from the old code until its client restarts
+it (limit 41).
+
+Found 2026-09-28, reading one session's gate history through
+`query_receipts({ sessionId })`. The session had a Bash denial on the chain at
+seq 24910 (`"no approval token provided"`, with its `sessionId` on the
+payload). The filtered query did not return it. It returned the session's
+`session-open` row and nothing gated, so the session read as having done
+nothing gated.
+
+The mechanism is two functions apart. `handleQueryReceipts` filters the
+summaries, not the payloads (`r.sessionId === sessionId`), and `summarizeEntry`
+built the `gated-action` and `policy-warn` summaries without `sessionId`.
+Limit 35 made every `gated-action` receipt carry the id on 2026-09-07, and the
+pre-tool-use hook had already put it on the `both-layers-permissive` warn;
+this reader picked up neither. The chain was attributable and the view of it
+was not. Absent is not zero, one surface over from where that rule was first
+written down.
+
+Measured on the live chain at the time of the fix (24,936 rows when counted):
+of 969 `gated-action` rows, 142 carry a string `sessionId`, 3 carry `null`, and
+the other 824 carry no key. All 824 were written before limit 35's gate change
+finished landing; the last six are approvals from the 2026-09-07 signing
+sitting itself (seq 17040 to 17091), written while only the no-token denial
+site carried the id (limit 73 is why). Of 16,569 `policy-warn` rows,
+1,710 carry a string id (all the both-layers-permissive shape) and none carry
+`null`. `egress-event`, `grant-use` and the two `kind: 'ledger-head'` rows carry
+no id in either spelling, so no snake_case mapping was added for one.
+`delegation-grant` rows always carry a string; `src/grant/issue.js` refuses to
+build a grant without one.
+
+**Three states, not two, and why the helper uses `Object.hasOwn`.** Key absent
+means the row predates limit 35, or its writer never sets an id. `null` means
+the writer set the key and had nothing to put in it: the hook ran without a
+`session_id`, or the call came through the `gated_action` MCP tool, which
+passes no session. A string is the session that caused the row. A truthiness
+check collapses the first two; omitting the field, which is what the two gate
+cases did, collapses all three. `JSON.stringify` keeps a `null` and drops an
+`undefined`, so the distinction survives to the wire. Neither of the first two
+is filled in: attributing an unkeyed row by timestamp is still refused, for the
+reason limit 35 gives.
+
+**Also fixed in the same case: `ruleId` on `gated-action`.** The case's own
+comment said the payload had no rule id and that reporting one would be
+inventing it. Gate receipts have carried `ruleId` (`null` for a call with no
+rule behind it) since the 2026-08-15 denial enrichment (limit 51). Same shape
+as the `sessionId` gap: a field on the payload, dropped from the summary, next
+to a comment saying it was not there. It is carried as written through the
+same helper, so pre-enrichment rows report none.
+
+**What the filter still cannot tell you.** A gate row written before
+2026-09-07 carries no id and matches no filter, so a filtered query on an older
+session can come back with no gate rows when it had some. The `sessionId`
+parameter's description in the tool listing now says so. That changes the
+`query_receipts` tool definition, so a client that fingerprints tool
+definitions will see it as changed; that is the intended reading.
+
+**Open, same class, not fixed here.** `src/views/since.js`, behind
+`sessions_since`, still routes every `gated-action`, `policy-warn` and
+`egress-event` row into its `unattributed` lists and prints the caveat "Gate
+decisions carry no session id", which has been false for new rows since limit
+35. Limit 35's closing note already names the split it needs: attribute the
+rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
+`docs/receipt-coverage.md`, under "Session attribution for gate decisions",
+makes the same stale claim. Both are non-core and are left for their own change
+so this one stays reviewable.
