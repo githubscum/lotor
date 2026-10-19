@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RUNG_ORDER, observeRungs, reachReport } from '../src/reach/index.js';
+import { RUNG_ORDER, CAPABILITY_RUNGS, observeRungs, reachReport } from '../src/reach/index.js';
 
 function lpEntry(token, logprob, top) {
   return top
@@ -177,4 +177,44 @@ test('12. WO V3-05b: error body that also has message.content and a logprobs arr
 test('RUNG_ORDER is frozen and in spec order', () => {
   assert.deepEqual([...RUNG_ORDER], ['R0', 'R1', 'R3', 'R4']);
   assert.throws(() => { 'use strict'; RUNG_ORDER.push('R5'); });
+});
+
+test('A. pure tool call, empty content: R0 not silently dropped, observed R1 only', () => {
+  const body = {
+    model: 'm',
+    message: {
+      content: '',
+      tool_calls: [{ function: { name: 'f', arguments: '{}' } }]
+    }
+  };
+  const request = { tools: [{}] };
+  const report = reachReport(request, body);
+  assert.deepEqual(report.silentlyDropped, []);
+  assert.deepEqual(report.observed, ['R1']);
+});
+
+test('B. text answer when tools were offered: R1 not silently dropped, still requested', () => {
+  const body = {
+    model: 'm',
+    message: { content: 'answering in text instead of calling a tool' }
+  };
+  const request = { tools: [{}] };
+  const report = reachReport(request, body);
+  assert.deepEqual(report.silentlyDropped, []);
+  assert.ok(report.requested.includes('R1'));
+});
+
+test('C. think/logprobs requested but body has neither: silentlyDropped R3 and R4', () => {
+  const body = {
+    model: 'm',
+    message: { content: 'plain answer, no thinking, no logprobs' }
+  };
+  const request = { think: true, logprobs: true };
+  const report = reachReport(request, body);
+  assert.deepEqual(report.silentlyDropped, ['R3', 'R4']);
+});
+
+test('D. CAPABILITY_RUNGS is frozen and equals R3, R4', () => {
+  assert.deepEqual([...CAPABILITY_RUNGS], ['R3', 'R4']);
+  assert.throws(() => { 'use strict'; CAPABILITY_RUNGS.push('R5'); });
 });

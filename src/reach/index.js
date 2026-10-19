@@ -20,6 +20,10 @@ import crypto from 'node:crypto';
 
 export const RUNG_ORDER = Object.freeze(['R0', 'R1', 'R3', 'R4']);
 
+// Rungs a request switches on and a runtime can withhold; R0/R1 are the
+// model's behavior, never a drop.
+export const CAPABILITY_RUNGS = Object.freeze(['R3', 'R4']);
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -140,7 +144,11 @@ export function observeRungs(body) {
  * `requested` derives from the request object alone; `observed` derives
  * from the response body alone and is identical for the same body
  * regardless of `request`. An error response is loud, not silent, so
- * silentlyDropped is always [] when an error is set.
+ * silentlyDropped is always [] when an error is set. silentlyDropped
+ * only ever contains R3 or R4: those are the capability rungs a caller
+ * switches on and the runtime can silently withhold, while R0 and R1
+ * are the model's behavior (not calling a tool, not talking) and are
+ * never counted as a drop.
  * @param {object|null} request - the request object that was sent (may be null)
  * @param {object|null} body - the parsed response body
  */
@@ -159,7 +167,7 @@ export function reachReport(request, body) {
 
   const silentlyDropped = obs.error !== null
     ? []
-    : requested.filter(r => !obs.rungs[r]);
+    : requested.filter(r => CAPABILITY_RUNGS.includes(r) && !obs.rungs[r]);
 
   return {
     model: obs.model,
