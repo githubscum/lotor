@@ -3004,3 +3004,39 @@ transcript's `cwd` can change mid-session, and whether file-history paths stay
 relative to the original cwd after such a change is unconfirmed. A
 file-history line that precedes every `cwd`-carrying line stays relative and
 unmerged.
+
+## 76. A refused write was listed as touched, so an attempt read as a change
+
+**Status: CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.** The parser
+now records an Edit/Write attempt and settles it against the tool_result that
+answers it. A touched entry from an attempt carries `outcome`: `ok` when the
+harness answered with a success, `error` when it answered with an error
+(`is_error: true`), `unknown` when no answer ever arrived (the session died
+mid-turn). `ok` is sticky: one landed write is a write, whatever later
+attempts to the same path did. Entries added by file-history carry no
+`outcome` key, and `via` is unchanged. The since-view keeps its path list but
+adds `touchedRefused`, marks a refused path with `(refused)` where the reader
+is looking, and ships a caveat saying what a refused marker does and does not
+mean. Receipts written before this change carry no `outcome` and render
+exactly as they did.
+
+Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
+own hook files was refused. Seq 36204 is that session's receipt, and it lists
+the hook file under `touched`. The file was unchanged on disk. The reader of
+the chain takes `touched` as a write; the transcript recorded only an attempt,
+and the attempt was refused by the gate.
+
+The mechanism is order. `parseSession` (src/parser/index.js) added a path to
+`touched` when it saw the tool_use, before and regardless of the tool_result
+that answers it. The refusal was on the chain the whole time: `failed` carried
+the error digest from the same tool_result. Nothing joined the two records, so
+a refused write and a landed write were indistinguishable in every view built
+on `touched`.
+
+**What to doubt.** `is_error` is the harness's word, self-attested, and an
+`ok` Edit can still be a no-op (the same bytes rewritten), which no parser can
+see; `ok` means the harness answered success, not that the file changed. A
+refused path is reported because the attempt happened, not because a change
+happened. Receipts written before this change carry no `outcome` and must be
+read as "attempted": absent means unrecorded, never "it landed". Non-core:
+src/parser/ and src/views/ are not on the protected list.

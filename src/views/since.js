@@ -83,7 +83,15 @@ export function sinceReport(entries, opts = {}) {
         opened: null, closed: null,
         source: null, cwd: null, model: null,
         turns: null, toolCalls: null, failures: null, touchedCount: null,
+        // touchedRefused (limit 76, closed 2026-10-19): touched items whose
+        // receipt says the harness returned an error for the attempt. null
+        // when no receipt was written; 0 means a receipt existed and refused
+        // nothing it can show, so the two states stay apart.
+        touchedRefused: null,
         touched: [],
+        // Paths whose receipt item carried outcome 'error', kept beside the
+        // bare path list so the render can mark the refusal in place.
+        refusedPaths: [],
         receiptSeq: null
       });
     }
@@ -133,7 +141,20 @@ export function sinceReport(entries, opts = {}) {
           for (const t of p.touched) {
             const pth = typeof t === 'string' ? t : t?.path;
             if (pth && !s.touched.includes(pth)) s.touched.push(pth);
+            // The receipt's own word (limit 76): outcome 'error' means the
+            // harness returned an error for that attempt. Old receipts carry
+            // no outcome key and refuse nothing a reader can see.
+            if (pth && typeof t === 'object' && t?.outcome === 'error') {
+              if (!s.refusedPaths.includes(pth)) s.refusedPaths.push(pth);
+            } else if (pth && s.refusedPaths.includes(pth)) {
+              // A later receipt answering the same path with a landed write
+              // (any outcome other than 'error', including none) un-refuses
+              // it: one landed write is a write.
+              s.refusedPaths.splice(s.refusedPaths.indexOf(pth), 1);
+            }
           }
+          s.touchedRefused = (s.touchedRefused ?? 0) +
+            p.touched.filter(t => typeof t === 'object' && t?.outcome === 'error').length;
         }
         break;
       }
@@ -199,7 +220,8 @@ export function sinceReport(entries, opts = {}) {
     caveats: [
       'Receipts carry which named tools ran and a digest of their parameters. They never carry intent.',
       'Capture is self-attested. An empty report means nothing was recorded, not that nothing happened.',
-      'Gate decisions carry no session id and are listed unattributed rather than guessed at by time.'
+      'Gate decisions carry no session id and are listed unattributed rather than guessed at by time.',
+      'A touched path is a write the transcript recorded an attempt at; a path marked refused means the harness returned an error for every attempt.'
     ]
   };
 }
@@ -239,10 +261,17 @@ export function renderSince(report) {
       if (s.toolCalls !== null) bits.push(`${s.toolCalls} tool calls`);
       if (s.turns !== null) bits.push(`${s.turns} turns`);
       if (s.failures) bits.push(`${s.failures} failures`);
-      if (s.touchedCount !== null) bits.push(`${s.touchedCount} files touched`);
+      if (s.touchedCount !== null) {
+        bits.push(s.touchedRefused > 0
+          ? `${s.touchedCount} files touched (${s.touchedRefused} refused)`
+          : `${s.touchedCount} files touched`);
+      }
       L.push(`    work        ${bits.length ? bits.join(', ') : 'no close receipt, so no counts'}`);
       if (s.touched && s.touched.length) {
-        const show = s.touched.slice(0, 6);
+        // Mark the refusal on the path itself (limit 76): a reader scanning
+        // the paths must not have to cross-check the count line.
+        const refuse = pth => (s.refusedPaths?.includes(pth) ? `${pth} (refused)` : pth);
+        const show = s.touched.slice(0, 6).map(refuse);
         L.push(`    touched     ${show[0]}`);
         for (const t of show.slice(1)) L.push(`                ${t}`);
         if (s.touched.length > show.length) {
