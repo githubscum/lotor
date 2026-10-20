@@ -2661,6 +2661,19 @@ built rather than assumed.
 answered. Limit 53 is why a detector that cannot explain itself is still worth
 having, and why this one is not yet one.
 
+**Repo reader, 2026-10-19.** `src/ingest/subagents.js` now cross-checks the
+parent's own dispatch count before it concedes that no subagents ran. The
+function `countParentDispatches` reads the parent transcript and counts its
+`Task` and `Agent` tool calls, so a missing `<sessionId>/subagents/` directory
+whose parent plainly dispatched now returns `sidecarMissing: true` with
+`count: null` and `parentDispatches` recorded, instead of the silent null that
+read as "no subagents ran". When the directory exists, the summary lists
+`unmatchedEntries`: the sidecar entry names outside the expected
+`agent-*.jsonl` pattern, captured by name rather than dropped behind the
+count. This narrows the false zero to one remaining case: the dispatch tool
+itself renamed. If the harness stops calling the dispatch `Task` or `Agent`,
+the parent count reads zero and the absence is still unnoticed.
+
 ## 69. Subagent cost is derived rather than reported, and the derivation carries a price table's staleness
 
 **Found 2026-09-02**, by tracing which inputs produce the dollar figures.

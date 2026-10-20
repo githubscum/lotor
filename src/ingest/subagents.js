@@ -148,7 +148,8 @@ function summarizeChild(file, basename) {
  * Collect every child transcript beside a parent transcript.
  *
  * @param {string} transcriptPath - Path to the parent <sessionId>.jsonl
- * @returns {{found: boolean, dir: string, children: Array, unreadable: Array}}
+ * @returns {{found: boolean, dir: string, children: Array, unreadable: Array,
+ *            unmatched: Array}}
  *
  * The found:false / found:true-with-children:[] split is load-bearing:
  *   - found:false  => there is no subagents directory at all. The parent
@@ -156,6 +157,10 @@ function summarizeChild(file, basename) {
  *     OMIT the field, not record a zero.
  *   - found:true, children:[] => the directory exists and held no readable
  *     child. That is a real, recorded zero, distinct from "absent".
+ *
+ * `unmatched` lists the directory entry names that do not match the expected
+ * `agent-*.jsonl` pattern. It is a capture of names, not a judgment: a renamed
+ * or re-shaped sidecar layout lands here instead of vanishing behind a zero.
  */
 function collectSubagents(transcriptPath) {
   const dir = path.join(
@@ -168,20 +173,21 @@ function collectSubagents(transcriptPath) {
   try {
     stat = fs.statSync(dir);
   } catch (_) {
-    return { found: false, dir, children: [] };
+    return { found: false, dir, children: [], unreadable: [], unmatched: [] };
   }
   if (!stat.isDirectory()) {
-    return { found: false, dir, children: [] };
+    return { found: false, dir, children: [], unreadable: [], unmatched: [] };
   }
 
   let entries;
   try {
     entries = fs.readdirSync(dir);
   } catch (_) {
-    return { found: false, dir, children: [] };
+    return { found: false, dir, children: [], unreadable: [], unmatched: [] };
   }
 
   const files = entries.filter(n => /^agent-.*\.jsonl$/.test(n)).sort();
+  const unmatched = entries.filter(n => !/^agent-.*\.jsonl$/.test(n)).sort();
   const children = [];
   const unreadable = [];
   for (const name of files) {
@@ -193,25 +199,104 @@ function collectSubagents(transcriptPath) {
     }
   }
 
-  return { found: true, dir, children, unreadable };
+  return { found: true, dir, children, unreadable, unmatched };
+}
+
+/**
+ * Count dispatch tool calls in the parent transcript itself.
+ *
+ * Reads the parent JSONL line by line and counts assistant rows whose
+ * message.content array holds an item with type 'tool_use' and name 'Task'
+ * or 'Agent'. This is a capture of what the parent's own rows say, not a
+ * judgment about what they mean: it is the cross-check that lets a caller
+ * tell "the parent dispatched children" from "the sidecar dir is gone".
+ *
+ * Malformed lines are skipped without counting as anything. An unreadable
+ * parent file yields null, so a caller can omit the field rather than guess.
+ *
+ * @param {string} transcriptPath - Path to the parent <sessionId>.jsonl
+ * @returns {number|null} dispatch count, or null when the file is unreadable
+ */
+function countParentDispatches(transcriptPath) {
+  let text;
+  try {
+    text = fs.readFileSync(transcriptPath, 'utf-8');
+  } catch (_) {
+    return null;
+  }
+
+  let count = 0;
+  for (const raw of text.split('\n')) {
+    if (raw.length === 0) continue;
+
+    let obj;
+    try {
+      obj = JSON.parse(raw);
+    } catch (_) {
+      continue;
+    }
+
+    const msg = obj && typeof obj === 'object' ? obj.message : null;
+    const content = msg && typeof msg === 'object' ? msg.content : null;
+    if (!Array.isArray(content)) continue;
+
+    for (const item of content) {
+      if (
+        item && typeof item === 'object' &&
+        item.type === 'tool_use' &&
+        (item.name === 'Task' || item.name === 'Agent')
+      ) {
+        count++;
+      }
+    }
+  }
+  return count;
 }
 
 /**
  * Produce a receipt-bindable subagents summary for a parent transcript.
  *
- * Returns null when no subagents directory exists at all, so a caller can
- * omit the field rather than record a false zero. Never computes dollars; a
- * price table, when supplied, is only passed through as a date string.
+ * When no subagents directory exists and the parent's own rows dispatched no
+ * Task/Agent calls, returns null, so a caller can omit the field rather than
+ * record a false zero. When the directory is missing but the parent plainly
+ * dispatched, it returns a summary that says so (`sidecarMissing: true`,
+ * `count: null`, `parentDispatches`) instead of a silent null: the harness
+ * may have renamed the directory or the file pattern, and a bare zero would
+ * read as "no subagents ran".
+ *
+ * When the directory exists, the summary adds `parentDispatches` (the parent's
+ * own dispatch count, omitted when the parent file was unreadable) and
+ * `unmatchedEntries` (sidecar entry names outside the expected pattern). Both
+ * are counts and names only; no field interprets intent.
+ *
+ * Never computes dollars; a price table, when supplied, is only passed through
+ * as a date string.
  *
  * @param {string} transcriptPath - Path to the parent <sessionId>.jsonl
  * @param {{priceTableDate?: string}} [opts]
  */
 function summarizeSubagents(transcriptPath, opts = {}) {
   const collected = collectSubagents(transcriptPath);
+  const dispatched = countParentDispatches(transcriptPath);
 
-  // No sidecar dir => null: the caller omits the field entirely rather than
-  // recording a false zero. A present-but-empty dir returns count 0 below.
-  if (!collected.found) return null;
+  // No sidecar dir and no parent dispatches => null: the caller omits the
+  // field entirely rather than recording a false zero. A present-but-empty
+  // dir returns count 0 below. A missing dir with parent dispatches on
+  // record is a disagreement worth surfacing, not a null to hide.
+  if (!collected.found) {
+    if (dispatched > 0) {
+      return {
+        schema: 'subagents/1',
+        count: null,
+        derived: true,
+        source: 'transcript-sidecar',
+        sidecarMissing: true,
+        parentDispatches: dispatched,
+        dir: collected.dir
+      };
+    }
+    return null;
+  }
 
   const totals = {
     inputTokens: 0,
@@ -235,8 +320,12 @@ function summarizeSubagents(transcriptPath, opts = {}) {
     source: 'transcript-sidecar',
     totals,
     children: collected.children,
-    unreadable: collected.unreadable
+    unreadable: collected.unreadable,
+    unmatchedEntries: collected.unmatched
   };
+
+  // Omitted, not zeroed, when the parent file was unreadable.
+  if (dispatched !== null) out.parentDispatches = dispatched;
 
   if (opts && typeof opts.priceTableDate === 'string' && opts.priceTableDate.length > 0) {
     out.priceTableDate = opts.priceTableDate;
@@ -245,4 +334,4 @@ function summarizeSubagents(transcriptPath, opts = {}) {
   return out;
 }
 
-export { collectSubagents, summarizeSubagents };
+export { collectSubagents, countParentDispatches, summarizeSubagents };

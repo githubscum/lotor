@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { collectSubagents, summarizeSubagents } from '../src/ingest/subagents.js';
+import { collectSubagents, countParentDispatches, summarizeSubagents } from '../src/ingest/subagents.js';
 
 /**
  * subagent transcript ingest (WO-TRACE-BRIDGE-01).
@@ -12,7 +12,11 @@ import { collectSubagents, summarizeSubagents } from '../src/ingest/subagents.js
  * These tests pin the found:false / count:0 distinction: a missing sidecar
  * directory is null/omitted, a present-but-empty one is a real zero. They
  * also pin defensive summing — missing or non-finite usage sub-fields
- * contribute 0 and never propagate NaN into a receipt total.
+ * contribute 0 and never propagate NaN into a receipt total — and the
+ * parent-dispatch cross-check (WO-LIMIT68-FALSE-ZERO): a parent that plainly
+ * dispatched Task/Agent calls must never collapse into a silent null when its
+ * sidecar dir is missing, and unmatched sidecar entries must be captured by
+ * name rather than dropped behind a count.
  */
 
 let tmp;
@@ -49,6 +53,20 @@ function assistantRow(over = {}) {
         cache_creation_input_tokens: 10,
         cache_read_input_tokens: 200
       }
+    },
+    ...over
+  };
+}
+
+/** A parent-side assistant row that dispatches a subagent via `toolName`. */
+function dispatchRow(toolName, over = {}) {
+  return {
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'tu-1', name: toolName, input: {} }
+      ]
     },
     ...over
   };
@@ -241,5 +259,79 @@ describe('ingest: subagent sidecar transcripts', () => {
 
     const withEmpty = summarizeSubagents(transcriptPath, { priceTableDate: '' });
     assert.ok(!('priceTableDate' in withEmpty), 'an empty priceTableDate must not be included');
+  });
+
+  it('parent dispatched 2 Task calls, no dir -> sidecarMissing summary, not null', () => {
+    const transcriptPath = path.join(tmp, 'dispatched-missing.jsonl');
+    writeJsonl(transcriptPath, [
+      dispatchRow('Task', { sessionId: 'parent-d' }),
+      dispatchRow('Task', { sessionId: 'parent-d' })
+    ]);
+    // Deliberately do not create the subagents directory.
+
+    const summary = summarizeSubagents(transcriptPath);
+    assert.ok(summary !== null, 'parent dispatches with a missing sidecar dir must not be a silent null');
+    assert.strictEqual(summary.schema, 'subagents/1');
+    assert.strictEqual(summary.count, null);
+    assert.strictEqual(summary.derived, true);
+    assert.strictEqual(summary.source, 'transcript-sidecar');
+    assert.strictEqual(summary.sidecarMissing, true);
+    assert.strictEqual(summary.parentDispatches, 2);
+    assert.strictEqual(summary.dir, subagentsDir(transcriptPath));
+  });
+
+  it('parent dispatched 0, no dir -> null (unchanged behavior)', () => {
+    const transcriptPath = path.join(tmp, 'nodispatch-missing.jsonl');
+    // A parent row with no tool_use at all still proves the file is read.
+    writeJsonl(transcriptPath, [
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'plain reply' }] } }
+    ]);
+
+    const collected = collectSubagents(transcriptPath);
+    assert.strictEqual(collected.found, false);
+    assert.strictEqual(countParentDispatches(transcriptPath), 0);
+    assert.strictEqual(summarizeSubagents(transcriptPath), null);
+  });
+
+  it('dir holds agent-x.jsonl plus child-y.jsonl (renamed layout) -> unmatchedEntries captured', () => {
+    const transcriptPath = path.join(tmp, 'renamed-layout.jsonl');
+    const dir = subagentsDir(transcriptPath);
+    fs.mkdirSync(dir, { recursive: true });
+    writeJsonl(path.join(dir, 'agent-x.jsonl'), [
+      assistantRow({ agentId: 'x', requestId: 'x-1', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } })
+    ]);
+    // A child under the renamed pattern: read as data, never counted as a child.
+    fs.writeFileSync(
+      path.join(dir, 'child-y.jsonl'),
+      line(assistantRow({ agentId: 'y', requestId: 'y-1' })) + '\n',
+      'utf-8'
+    );
+
+    const summary = summarizeSubagents(transcriptPath);
+    assert.strictEqual(summary.count, 1);
+    assert.deepStrictEqual(summary.unmatchedEntries, ['child-y.jsonl']);
+    // The parent transcript does not exist here, so parentDispatches must be
+    // omitted rather than guessed at.
+    assert.ok(!('parentDispatches' in summary), 'parentDispatches must be omitted when the parent file was unreadable');
+  });
+
+  it("parent uses tool name 'Agent' -> counted", () => {
+    const transcriptPath = path.join(tmp, 'agent-named.jsonl');
+    writeJsonl(transcriptPath, [dispatchRow('Agent')]);
+
+    assert.strictEqual(countParentDispatches(transcriptPath), 1);
+
+    // 1 dispatch and no sidecar dir -> the sidecarMissing summary carries it.
+    const summary = summarizeSubagents(transcriptPath);
+    assert.strictEqual(summary.sidecarMissing, true);
+    assert.strictEqual(summary.parentDispatches, 1);
+  });
+
+  it('malformed parent lines are skipped; valid dispatch rows still counted', () => {
+    const transcriptPath = path.join(tmp, 'parent-malformed.jsonl');
+    const content = line(dispatchRow('Task')) + '\n' + 'this is not json\n' + '{ "broken":\n' + line(dispatchRow('Agent')) + '\n';
+    fs.writeFileSync(transcriptPath, content, 'utf-8');
+
+    assert.strictEqual(countParentDispatches(transcriptPath), 2);
   });
 });
