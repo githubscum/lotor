@@ -2005,6 +2005,14 @@ reader cannot tell from one receipt whether the model had zero thoughts or
 the channel was omitted. The honest reading of an absent thought layer is
 "unrecorded," never "no thoughts."
 
+**Text view, 2026-10-20.** Until this date the rendered session receipt said
+nothing about the thought channel at all, so the distinction above lived only
+in the parser's comments. `renderSessionReceipt` now prints a THOUGHT CHANNEL
+section: a block count and total length when blocks exist, and `(unrecorded)`
+with the never-"no thoughts" note when the field is absent or empty. It prints
+no digests and no text. The limit itself is unchanged: the view states the
+ambiguity, it does not resolve it.
+
 ## 55. `transcriptHash` binds the receipt to a file, not the file to the whole session
 
 The digest proves which transcript bytes the session-end receipt was made

@@ -235,6 +235,28 @@ function renderSessionReceipt(receiptPayload) {
   lines.push(`  Note: ${cost?.note || 'tokens only; no USD in source'}`);
   lines.push('');
 
+  // Thought channel (KNOWN-LIMITS 54). The parser writes thinkingBlocks only
+  // when at least one non-empty thinking block exists; when none exists the
+  // field is ABSENT (never an empty array). Absent means "unrecorded", never
+  // "no thoughts". Digests and full thinking text never enter the view.
+  lines.push('─'.repeat(60));
+  lines.push('THOUGHT CHANNEL');
+  lines.push('─'.repeat(60));
+  const thinkingBlocks = session?.thinkingBlocks;
+  if (Array.isArray(thinkingBlocks) && thinkingBlocks.length > 0) {
+    const totalLength = thinkingBlocks.reduce(
+      (sum, b) => sum + (typeof b?.length === 'number' ? b.length : 0),
+      0
+    );
+    lines.push(`  Stated-reasoning blocks: ${thinkingBlocks.length}`);
+    lines.push(`  Total length (chars):    ${totalLength}`);
+    lines.push('  Note: self-report; the record shows what was emitted, not what was computed');
+  } else {
+    lines.push('  (unrecorded)');
+    lines.push('  Note: no thinking blocks on this receipt; the channel was quiet or omitted, never read as "no thoughts"');
+  }
+  lines.push('');
+
   // Failures are shown loudly
   lines.push('─'.repeat(60));
   lines.push('FAILURES');
