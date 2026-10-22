@@ -77,7 +77,14 @@ const GRANTABLE = Object.freeze({
   // in the gate imports it. If reach is ever used to decide what a model may
   // touch (the spec's sensitive-material proposal), that is a policy change
   // and this directory moves to CORE_DIRS in the same signed change.
-  reach: 'pure functions over a model response; reports reach, cannot change what is permitted'
+  reach: 'pure functions over a model response; reports reach, cannot change what is permitted',
+  // V3-04 (2026-10-22). Same class as ingest: reads the transcript forward
+  // from a cursor and appends reasoning-step receipts through the store. It
+  // decides no rule, holds no key, and cannot widen what the gate permits.
+  // PROPOSED in the V3-04 PR; the owner keeps it here or moves it to
+  // CORE_DIRS at the signing sitting. An edit to it can still mislead a
+  // reader of R3, the same residual risk views and ingest carry.
+  reasoning: 'reads transcripts into the store (R3 per step); no authority over enforcement'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */
