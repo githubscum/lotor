@@ -72,6 +72,8 @@ function parseSession(jsonlText, opts = {}) {
   // Each line carries a full, byte-identical copy of message.usage, so we
   // accumulate cost.* only the first time we see a given usage key.
   const seenUsageKeys = new Set();
+  // Lookup side of cost.byModel, keyed by the model string (see below).
+  const byModelBuckets = new Map();
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -97,17 +99,27 @@ function parseSession(jsonlText, opts = {}) {
           // Per-model breakdown. A message with no model field lands in the
           // "unknown" bucket rather than being dropped; a sum across buckets
           // is intentionally not produced (see KNOWN-LIMITS #13).
-          const modelKey = entry.message.model || 'unknown';
-          if (!cost.byModel[modelKey]) {
-            cost.byModel[modelKey] = {
+          //
+          // The key is whatever the runtime wrote, so it can be "__proto__"
+          // or "constructor": buckets are looked up in a Map and published
+          // as OWN properties, never read or assigned through the plain
+          // object, which would land on a shared builtin (PR #70 review F1).
+          // String() keeps the old coercion for a non-string model value.
+          const modelKey = String(entry.message.model || 'unknown');
+          let bucket = byModelBuckets.get(modelKey);
+          if (!bucket) {
+            bucket = {
               inputTokens: 0,
               outputTokens: 0,
               cacheCreationTokens: 0,
               cacheReadTokens: 0,
               messages: 0
             };
+            byModelBuckets.set(modelKey, bucket);
+            Object.defineProperty(cost.byModel, modelKey, {
+              value: bucket, enumerable: true, writable: true, configurable: true
+            });
           }
-          const bucket = cost.byModel[modelKey];
           bucket.inputTokens += input;
           bucket.outputTokens += output;
           bucket.cacheCreationTokens += cacheCreate;

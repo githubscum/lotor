@@ -6,7 +6,7 @@ import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
 import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
-import { measureCloseCertificate, attachOpenReference, REACH_SCHEMA, UNRECORDED } from '../reach/certificate.js';
+import { measureCloseCertificate, failedCloseCertificate, attachOpenReference } from '../reach/certificate.js';
 
 /**
  * src/ingest/index.js
@@ -89,13 +89,16 @@ function ingestSession(jsonlText, opts = {}) {
   // the chain itself. See src/reach/certificate.js.
   //
   // A measurement failure must never cost the session its receipt, and must
-  // not read as a measurement either: it is recorded as one that failed, and
-  // checkCertificate refuses it (no rungs), so no reader can rely on it.
+  // not read as a measurement either: the certificate's rung fields say
+  // "measurement-failed" (never "unrecorded", which means measured and
+  // found nothing), it carries an error code and a digest but no exception
+  // text, and checkCertificate refuses it. No production reader runs
+  // checkCertificate yet; the rung fields carry the failure on their own.
   let reachMeasured;
   try {
     reachMeasured = measureCloseCertificate(receiptSummary, jsonlText);
   } catch (e) {
-    reachMeasured = { schema: REACH_SCHEMA, phase: 'close', deepestRecorded: UNRECORDED, failed: String(e && e.message || e).slice(0, 200) };
+    reachMeasured = failedCloseCertificate(e);
   }
 
   // Atomic check-then-append under the chain lock. buildPayload runs

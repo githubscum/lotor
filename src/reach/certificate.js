@@ -66,7 +66,19 @@
  *   itself (KNOWN-LIMITS 1). R3 here is the thinking the runtime chose to
  *   expose, which V3-01 could not establish is the raw trace rather than a
  *   vendor summary; it is evidence to read, not testimony.
+ *
+ * NO TRANSCRIPT STRING IS EVER AN OBJECT KEY
+ *   A model id is whatever the runtime wrote, so it can be "__proto__" or
+ *   "constructor". Used as a key on a plain object, such a string reads or
+ *   writes the shared builtins (review F1, PR #70). Tallies are kept in Maps,
+ *   and the certificate carries per-model reach as a LIST of entries with the
+ *   id as a value. A keyed object would not be safe even with a null
+ *   prototype: the chain canonicaliser rebuilds objects by assignment, which
+ *   drops an own "__proto__" key from the hash, so that entry could be edited
+ *   without breaking verification (KNOWN-LIMITS, queued core patch).
  */
+
+import crypto from 'node:crypto';
 
 /** Schema marker, so a later shape change is visible rather than silent. */
 export const REACH_SCHEMA = 'reach/1';
@@ -76,6 +88,22 @@ export const RUNGS = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
 
 export const UNRECORDED = 'unrecorded';
 export const NOT_YET_MEASURED = 'not-yet-measured';
+
+/**
+ * model.id on a close certificate when the transcript carried more than one
+ * model. deepestRecorded is the session's union, so pairing it with any one
+ * model's id would state that model reached a rung it may not have. With
+ * several models the per-model entries in byModel are the answer, and
+ * model.lastSeen still says which model wrote last.
+ */
+export const MULTIPLE_MODELS = 'multiple';
+
+/**
+ * The rung fields of a close certificate whose measurement threw. Distinct
+ * from "unrecorded" on purpose: "unrecorded" is a measurement that found
+ * nothing, this is a measurement that never ran.
+ */
+export const MEASUREMENT_FAILED = 'measurement-failed';
 
 const STATUSES = new Set(['recorded', 'observed', UNRECORDED]);
 
@@ -105,6 +133,11 @@ function cleanId(value) {
   const trimmed = raw.trim();
   if (trimmed === '') return null;
   return trimmed.length > MAX_ID_LENGTH ? trimmed.slice(0, MAX_ID_LENGTH) : trimmed;
+}
+
+/** A transcript string field, trimmed and capped; anything else is null. */
+function cleanString(value) {
+  return typeof value === 'string' ? cleanId(value) : null;
 }
 
 // ---------- open half ----------
@@ -160,9 +193,11 @@ function emptyTally() {
  */
 function observeTranscript(jsonlText) {
   const overall = emptyTally();
-  const byModel = {};
-  const models = [];
+  // Keyed by a transcript-controlled string, so a Map, never a plain object.
+  // Insertion order is first-seen order.
+  const byModel = new Map();
   const toolModel = new Map();
+  let lastModel = null;
 
   const lines = typeof jsonlText === 'string' ? jsonlText.split('\n') : [];
   for (const l of lines) {
@@ -173,10 +208,14 @@ function observeTranscript(jsonlText) {
     if (!msg || typeof msg !== 'object') continue;
 
     if (msg.role === 'assistant') {
-      // Same bucket key as cost.byModel, so the two join.
-      const model = typeof msg.model === 'string' && msg.model ? msg.model : 'unknown';
-      if (!byModel[model]) { byModel[model] = emptyTally(); models.push(model); }
-      const tally = byModel[model];
+      // Same bucket name as cost.byModel ("unknown" when absent), so the two
+      // join for any id up to MAX_ID_LENGTH; longer ids are capped here
+      // because this copy lands on the chain once per receipt.
+      const measured = cleanString(msg.model);
+      if (measured) lastModel = measured;
+      const model = measured || 'unknown';
+      let tally = byModel.get(model);
+      if (!tally) { tally = emptyTally(); byModel.set(model, tally); }
       const bump = r => { overall[r]++; tally[r]++; };
 
       if (typeof msg.content === 'string') {
@@ -195,11 +234,14 @@ function observeTranscript(jsonlText) {
           }
         }
       }
-      // R4 counts once per message that carried logprobs anywhere on the
-      // response side: the message, the line, or a content item.
+      // R4 counts once per message that carried logprobs on the response
+      // side: the message itself or one of its content items. A logprobs
+      // field on the transcript LINE is not read: from the shape alone it
+      // cannot be told apart from a request echo, and an unreadable field
+      // must under-claim, never over-claim.
       const itemLogprobs = Array.isArray(msg.content)
         && msg.content.some(i => i && typeof i === 'object' && nonEmpty(i.logprobs));
-      if (nonEmpty(msg.logprobs) || nonEmpty(entry.logprobs) || itemLogprobs) bump('R4');
+      if (nonEmpty(msg.logprobs) || itemLogprobs) bump('R4');
       // R5 and R6 are never read from a transcript: no runtime Lotor sits on
       // exposes them there, and a field named `activations` in a message is a
       // claim, not a capture. They stay unrecorded until a capture path exists.
@@ -207,13 +249,13 @@ function observeTranscript(jsonlText) {
       for (const item of msg.content) {
         if (item && item.type === 'tool_result') {
           overall.R2++;
-          const model = toolModel.get(item.tool_use_id);
-          if (model && byModel[model]) byModel[model].R2++;
+          const caller = byModel.get(toolModel.get(item.tool_use_id));
+          if (caller) caller.R2++;
         }
       }
     }
   }
-  return { overall, byModel, models };
+  return { overall, byModel, lastModel };
 }
 
 /**
@@ -268,34 +310,40 @@ export function measureCloseCertificate(summary, jsonlText) {
   for (const r of Object.keys(RECORD_FIELDS)) recordedCounts[r] = RECORD_FIELDS[r].count(summary);
 
   const rungs = rungMap(seen.overall, recordedCounts, null);
-  const byModel = {};
-  for (const m of seen.models) {
-    const mr = rungMap(seen.byModel[m], null, rungs);
-    byModel[m] = {
+  const models = [...seen.byModel.keys()].sort();
+  // Per-model reach as a list, sorted by id: the id is a value, never a key
+  // (see the header). One entry per model the transcript carried.
+  const byModel = models.map(m => {
+    const mr = rungMap(seen.byModel.get(m), null, rungs);
+    return {
+      model: m,
       deepestRecorded: deepest(mr, ['recorded']),
       deepestObserved: deepest(mr, ['recorded', 'observed']),
       rungs: mr
     };
-  }
+  });
 
-  const measuredModel = cleanId(summary?.session?.model);
-  const version = summary?.session?.version;
+  const version = cleanString(summary?.session?.version);
   return {
     schema: REACH_SCHEMA,
     phase: 'close',
-    // The last model the runtime wrote into its own messages, plus every
-    // model seen. Self-attested by the runtime, measured by Lotor.
+    // Self-attested by the runtime, measured by Lotor, from the same pass
+    // as the rungs. `id` stands beside deepestRecorded, so it names a model
+    // only when there was exactly one; with several it says so, and the
+    // per-model answer is in byModel. `lastSeen` is the last model the
+    // runtime wrote into its own messages, whatever the count.
     model: {
-      id: measuredModel || UNRECORDED,
+      id: models.length > 1 ? MULTIPLE_MODELS : (seen.lastModel || UNRECORDED),
+      lastSeen: seen.lastModel || UNRECORDED,
       basis: 'transcript-messages',
-      models: seen.models.slice().sort()
+      models
     },
     // Filled from the session's open receipt by attachOpenReference, inside
     // the chain lock. Until then, and when there is no open, it says so.
     runtime: {
       harness: UNRECORDED,
       basis: 'unknown',
-      harnessVersion: typeof version === 'string' && version && version !== 'unknown' ? version : UNRECORDED
+      harnessVersion: version && version !== 'unknown' ? version : UNRECORDED
     },
     opened: UNRECORDED,
     lotorBuild: { see: 'session-open observer' },
@@ -303,6 +351,36 @@ export function measureCloseCertificate(summary, jsonlText) {
     deepestRecorded: deepest(rungs, ['recorded']),
     deepestObserved: deepest(rungs, ['recorded', 'observed']),
     byModel
+  };
+}
+
+/**
+ * Close certificate for a measurement that threw. The session keeps its
+ * receipt; the certificate says the measurement failed, in the rung fields
+ * themselves, so a reader that never runs checkCertificate still cannot
+ * mistake it for "measured, nothing found".
+ *
+ * Nothing of the exception's text reaches the chain: messages in this
+ * codebase can embed the offending value, and the value here is transcript
+ * content. Only a code (the error's own code or name, when it is a plain
+ * identifier) and a digest of the message, enough to match a local log.
+ */
+export function failedCloseCertificate(err) {
+  const ident = v => (typeof v === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(v) ? v : null);
+  const code = ident(err?.code) || (err instanceof Error ? ident(err.name) : null) || 'Error';
+  let text;
+  try { text = String(err && typeof err === 'object' && 'message' in err ? err.message : err); } catch (_) { text = ''; }
+  return {
+    schema: REACH_SCHEMA,
+    phase: 'close',
+    status: MEASUREMENT_FAILED,
+    rungs: MEASUREMENT_FAILED,
+    deepestRecorded: MEASUREMENT_FAILED,
+    deepestObserved: MEASUREMENT_FAILED,
+    failed: {
+      code,
+      digest: crypto.createHash('sha256').update(text, 'utf-8').digest('hex')
+    }
   };
 }
 
@@ -357,6 +435,10 @@ export function checkCertificate(cert, receipt) {
     problems.push(`unknown phase ${cert.phase}`);
     return { ok: false, problems };
   }
+  if (cert.status === MEASUREMENT_FAILED || cert.rungs === MEASUREMENT_FAILED) {
+    problems.push('measurement failed: no rung was measured, so none may be relied on');
+    return { ok: false, problems };
+  }
 
   const checkMap = (rungs, where, inherit) => {
     if (!rungs || typeof rungs !== 'object') { problems.push(`${where}: no rungs`); return; }
@@ -386,9 +468,23 @@ export function checkCertificate(cert, receipt) {
     if (cert.deepestRecorded !== dr) problems.push(`deepestRecorded ${cert.deepestRecorded} != measured ${dr}`);
     if (cert.deepestObserved !== dobs) problems.push(`deepestObserved ${cert.deepestObserved} != measured ${dobs}`);
   }
-  for (const [m, entry] of Object.entries(cert.byModel || {})) {
-    checkMap(entry?.rungs, `byModel[${m}]`, true);
-    if (entry?.rungs) {
+  // Per-model reach is a list with the id as a value. A keyed object is
+  // refused rather than read: its keys are transcript strings (review F1).
+  const perModel = cert.byModel;
+  const listed = [];
+  if (!Array.isArray(perModel)) {
+    problems.push('byModel is not a list');
+  } else {
+    for (const entry of perModel) {
+      if (!entry || typeof entry !== 'object' || typeof entry.model !== 'string') {
+        problems.push('byModel: entry without a model id');
+        continue;
+      }
+      const m = entry.model;
+      if (listed.includes(m)) problems.push(`byModel[${m}]: listed twice`);
+      listed.push(m);
+      checkMap(entry.rungs, `byModel[${m}]`, true);
+      if (!entry.rungs || typeof entry.rungs !== 'object') continue;
       for (const r of RUNGS) {
         if (entry.rungs[r]?.status === 'recorded' && cert.rungs?.[r]?.status !== 'recorded') {
           problems.push(`byModel[${m}].${r}: recorded for a model but not for the session`);
@@ -397,6 +493,26 @@ export function checkCertificate(cert, receipt) {
       if (entry.deepestRecorded !== deepest(entry.rungs, ['recorded'])) {
         problems.push(`byModel[${m}].deepestRecorded does not match its rungs`);
       }
+      if (entry.deepestObserved !== deepest(entry.rungs, ['recorded', 'observed'])) {
+        problems.push(`byModel[${m}].deepestObserved does not match its rungs`);
+      }
+    }
+  }
+
+  // The model block must agree with the per-model list, and model.id may
+  // name a single model only when there was exactly one (review F2).
+  const models = cert.model?.models;
+  if (!Array.isArray(models)) {
+    problems.push('model.models is not a list');
+  } else {
+    if (Array.isArray(perModel) && JSON.stringify(models) !== JSON.stringify(listed)) {
+      problems.push('model.models does not match the byModel entries');
+    }
+    if (models.length > 1 && cert.model.id !== MULTIPLE_MODELS) {
+      problems.push(`model.id names one model of ${models.length}; the session-level rungs are not its own`);
+    }
+    if (models.length <= 1 && cert.model.id === MULTIPLE_MODELS) {
+      problems.push('model.id says multiple, but at most one model is listed');
     }
   }
 

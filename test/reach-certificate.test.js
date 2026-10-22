@@ -42,8 +42,11 @@ import {
   RUNGS,
   UNRECORDED,
   NOT_YET_MEASURED,
+  MULTIPLE_MODELS,
+  MEASUREMENT_FAILED,
   buildOpenCertificate,
   measureCloseCertificate,
+  failedCloseCertificate,
   attachOpenReference,
   checkCertificate
 } from '../src/reach/certificate.js';
@@ -113,8 +116,43 @@ function claudeSession(sessionId, model = 'claude-test-1') {
   ].join('\n') + '\n';
 }
 
-function measure(text, opts) {
-  return measureCloseCertificate(parseSession(text), text, opts);
+function measure(text) {
+  return measureCloseCertificate(parseSession(text), text);
+}
+
+/** The per-model entry for one model id (byModel is a list, never a keyed object). */
+function forModel(cert, id) {
+  return cert.byModel.find(e => e.model === id);
+}
+
+/**
+ * Snapshot of the shared builtins a transcript-controlled key could reach:
+ * a plain-object lookup of "__proto__" lands on Object.prototype,
+ * "constructor" on Object, "toString" / "hasOwnProperty" on functions.
+ */
+function builtinsSnapshot() {
+  const targets = {
+    'Object.prototype': Object.prototype,
+    Object,
+    'Object.prototype.toString': Object.prototype.toString,
+    'Object.prototype.hasOwnProperty': Object.prototype.hasOwnProperty,
+    'Function.prototype': Function.prototype
+  };
+  const out = {};
+  for (const [name, t] of Object.entries(targets)) out[name] = Reflect.ownKeys(t).map(String).sort();
+  return out;
+}
+
+const HOSTILE_MODEL_IDS = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'];
+
+function hostileSession(sessionId, model) {
+  return [
+    userText(sessionId),
+    assistant(sessionId, model, [{ type: 'thinking', thinking: 'plan it' }]),
+    assistant(sessionId, model, [{ type: 'text', text: 'running' }]),
+    assistant(sessionId, model, [{ type: 'tool_use', id: `tu-${sessionId}`, name: 'Bash', input: { command: 'ls' } }]),
+    toolResult(sessionId, `tu-${sessionId}`)
+  ].join('\n') + '\n';
 }
 
 // ---------- 1. the open half ----------
@@ -162,7 +200,7 @@ describe('reach certificate, open half: what is known at open, never a rung', ()
 
   it('caps a hostile model id so it cannot bloat the entry', () => {
     const cert = buildOpenCertificate({ model: 'x'.repeat(5000) }, harness);
-    assert.ok(cert.model.id.length <= 128);
+    assert.equal(cert.model.id, 'x'.repeat(128), 'capped, not dropped');
   });
 });
 
@@ -211,8 +249,10 @@ describe('reach certificate, close half: measured from what came back and what w
   });
 
   it('the V3-01 silent drop: logprobs requested, field absent, R4 stays unrecorded', () => {
-    // The request side says logprobs; the response side carries none. Every
-    // place a declaration could hide is populated; none of them may count.
+    // The request side says logprobs; the response side carries none: a
+    // request-only line (dropped, it has no message), a request echo beside
+    // the message, a null and an empty array on the message itself. None of
+    // them may count. The line-level case is pinned separately below.
     const text = [
       userText('s-drop'),
       line({ type: 'request', sessionId: 's-drop', options: { logprobs: true, top_logprobs: 3 } }),
@@ -223,6 +263,19 @@ describe('reach certificate, close half: measured from what came back and what w
     ].join('\n');
     const cert = measure(text);
     assert.deepEqual(cert.rungs.R4, { status: UNRECORDED }, 'a request, a null and an empty array are not R4');
+  });
+
+  it('a logprobs field on the transcript LINE, outside the message, is not read as R4', () => {
+    // Line-level: response or request echo cannot be told apart from the
+    // shape, so it is never read. Only the message and its content items are.
+    const text = [
+      userText('s-linelp'),
+      assistant('s-linelp', 'm', [{ type: 'text', text: '8080' }],
+        { logprobs: [{ token: '80', logprob: -0.01 }] })
+    ].join('\n');
+    const cert = measure(text);
+    assert.deepEqual(cert.rungs.R4, { status: UNRECORDED });
+    assert.equal(cert.deepestObserved, 'R0');
   });
 
   it('logprobs that actually came back read as observed R4, and still not as recorded', () => {
@@ -248,11 +301,54 @@ describe('reach certificate, close half: measured from what came back and what w
     ].join('\n');
     const cert = measure(text);
     assert.deepEqual(cert.model.models, ['model-a', 'model-b']);
-    assert.equal(cert.byModel['model-a'].deepestRecorded, 'R3');
-    assert.equal(cert.byModel['model-b'].deepestRecorded, UNRECORDED);
-    assert.equal(cert.byModel['model-b'].deepestObserved, 'R0');
-    assert.deepEqual(cert.byModel['model-b'].rungs.R3, { status: UNRECORDED });
-    assert.equal(cert.byModel['model-a'].rungs.R2.status, 'observed', 'a tool result is attributed to the model that called it');
+    assert.deepEqual(cert.byModel.map(e => e.model), ['model-a', 'model-b'], 'one entry per model, sorted');
+    assert.equal(forModel(cert, 'model-a').deepestRecorded, 'R3');
+    assert.equal(forModel(cert, 'model-b').deepestRecorded, UNRECORDED);
+    assert.equal(forModel(cert, 'model-b').deepestObserved, 'R0');
+    assert.deepEqual(forModel(cert, 'model-b').rungs.R3, { status: UNRECORDED });
+    assert.equal(forModel(cert, 'model-a').rungs.R2.status, 'observed', 'a tool result is attributed to the model that called it');
+  });
+
+  it('a two-model session never pairs one model\'s id with the session\'s deepest rung', () => {
+    // Review F2: model.id was the LAST model, deepestRecorded the session
+    // union, so "model-b, R3" read as model-b recorded to R3. It was not.
+    const text = [
+      userText('s-pair'),
+      assistant('s-pair', 'model-a', [{ type: 'thinking', thinking: 'plan' }]),
+      assistant('s-pair', 'model-b', [{ type: 'text', text: 'summary' }])
+    ].join('\n');
+    const cert = measure(text);
+    assert.equal(cert.deepestRecorded, 'R3', 'the session-level rung is the union');
+    assert.equal(cert.model.id, MULTIPLE_MODELS, 'with more than one model, no single id stands beside it');
+    assert.equal(cert.model.lastSeen, 'model-b', 'the last model is still stated, under a name that says what it is');
+    assert.equal(checkCertificate(cert).ok, true, JSON.stringify(checkCertificate(cert).problems));
+
+    const misleading = structuredClone(cert);
+    misleading.model.id = 'model-b';
+    const res = checkCertificate(misleading);
+    assert.equal(res.ok, false);
+    assert.ok(res.problems.some(p => /model\.id/.test(p)), res.problems.join('; '));
+
+    const single = measure(claudeSession('s-single'));
+    assert.equal(single.model.id, 'claude-test-1', 'one model: the id and the rung belong to it');
+    assert.equal(single.model.lastSeen, 'claude-test-1');
+  });
+
+  it('caps hostile model ids and harness version on the close half too', () => {
+    // Review F6: cleanId capped the open half only; the close half put raw
+    // transcript strings into model.models and the per-model entries.
+    const big = 'y'.repeat(5000);
+    // The parser takes the version from the first line that has one.
+    const text = [
+      assistant('s-bigclose', big, [{ type: 'text', text: 'hi' }], { version: 'v'.repeat(5000) })
+    ].join('\n');
+    const cert = measure(text);
+    assert.deepEqual(cert.model.models, ['y'.repeat(128)]);
+    assert.equal(cert.model.id, 'y'.repeat(128));
+    assert.deepEqual(cert.byModel.map(e => e.model), ['y'.repeat(128)]);
+    assert.equal(cert.runtime.harnessVersion, 'v'.repeat(128));
+    assert.ok(JSON.stringify(cert).length < 4096, 'the certificate stays small whatever the transcript wrote');
+    assert.equal(checkCertificate(cert).ok, true, JSON.stringify(checkCertificate(cert).problems));
   });
 
   it('the recorded counts re-derive from the receipt itself', () => {
@@ -328,9 +424,43 @@ describe('reach certificate, the ceiling: never deeper than observed', () => {
     assert.equal(checkCertificate(openClaims).ok, false);
   });
 
-  it('a failed measurement is refused, never read as a measurement', () => {
-    const failed = { schema: REACH_SCHEMA, phase: 'close', deepestRecorded: UNRECORDED, failed: 'boom' };
-    assert.equal(checkCertificate(failed).ok, false);
+  it('checkCertificate rejects a per-model deepestObserved its rungs do not back', () => {
+    // Review F3: the per-model loop checked deepestRecorded only.
+    const cert = measure(claudeSession('s-perobs'));
+    const forged = structuredClone(cert);
+    forModel(forged, 'claude-test-1').deepestObserved = 'R6';
+    const res = checkCertificate(forged);
+    assert.equal(res.ok, false, 'a per-model overclaim must not pass');
+    assert.ok(res.problems.some(p => /deepestObserved/.test(p) && /claude-test-1/.test(p)), res.problems.join('; '));
+  });
+
+  it('a failed measurement is marked failed, never "unrecorded", and is refused for that reason', () => {
+    // Review F4: "unrecorded" on a measurement that never ran is the zero-for-
+    // absence error at session level. Review F8: no exception text on the
+    // chain, only a code and a digest.
+    const err = new TypeError('boom at /home/someone/secret-project token=abc123');
+    const failed = failedCloseCertificate(err);
+    assert.equal(failed.schema, REACH_SCHEMA);
+    assert.equal(failed.phase, 'close');
+    assert.equal(failed.deepestRecorded, MEASUREMENT_FAILED);
+    assert.notEqual(failed.deepestRecorded, UNRECORDED);
+    assert.equal(failed.deepestObserved, MEASUREMENT_FAILED);
+    assert.equal(failed.rungs, MEASUREMENT_FAILED);
+    assert.equal(failed.failed.code, 'TypeError');
+    assert.match(failed.failed.digest, /^[0-9a-f]{64}$/);
+    const onChain = JSON.stringify(failed);
+    for (const leak of ['boom', 'secret-project', 'abc123', '/home/']) {
+      assert.ok(!onChain.includes(leak), `exception text must not reach the chain: ${leak}`);
+    }
+    const res = checkCertificate(failed);
+    assert.equal(res.ok, false);
+    assert.ok(res.problems.some(p => /measurement failed/.test(p)), res.problems.join('; '));
+
+    // A hostile error name or code is not copied either.
+    const odd = failedCloseCertificate({ name: 'x'.repeat(500) + '<script>', code: 'E BAD\nCODE', message: 'm' });
+    assert.equal(odd.failed.code, 'Error');
+    assert.equal(failedCloseCertificate('a thrown string').failed.code, 'Error');
+    assert.equal(failedCloseCertificate(Object.assign(new Error('x'), { code: 'ENOENT' })).failed.code, 'ENOENT');
   });
 
   it('checkCertificate rejects recorded counts the receipt does not back', () => {
@@ -358,6 +488,63 @@ describe('reach certificate, the ceiling: never deeper than observed', () => {
     const orphan = attachOpenReference(cert, entries, 's-none');
     assert.equal(orphan.opened, UNRECORDED);
     assert.equal(orphan.runtime.harness, UNRECORDED);
+  });
+});
+
+// ---------- 3b. hostile model ids (review F1) ----------
+
+describe('reach certificate, hostile model ids: a transcript string is never an object key', () => {
+  for (const id of HOSTILE_MODEL_IDS) {
+    it(`a model named "${id}" is measured like any other and leaves the builtins untouched`, () => {
+      const before = builtinsSnapshot();
+      const text = hostileSession(`s-hostile-${id}`, id);
+      const summary = parseSession(text);
+      const cert = measureCloseCertificate(summary, text);
+      assert.deepEqual(builtinsSnapshot(), before, 'no transcript string may write to a shared builtin');
+      assert.equal(Object.prototype.R0, undefined);
+      assert.equal(Object.prototype.inputTokens, undefined);
+
+      // The model is stated, not silently dropped.
+      assert.deepEqual(cert.model.models, [id]);
+      assert.equal(cert.model.id, id);
+      const entry = forModel(cert, id);
+      assert.ok(entry, `byModel must carry an entry for "${id}"`);
+      assert.equal(entry.deepestRecorded, 'R3');
+      assert.equal(entry.rungs.R2.status, 'observed', 'the tool result is attributed to it');
+      assert.equal(cert.deepestRecorded, 'R3');
+      assert.equal(checkCertificate(cert, { ...summary, reach: cert }).ok, true);
+
+      // The same id survives a round trip through JSON, which is how a reader gets it.
+      const back = JSON.parse(JSON.stringify(cert));
+      assert.deepEqual(back.byModel.map(e => e.model), [id]);
+      assert.equal(checkCertificate(back).ok, true);
+      assert.deepEqual(builtinsSnapshot(), before);
+    });
+  }
+
+  it('the parser\'s cost.byModel takes the same ids without touching the builtins', () => {
+    for (const id of HOSTILE_MODEL_IDS) {
+      const before = builtinsSnapshot();
+      const summary = parseSession(hostileSession(`s-cost-${id}`, id));
+      assert.deepEqual(builtinsSnapshot(), before, `cost.byModel must not write through "${id}"`);
+      assert.ok(Object.prototype.hasOwnProperty.call(summary.cost.byModel, id), `cost.byModel must own a "${id}" bucket`);
+      assert.deepEqual(Object.keys(summary.cost.byModel), [id]);
+      assert.equal(summary.cost.byModel[id].messages, 3);
+      assert.equal(summary.cost.byModel[id].inputTokens, 30);
+    }
+  });
+
+  it('checkCertificate refuses a keyed byModel and reads a hostile one without writing anywhere', () => {
+    const before = builtinsSnapshot();
+    const cert = measure(claudeSession('s-keyed'));
+    const keyed = JSON.parse(JSON.stringify({ ...cert, byModel: {} }).replace(
+      '"byModel":{}',
+      '"byModel":{"__proto__":{"deepestRecorded":"R6","rungs":{}},"constructor":{"deepestRecorded":"R6"}}'
+    ));
+    const res = checkCertificate(keyed);
+    assert.equal(res.ok, false);
+    assert.ok(res.problems.some(p => /byModel is not a list/.test(p)), res.problems.join('; '));
+    assert.deepEqual(builtinsSnapshot(), before);
   });
 });
 
@@ -414,6 +601,25 @@ describe('reach certificate on the chain (eval E2)', () => {
       assert.equal(res.ok, false, 'an edited certificate must not verify');
       assert.equal(res.brokenAt, target);
     }
+  });
+
+  it('a per-model entry for a model named "__proto__" is inside the hash: tampering with it breaks verification', () => {
+    // The chain canonicaliser rebuilds objects with plain assignment, which
+    // turns an own "__proto__" KEY into a prototype and drops it from the
+    // hash. byModel is a list, so a model id is a value and always hashed.
+    const result = ingestSession(hostileSession('s-chain-proto', '__proto__'));
+    assert.equal(result.skipped, false);
+    const entries = loadChain(home);
+    assert.equal(verifyChain(entries, publicKey()).ok, true);
+    const target = entries.findIndex(e => e.payload?.session?.id === 's-chain-proto');
+    assert.ok(target >= 0);
+    const copy = structuredClone(entries);
+    const entry = copy[target].payload.reach.byModel.find(e => e.model === '__proto__');
+    assert.ok(entry, 'the hostile model is on the chain');
+    entry.deepestObserved = 'R6';
+    const res = verifyChain(copy, publicKey());
+    assert.equal(res.ok, false, 'an edit under a hostile model id must not verify');
+    assert.equal(res.brokenAt, target);
   });
 
   it('the close certificate links to the session\'s open receipt on the same chain', async () => {
