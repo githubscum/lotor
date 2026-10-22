@@ -6,6 +6,7 @@ import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
 import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
+import { measureCloseCertificate, attachOpenReference, REACH_SCHEMA, UNRECORDED } from '../reach/index.js';
 
 /**
  * src/ingest/index.js
@@ -81,6 +82,22 @@ function ingestSession(jsonlText, opts = {}) {
   // written, because the transcript already is one.
   receiptSummary.chapters = chaptersBinding(chaptersFromClaudeTranscript(jsonlText));
 
+  // Reach certificate, close half (v3 V3-02). Measured here, after every
+  // record above is in place, from what this receipt holds and what the
+  // transcript carried; never from anything requested or declared. The
+  // link to the session's open receipt is taken inside the lock below, from
+  // the chain itself. See src/reach.
+  //
+  // A measurement failure must never cost the session its receipt, and must
+  // not read as a measurement either: it is recorded as one that failed, and
+  // checkCertificate refuses it (no rungs), so no reader can rely on it.
+  let reachMeasured;
+  try {
+    reachMeasured = measureCloseCertificate(receiptSummary, jsonlText);
+  } catch (e) {
+    reachMeasured = { schema: REACH_SCHEMA, phase: 'close', deepestRecorded: UNRECORDED, failed: String(e && e.message || e).slice(0, 200) };
+  }
+
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot
   // both decide to append subsession 0.
@@ -88,6 +105,11 @@ function ingestSession(jsonlText, opts = {}) {
     const existing = currentEntries.filter(
       e => e?.payload?.session?.id === sessionId
     );
+    try {
+      receiptSummary.reach = attachOpenReference(reachMeasured, currentEntries, sessionId);
+    } catch (e) {
+      receiptSummary.reach = reachMeasured;
+    }
 
     if (existing.length === 0) {
       receiptSummary.session.subsession = 0;
