@@ -3140,6 +3140,12 @@ Mitigation, reader side: `src/views/matcher-history.js` recomputes each commit
 in both LF and CRLF and reports which one matched (`eol`). Any other byte-level
 transform of the checkout (a BOM, a formatter run, a different `eol` attribute)
 still reads as not-found. The real fix normalizes line endings inside
-`matcherHashInputs()`; that is a change to `src/policy` (non-delegable core) and
-it would move the stamp on every machine, so it waits for a signing sitting and
-for a decision on how old receipts are read across the change.
+`matcherHashInputs()`; that is a change to `src/policy` (non-delegable core), so
+it waits for a signing sitting. It would not move every machine's stamp:
+`matcherHashInputs()` is not itself one of the functions it hashes, so on an LF
+checkout the hashed text is byte-identical before and after and the stamp stays
+put. Only CRLF checkouts move, onto the LF stamp. (That holds only if the
+normalization is written in `matcherHashInputs()` itself; put inside one of the
+hashed rule functions, it would move every stamp.) The receipts read across the
+change are therefore the CRLF-era ones, such as every receipt this machine has
+written, and how they are read afterwards still needs a decision.

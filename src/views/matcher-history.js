@@ -50,10 +50,19 @@ import { pathToFileURL } from 'node:url';
 
 const TMP_PREFIX = 'lotor-mh-';
 
-// execFileSync passes arguments as an argv vector with no shell, so a sha
-// taken from a receipt can never fragment into extra git arguments.
+// execFileSync passes arguments as an argv vector with no shell, so a sha or
+// ref cannot split into several arguments. That alone does not stop ONE
+// argument from being read as an option: a ref of '--output=<file>' makes
+// `git log` write a file. So every caller-supplied revision goes through
+// isRevision first, and one that starts with '-' is refused before git sees it.
 function gitRead(repoDir, args) {
   return execFileSync('git', args, { cwd: repoDir, encoding: 'utf8' });
+}
+
+// A revision git will read as a revision: a non-empty string that cannot be
+// parsed as an option. Anything else is answered as "unknown", never run.
+function isRevision(rev) {
+  return typeof rev === 'string' && rev.length > 0 && !rev.startsWith('-');
 }
 
 // Best-effort cleanup on Windows, where antivirus and lingering module
@@ -84,12 +93,15 @@ function rmTempDir(dir) {
  *   Anything else rejects with a TypeError rather than silently defaulting.
  * @returns {Promise<string|null>} the 16-hex stamp, or null when the commit
  *   predates the stamp, has no src/policy .js files, or the historical code
- *   cannot be imported (see the throwaway-import contract in matcherHistory).
+ *   cannot be imported (see the throwaway-import contract in matcherHistory),
+ *   or `sha` starts with '-' (refused before git can read it as an option).
  */
 export async function matcherHashAt(repoDir, sha, { eol = 'lf' } = {}) {
   if (eol !== 'lf' && eol !== 'crlf') {
     throw new TypeError(`eol must be 'lf' or 'crlf', got ${JSON.stringify(eol)}`);
   }
+  // A leading '-' would reach git as an option, not a commit: unknown (null).
+  if (!isRevision(sha)) return null;
   let files;
   try {
     files = gitRead(repoDir, ['ls-tree', '--name-only', sha, 'src/policy/'])
@@ -160,6 +172,9 @@ export async function matcherHashAt(repoDir, sha, { eol = 'lf' } = {}) {
  */
 export async function matcherHistory(repoDir, opts = {}) {
   const ref = opts.ref ?? 'HEAD';
+  // A ref that git would parse as an option (e.g. '--output=<file>') is
+  // refused, not run: the honest answer is the empty history.
+  if (!isRevision(ref)) return [];
   let out = '';
   try {
     out = gitRead(repoDir, ['log', '--format=%H%x09%cI', ref, '--', 'src/policy/']);

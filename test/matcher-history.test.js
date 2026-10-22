@@ -183,6 +183,27 @@ describe('matcher-history (KNOWN-LIMITS 53, reader half)', () => {
     }
   });
 
+  it("a sha or ref starting with '-' is refused before git can read it as an option", async () => {
+    const repo = makeTempRepo();
+    const outLog = path.join(os.tmpdir(), `mh-optprobe-log-${process.pid}.txt`);
+    const outShow = path.join(os.tmpdir(), `mh-optprobe-show-${process.pid}.txt`);
+    try {
+      writePolicy(repo, POLICY_A);
+      commitAll(repo, 'stamp a');
+      // Before the guard, `git log ... --output=<file>` wrote that file.
+      assert.deepStrictEqual(await matcherHistory(repo, { ref: `--output=${outLog}` }), []);
+      assert.strictEqual(fs.existsSync(outLog), false, 'git log must never see the ref as an option');
+      assert.strictEqual(await matcherHashAt(repo, `--output=${outShow}`), null);
+      assert.strictEqual(fs.existsSync(outShow), false, 'git must never see the sha as an option');
+      assert.deepStrictEqual((await findMatcherHash(repo, A_HASH, { ref: '-p' })).commits, []);
+      // The guard refuses only option-shaped input; an ordinary ref still works.
+      assert.strictEqual(await matcherHashAt(repo, 'HEAD'), A_HASH);
+    } finally {
+      for (const f of [outLog, outShow]) fs.rmSync(f, { force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("eol: 'bogus' is a TypeError, not a silent default", async () => {
     const repo = makeTempRepo();
     try {
