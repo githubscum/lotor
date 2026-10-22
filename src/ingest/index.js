@@ -7,6 +7,7 @@ import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
 import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
 import { reasoningBinding } from '../reasoning/index.js';
+import { measureCloseCertificate, failedCloseCertificate, attachOpenReference } from '../reach/certificate.js';
 
 /**
  * src/ingest/index.js
@@ -105,6 +106,25 @@ function ingestSession(jsonlText, opts = {}) {
     }
   };
 
+  // Reach certificate, close half (v3 V3-02). Measured here, after every
+  // record above is in place, from what this receipt holds and what the
+  // transcript carried; never from anything requested or declared. The
+  // link to the session's open receipt is taken inside the lock below, from
+  // the chain itself. See src/reach/certificate.js.
+  //
+  // A measurement failure must never cost the session its receipt, and must
+  // not read as a measurement either: the certificate's rung fields say
+  // "measurement-failed" (never "unrecorded", which means measured and
+  // found nothing), it carries an error code and a digest but no exception
+  // text, and checkCertificate refuses it. No production reader runs
+  // checkCertificate yet; the rung fields carry the failure on their own.
+  let reachMeasured;
+  try {
+    reachMeasured = measureCloseCertificate(receiptSummary, jsonlText);
+  } catch (e) {
+    reachMeasured = failedCloseCertificate(e);
+  }
+
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot
   // both decide to append subsession 0.
@@ -112,6 +132,11 @@ function ingestSession(jsonlText, opts = {}) {
     const existing = currentEntries.filter(
       e => e?.payload?.session?.id === sessionId
     );
+    try {
+      receiptSummary.reach = attachOpenReference(reachMeasured, currentEntries, sessionId);
+    } catch (e) {
+      receiptSummary.reach = reachMeasured;
+    }
 
     if (existing.length === 0) {
       receiptSummary.session.subsession = 0;
