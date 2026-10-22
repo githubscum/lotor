@@ -166,8 +166,13 @@ const CLAUDE_NOISE = [
   /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g
 ];
 
-/** @returns {string|null} operator text of a user line, or null if it is not one */
-function claudeUserText(entry) {
+/**
+ * @returns {string|null} operator text of a user line, or null if it is not one
+ *
+ * Exported so src/reasoning decides "is the operator speaking" with the same
+ * noise strippers as the chapters view (one copy of the rule, no drift).
+ */
+export function claudeUserText(entry) {
   const m = entry?.message;
   if (!m || m.role !== 'user') return null;
   let text;

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../store/index.js';
+import { claudeUserText } from '../views/chapters.js';
 
 /**
  * src/reasoning/index.js
@@ -47,6 +48,12 @@ import { createStore } from '../store/index.js';
  *                         R3 that leaked into the R0 channel (V3-01's glm
  *                         finding). Filed as reasoning, flagged as leaked.
  *   text-only             visible assistant text, no reasoning block exposed.
+ *   thinking-empty        a `thinking` block was emitted with no readable
+ *                         text (empty or whitespace) and no signature. The
+ *                         channel was open and carried nothing: not proof of
+ *                         reasoning, and not the same as no block at all, so
+ *                         it is never filed as none. Shallowest kind, because
+ *                         it exposes the least. Digest over the (blank) text.
  *   none                  nothing between the previous action and this one.
  *   unrecorded            the step could not be read (transcript missing,
  *                         not yet flushed, unreadable). NEVER reported as none.
@@ -74,12 +81,14 @@ export const TRACE_SCHEMA = 'reasoning-trace/1';
 const CURSOR_SCHEMA = 'reasoning-cursor/1';
 
 // Deepest first. A step's kind is the first of these present in its segment.
+// Same order as the taxonomy table above; a test pins every adjacent pair.
 export const KIND_ORDER = Object.freeze([
   'thinking-unsigned',
   'thinking-signed',
-  'text-inline-reasoning',
   'thinking-redacted',
-  'text-only'
+  'text-inline-reasoning',
+  'text-only',
+  'thinking-empty'
 ]);
 
 const HEAD_BYTES = 4096;        // rewrite detection: digest of the file head
@@ -107,8 +116,9 @@ function canonicalDigest(value) {
 
 /**
  * Classify one assistant content block. Returns a row with NO text in it,
- * or null when the block exposes nothing (a tool_use, an empty text, an
- * unsigned empty thinking block).
+ * or null when the block is not reasoning-shaped (a tool_use, an empty text).
+ * Every `thinking` block yields a row, so a step agrees with the parser's
+ * session.thinkingBlocks about whether a thinking block existed.
  */
 export function classifyBlock(b) {
   if (!b || typeof b !== 'object') return null;
@@ -126,7 +136,7 @@ export function classifyBlock(b) {
     if (signed) {
       return { block: 'thinking-redacted', sha256: sha256(b.signature), length: 0, over: 'signature' };
     }
-    return null;
+    return { block: 'thinking-empty', sha256: sha256(t), length: t.length, over: 'empty' };
   }
   if (b.type === 'text') {
     const t = typeof b.text === 'string' ? b.text : '';
@@ -144,12 +154,13 @@ function blockKind(block) {
 export function summarizeRows(rows) {
   const present = new Set(rows.map(r => blockKind(r.block)));
   const kinds = KIND_ORDER.filter(k => present.has(k));
-  const blocks = { thinkingUnsigned: 0, thinkingSigned: 0, thinkingRedacted: 0, textInlineReasoning: 0, text: 0 };
+  const blocks = { thinkingUnsigned: 0, thinkingSigned: 0, thinkingRedacted: 0, thinkingEmpty: 0, textInlineReasoning: 0, text: 0 };
   const chars = { thinking: 0, text: 0 };
   for (const r of rows) {
     if (r.block === 'thinking-unsigned') { blocks.thinkingUnsigned++; chars.thinking += r.length; }
     else if (r.block === 'thinking-signed') { blocks.thinkingSigned++; chars.thinking += r.length; }
     else if (r.block === 'thinking-redacted') { blocks.thinkingRedacted++; }
+    else if (r.block === 'thinking-empty') { blocks.thinkingEmpty++; }
     else if (r.block === 'text-inline-reasoning') { blocks.textInlineReasoning++; chars.text += r.length; }
     else if (r.block === 'text') { blocks.text++; chars.text += r.length; }
   }
@@ -171,12 +182,26 @@ function freshState() {
   };
 }
 
+/**
+ * Is this user line the operator speaking? Harness-injected wrappers
+ * (<system-reminder>, <local-command-caveat>, <local-command-stdout>,
+ * <local-command-stderr>) ride inside user messages mid-turn; treating them
+ * as a turn boundary would discard the pending reasoning and record the next
+ * action as `none`. The decision is made on the text that survives the
+ * chapters view's noise strippers (claudeUserText), so the two views share one
+ * rule. Two additions on top of it: a line carrying a tool_result is never a
+ * prompt (as before), and an attachment-only line (image, document) is one,
+ * since only the operator attaches files.
+ */
 function isHumanPrompt(entry) {
   if (entry.isMeta === true) return false;
   const c = entry.message?.content;
-  if (typeof c === 'string') return c.trim().length > 0;
-  if (Array.isArray(c)) return c.length > 0 && !c.some(i => i && i.type === 'tool_result');
-  return false;
+  if (Array.isArray(c)) {
+    if (c.some(i => i && i.type === 'tool_result')) return false;
+    if (claudeUserText(entry) !== null) return true;
+    return c.some(i => i && (i.type === 'image' || i.type === 'document'));
+  }
+  return claudeUserText(entry) !== null;
 }
 
 /**
@@ -551,7 +576,11 @@ export function recordReasoningStep(hookPayload, { home } = {}) {
       toolInput: p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : undefined
     };
     const store = createStore(home);
-    const entry = store.appendReceiptGuarded(() => captureStep(args));
+    // withChain:false: the step never consults the chain, only the lock. With
+    // the tail-only store (PR #72) the append then reads just the chain tail,
+    // so per-call cost stays flat as the chain grows. A store without that
+    // option ignores the extra argument and behaves exactly as before.
+    const entry = store.appendReceiptGuarded(() => captureStep(args), { withChain: false });
     return { ok: true, entry };
   } catch (e) {
     return { ok: false, reason: e && e.message ? e.message : String(e) };
