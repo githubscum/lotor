@@ -1,13 +1,11 @@
 <!-- known-limits:pin v1
- This file describes commit e8415ed8b533e1c2374193e4d9a03a8a5ff5c675
- stamped 2026-09-07
- subject: limit 35 closed: stale-or-mismatch, replay and approved gate receipts carry sessionId, so all four gated-action shapes a
- body-sha256: b90d7acf87f022e2af27fa5b953cc5f895e6b64c5dd5b3910f988b7844d8f013
+ This file describes commit 0474bd3c0ab1fc60179f36ab4754be57c7795122
+ stamped 2026-10-18
+ subject: limit 74 closed: query_receipts session filter keeps gate rows
+ body-sha256: 01c23ffc8631526b3a325dd28f35fb4fb2ef340616a3d2ee968a1d6878a0aa0f
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
-
-
 
 # Known Limits
 
