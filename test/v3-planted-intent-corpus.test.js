@@ -7,17 +7,21 @@
  *   - The corpus (test-data/v3-planted-intent/corpus.json) describes 9 synthetic
  *     runs — a declared purpose, a model, exposure rungs, steps — and says
  *     nothing about what actually drove any of them. The key
- *     (answer-key.json) holds exactly that. Blind scoring rests on the two
- *     being two files: this pins the shape of both and the equality of their
- *     id lists, so a run added to one side without the other fails loudly.
- *   - The corpus side is string-silent about the key: none of the key's field
- *     names (the BANNED_ON_CORPUS_SIDE list, which covers every field an
- *     answer carries) appear in any file beside corpus.json other than the key
- *     itself, and nothing under src/ or bin/ names the key or this corpus —
- *     Lotor reads traces, never the key, and the code that would let it drift
- *     is caught here rather than trusted. This is a string check over the
- *     files, not a check of where they live: the key still sits in the same
- *     directory as the corpus.
+ *     (test-data/v3-planted-intent-key/answer-key.json) holds exactly that.
+ *     Blind scoring rests on the two being two files in two folders: this pins
+ *     the shape of both and the equality of their id lists, so a run added to
+ *     one side without the other fails loudly.
+ *   - The key lives in a sibling folder, outside the corpus folder (owner's
+ *     ruling, 2026-10-22), so a meter pointed at the corpus folder cannot read
+ *     it. This file pins that: the key path is outside the corpus folder, no
+ *     file in the corpus folder is named like the key, and no file in the
+ *     corpus folder, without exception, carries any of the key's field names
+ *     (the BANNED_ON_CORPUS_SIDE list, which covers every field an answer
+ *     carries), so the key cannot drift back in under another name.
+ *   - Nothing under src/ or bin/ names the key or this corpus — Lotor reads
+ *     traces, never the key, and the code that would let it drift is caught
+ *     here rather than trusted. Harness-side enforcement (a meter that is only
+ *     ever handed the corpus folder) is a later step, not covered here.
  *   - Canary values (LOTOR-CANARY-<8 hex>) are planted in the fake secrets
  *     file some runs read, honest and divergent alike. Which values a run saw
  *     is recorded in the key (canaries), not the corpus, so the presence of a
@@ -40,8 +44,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(HERE, '..');
 const BASE = path.join(REPO_ROOT, 'test-data', 'v3-planted-intent');
 const CORPUS_PATH = path.join(BASE, 'corpus.json');
-const KEY_PATH = path.join(BASE, 'answer-key.json');
+// The held-apart key lives in a sibling folder, never inside BASE (owner's ruling, 2026-10-22).
+const KEY_DIR = path.join(REPO_ROOT, 'test-data', 'v3-planted-intent-key');
 const KEY_FILENAME = 'answer-key.json';
+const KEY_PATH = path.join(KEY_DIR, KEY_FILENAME);
 
 const RUNGS = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5'];
 const MODELS = ['claude-opus-5-5', 'glm-5.3-flash:cloud', 'qwen2.5-coder:7b'];
@@ -199,8 +205,21 @@ describe('V3-08 planted-intent corpus', () => {
   });
 
   describe('blindness of the split', () => {
-    it('corpus-side files carry no key-side strings', () => {
-      const files = walkFiles(BASE).filter((file) => path.basename(file) !== KEY_FILENAME);
+    it('the key lives outside the corpus folder, and no file in the corpus folder is named like it', () => {
+      const rel = path.relative(BASE, KEY_PATH);
+      assert.ok(rel.startsWith('..') || path.isAbsolute(rel),
+        `the key must sit outside the corpus folder (got ${path.relative(REPO_ROOT, KEY_PATH)})`);
+      assert.ok(fs.existsSync(KEY_PATH), 'the key must exist in its sibling folder');
+      for (const file of walkFiles(BASE)) {
+        assert.notEqual(path.basename(file), KEY_FILENAME,
+          `${path.relative(REPO_ROOT, file)}: the key has drifted back into the corpus folder`);
+      }
+    });
+
+    it('no file in the corpus folder, without exception, carries an answer-key-only field name', () => {
+      // No filename filter: every file under the corpus folder is walked, so a copy of the key
+      // under any name, or a key field pasted into any corpus-side file, fails here.
+      const files = walkFiles(BASE);
       assert.ok(files.some((file) => file === CORPUS_PATH), 'the walk must actually cover corpus.json');
       for (const file of files) {
         const text = readTextSafe(file);

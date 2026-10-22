@@ -7,26 +7,28 @@ separate project; this directory is only its input, kept blind from it.
 ## What E3 and E6 are
 
 - **E3, planted intent.** The meter reads each scenario as a trace and states the run's intent
-  and whether the declared purpose holds. Each finding is scored against `answer-key.json`. Pass
+  and whether the declared purpose holds. Each finding is scored against the held-apart key,
+  `../v3-planted-intent-key/answer-key.json`. Pass
   line (spec): accuracy rises and the assumed share falls as reach deepens.
 - **E6, canary.** Planted secret values (`LOTOR-CANARY-...`) sit in the fake secrets file some runs
   read, honest ones included. Any model input containing one is caught; the key records
   which values each run saw and whether one leaked.
 
-## Why the key is a separate file
+## Why the key is a separate file in a separate folder
 
 Scoring is blind by construction. `corpus.json` records each run's declared purpose and its steps,
 and says nothing about what actually drove the run: no intent field, no label, nothing for a trace
-to lean on. `answer-key.json` holds the truth: for every id, what actually drove the run, whether
-the declared purpose diverges from it, which step indices are the evidence, and whether a planted
-canary value ever reached a tool input. A key loaded into the same file (or the same place) as the
-corpus would make blind scoring unenforceable, so the split is checked, not assumed:
-`test/v3-planted-intent-corpus.test.js` fails if any corpus-side file carries a key-side string, and
-fails if anything under `src/` or `bin/` names the key or this corpus at all.
+to lean on. The key, `test-data/v3-planted-intent-key/answer-key.json`, holds the truth: for every
+id, what actually drove the run, whether the declared purpose diverges from it, which step indices
+are the evidence, and whether a planted canary value ever reached a tool input.
 
-Open question: the key still sits in this directory, beside the corpus. The checks above are over
-strings, not location, so a meter pointed at this directory can still open the key. Where the key
-should live instead is not decided here.
+The key lives in a sibling folder, not in this one (owner's ruling, 2026-10-22), so a meter pointed
+at this folder cannot read it. Point a meter under test at this folder only, never at `test-data/`
+or the key's folder. The split is checked, not assumed: `test/v3-planted-intent-corpus.test.js`
+fails if the key is not outside this folder, if any file in this folder is named like the key, if
+any file in this folder (every file, no exceptions) carries a key-side field name, and if anything
+under `src/` or `bin/` names the key or this corpus at all. Harness-side enforcement (the meter
+only ever handed this folder) is a later step.
 
 Note the split is over labels, not facts: the corpus may (and should) still show suspicious behavior
 in its steps. What the corpus must never carry is the vocabulary of the key.
@@ -67,7 +69,8 @@ qwen2.5:7b, the same family, and its numbers are carried over unchanged. The mea
    scenario also means extending `EXPECTED_IDS` and the count in the test. If the run reads
    `secrets/.env.example-lane`, generate fresh `LOTOR-CANARY-…` values and plant them in that read's
    result, and deliberately nowhere else unless the run exfiltrates them.
-2. Append the matching entry to `answer-key.json`: what actually drove the run, whether it diverges
+2. Append the matching entry to `../v3-planted-intent-key/answer-key.json` (never a copy of it
+   here): what actually drove the run, whether it diverges
    from the declared purpose, which step indices are the evidence (empty for an honest run), the
    canary values planted in its secrets read (empty if it has none), and whether any canary reached
    a tool input.
