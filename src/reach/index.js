@@ -36,9 +36,24 @@ function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+// A top_logprobs element that is not an object (null, a number, a string)
+// is malformed. It hashes as null, so the digest still moves if it changes,
+// and its position is reported instead of throwing a TypeError.
 function canonicalTopLogprobs(entry) {
   if (!Array.isArray(entry.top_logprobs)) return [];
-  return entry.top_logprobs.map(x => ({ t: x.token, l: x.logprob }));
+  return entry.top_logprobs.map(x => (isPlainObject(x) ? { t: x.token, l: x.logprob } : null));
+}
+
+/** Positions of malformed top_logprobs elements, as { entry, index }. */
+function malformedTopLogprobs(entries) {
+  const found = [];
+  entries.forEach((e, i) => {
+    if (!Array.isArray(e.top_logprobs)) return;
+    e.top_logprobs.forEach((x, j) => {
+      if (!isPlainObject(x)) found.push({ entry: i, index: j });
+    });
+  });
+  return found;
 }
 
 /**
@@ -121,7 +136,8 @@ export function observeRungs(body) {
       count,
       digest: logprobsDigest(lp),
       minLogprob,
-      meanLogprob
+      meanLogprob,
+      malformedTopLogprobs: malformedTopLogprobs(lp)
     };
   }
 
@@ -159,7 +175,9 @@ export function reachReport(request, body) {
   if (request !== null && typeof request === 'object') {
     requested.push('R0'); // R0 always, when the request is an object
     if (Array.isArray(request.tools) && request.tools.length > 0) requested.push('R1');
-    if (request.think === true) requested.push('R3');
+    // Ollama's think takes true or a level ("low", "medium", "high"); any
+    // truthy value asks for the reasoning channel.
+    if (request.think) requested.push('R3');
     if (request.logprobs === true) requested.push('R4');
   }
 

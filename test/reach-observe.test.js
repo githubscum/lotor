@@ -4,7 +4,8 @@
  * Synthetic fixtures only: every response body below is built inline.
  * Covers the 11 cases in WO V3-05 plus the 12th from WO V3-05b (an error
  * body that also carries message content and a logprobs array must still
- * report observed [] and logprobs null).
+ * report observed [] and logprobs null), and review fixes E-G (think levels,
+ * a null inside top_logprobs).
  */
 
 import { test } from 'node:test';
@@ -96,7 +97,9 @@ test('6. digest tamper: a 0.001 change shifts the digest; unchanged body reprodu
   const tampered = observeRungs({
     model: 'm',
     message: { content: 'x' },
-    logprobs: entries.map((e, i) => (i === 0 ? lpEntry('a', e.logprob - 0.001) : e))
+    // Only the logprob moves; the top_logprobs array is carried over intact,
+    // so the digest change can only come from the 0.001 shift.
+    logprobs: entries.map((e, i) => (i === 0 ? lpEntry('a', e.logprob - 0.001, e.top_logprobs) : e))
   });
   const repeat = observeRungs({ model: 'm', message: { content: 'x' }, logprobs: entries });
   assert.notEqual(base.logprobs.digest, tampered.logprobs.digest);
@@ -217,4 +220,49 @@ test('C. think/logprobs requested but body has neither: silentlyDropped R3 and R
 test('D. CAPABILITY_RUNGS is frozen and equals R3, R4', () => {
   assert.deepEqual([...CAPABILITY_RUNGS], ['R3', 'R4']);
   assert.throws(() => { 'use strict'; CAPABILITY_RUNGS.push('R5'); });
+});
+
+test('E. think as a level ("low"/"medium"/"high") requests R3; withheld reasoning lands in silentlyDropped', () => {
+  const body = { model: 'm', message: { content: 'plain answer, no reasoning channel' } };
+  for (const level of ['low', 'medium', 'high']) {
+    const report = reachReport({ think: level }, body);
+    assert.ok(report.requested.includes('R3'), `think:${level} requests R3`);
+    assert.deepEqual(report.silentlyDropped, ['R3'], `think:${level} withheld is a silent drop`);
+  }
+  assert.ok(!reachReport({ think: false }, body).requested.includes('R3'));
+  assert.ok(!reachReport({}, body).requested.includes('R3'));
+});
+
+test('F. think level with reasoning returned: R3 observed, not dropped', () => {
+  const body = { model: 'm', message: { content: 'answer', thinking: 'reasoning' } };
+  const report = reachReport({ think: 'high' }, body);
+  assert.deepEqual(report.silentlyDropped, []);
+  assert.ok(report.observed.includes('R3'));
+});
+
+test('G. a null inside top_logprobs is recorded, not thrown', () => {
+  const body = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [
+      lpEntry('a', -0.1, [{ token: 'a', logprob: -0.1 }, null]),
+      lpEntry('b', -0.2, [null])
+    ]
+  };
+  let obs;
+  assert.doesNotThrow(() => { obs = observeRungs(body); });
+  assert.equal(obs.rungs.R4, true);
+  assert.equal(obs.logprobs.count, 2);
+  assert.deepEqual(obs.logprobs.malformedTopLogprobs, [{ entry: 0, index: 1 }, { entry: 1, index: 0 }]);
+  assert.match(obs.logprobs.digest, /^sha256:[0-9a-f]{64}$/);
+  // The malformed slot still feeds the digest: replacing it changes the hash.
+  const fixed = observeRungs({
+    ...body,
+    logprobs: [lpEntry('a', -0.1, [{ token: 'a', logprob: -0.1 }, { token: 'z', logprob: -4 }]), lpEntry('b', -0.2, [null])]
+  });
+  assert.notEqual(obs.logprobs.digest, fixed.logprobs.digest);
+  assert.deepEqual(fixed.logprobs.malformedTopLogprobs, [{ entry: 1, index: 0 }]);
+  // A well-formed body reports an empty list.
+  const clean = observeRungs({ model: 'm', message: { content: 'x' }, logprobs: [lpEntry('a', -0.1)] });
+  assert.deepEqual(clean.logprobs.malformedTopLogprobs, []);
 });
