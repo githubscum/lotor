@@ -63,10 +63,13 @@ function ingestSession(jsonlText, opts = {}) {
   // receipt. summarizeSubagents returns null when no such directory exists,
   // in which case the field is omitted entirely — never a false zero —
   // mirroring the convention in subagents.js. opts.transcriptPath may be
-  // absent for existing callers; then we never call it.
+  // absent for existing callers; then we never call it. The parent text is
+  // already in hand, so the dispatch cross-check reads it rather than the
+  // file a second time.
   if (typeof opts.transcriptPath === 'string' && opts.transcriptPath) {
     const subagentsSummary = summarizeSubagents(opts.transcriptPath, {
-      priceTableDate: opts.priceTableDate
+      priceTableDate: opts.priceTableDate,
+      transcriptText: jsonlText
     });
     if (subagentsSummary !== null) {
       receiptSummary.subagents = subagentsSummary;
