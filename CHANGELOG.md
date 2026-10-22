@@ -18,7 +18,7 @@ verifies; tampering with digest, bytes, flag, or stripping the field breaks it).
 **Staged for the signing sitting:** the two-line wiring into
 `bin/hook-post-tool-use.js`, in `proposals/v3-03-tool-io-digest-2026-10-22.patch`.
 Its five tests in `test/hook-post-tool-use-toolio.test.js` run as TODO until
-the patch flips `WIRED`. Limit 75 recorded: coverage is the egress-event
+the patch flips `WIRED`. Limit 78 recorded: coverage is the egress-event
 receipt only, an unkeyed digest of a guessable response is reversible, and CRLF
 and LF spellings collide by design.
 

@@ -87,7 +87,7 @@ beside these, built by `src/toolio/index.js`: `schema: 'toolio/1'` and either
 `{ recorded: true, digest, bytes, error }` or `{ recorded: false, reason }`.
 The hook wiring waits for a signing sitting
 (`proposals/v3-03-tool-io-digest-2026-10-22.md`); until it lands, no receipt
-carries the field. KNOWN-LIMITS 75 says what it still does not cover.
+carries the field. KNOWN-LIMITS 78 says what it still does not cover.
 
 ### `ledger-head` — **no writer in this repository**
 

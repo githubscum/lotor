@@ -4,7 +4,7 @@ Drafted 2026-10-22 by the V3-03 lane builder. **Not applied.** The hook edit is
 `bin/`, which is non-delegable core, so it lands only at the owner's signing
 sitting. Everything that is not core is already on the branch and tested.
 Spec: the brain's `projects/meter/LOTOR-V3-SPEC-2026-10-18.md`, the R2 row and
-evals E2 and E5. Companion to KNOWN-LIMITS 75.
+evals E2 and E5. Companion to KNOWN-LIMITS 78.
 
 ## What is unrecorded today
 
@@ -77,10 +77,10 @@ covers both hunks, or one whole-file Write.
 
 - **It does not add a receipt per tool call.** Coverage stays the egress-event
   receipt. A per-step receipt is V3-04's, and attaching `toolIo` to it is the
-  same one-line spread. See KNOWN-LIMITS 75 for the cost reason.
+  same one-line spread. See KNOWN-LIMITS 78 for the cost reason.
 - **It does not touch `responseDigest` or `responseOk`.** Old readers keep
   working. Retiring them is a later, separate change.
-- **It does not key the digest.** See KNOWN-LIMITS 75.
+- **It does not key the digest.** See KNOWN-LIMITS 78.
 
 ## Measured cost (eval E5, this machine, Node 24)
 

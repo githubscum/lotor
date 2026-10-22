@@ -2969,7 +2969,7 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
 
-## 75. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
+## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
 
 **Status: OPEN, recorded 2026-10-22 with v3 work order V3-03** (branch
 `lotor-lane/v3-03-tool-io-digest`). `src/toolio/index.js` builds a `toolio/1`
