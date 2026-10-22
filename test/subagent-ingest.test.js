@@ -13,10 +13,12 @@ import { collectSubagents, countParentDispatches, summarizeSubagents } from '../
  * directory is null/omitted, a present-but-empty one is a real zero. They
  * also pin defensive summing — missing or non-finite usage sub-fields
  * contribute 0 and never propagate NaN into a receipt total — and the
- * parent-dispatch cross-check (WO-LIMIT68-FALSE-ZERO): a parent that plainly
- * dispatched Task/Agent calls must never collapse into a silent null when its
- * sidecar dir is missing, and unmatched sidecar entries must be captured by
- * name rather than dropped behind a count.
+ * parent-dispatch cross-check (WO-LIMIT68-FALSE-ZERO): a parent whose
+ * Task/Agent calls went through must never collapse into a silent null when
+ * its sidecar dir is missing, a dispatch that was denied, rejected or
+ * interrupted must not count (it ran no child, so sidecarMissing would be a
+ * false statement), and unmatched sidecar entries must be captured by name
+ * rather than dropped behind a count.
  */
 
 let tmp;
@@ -59,17 +61,27 @@ function assistantRow(over = {}) {
 }
 
 /** A parent-side assistant row that dispatches a subagent via `toolName`. */
-function dispatchRow(toolName, over = {}) {
+function dispatchRow(toolName, over = {}, id = 'tu-1') {
   return {
     type: 'assistant',
     message: {
       role: 'assistant',
       content: [
-        { type: 'tool_use', id: 'tu-1', name: toolName, input: {} }
+        { type: 'tool_use', id, name: toolName, input: {} }
       ]
     },
     ...over
   };
+}
+
+/**
+ * The parent-side user row that answers tool_use `id`. `isError: true` is the
+ * shape a hook denial, an operator rejection or an interrupt leaves.
+ */
+function resultRow(id, { isError = false, text = 'child finished' } = {}) {
+  const item = { type: 'tool_result', tool_use_id: id, content: text };
+  if (isError) item.is_error = true;
+  return { type: 'user', message: { role: 'user', content: [item] } };
 }
 
 describe('ingest: subagent sidecar transcripts', () => {
@@ -264,8 +276,10 @@ describe('ingest: subagent sidecar transcripts', () => {
   it('parent dispatched 2 Task calls, no dir -> sidecarMissing summary, not null', () => {
     const transcriptPath = path.join(tmp, 'dispatched-missing.jsonl');
     writeJsonl(transcriptPath, [
-      dispatchRow('Task', { sessionId: 'parent-d' }),
-      dispatchRow('Task', { sessionId: 'parent-d' })
+      dispatchRow('Task', { sessionId: 'parent-d' }, 'tu-d1'),
+      resultRow('tu-d1'),
+      dispatchRow('Task', { sessionId: 'parent-d' }, 'tu-d2'),
+      resultRow('tu-d2')
     ]);
     // Deliberately do not create the subagents directory.
 
@@ -317,7 +331,7 @@ describe('ingest: subagent sidecar transcripts', () => {
 
   it("parent uses tool name 'Agent' -> counted", () => {
     const transcriptPath = path.join(tmp, 'agent-named.jsonl');
-    writeJsonl(transcriptPath, [dispatchRow('Agent')]);
+    writeJsonl(transcriptPath, [dispatchRow('Agent'), resultRow('tu-1')]);
 
     assert.strictEqual(countParentDispatches(transcriptPath), 1);
 
@@ -329,9 +343,72 @@ describe('ingest: subagent sidecar transcripts', () => {
 
   it('malformed parent lines are skipped; valid dispatch rows still counted', () => {
     const transcriptPath = path.join(tmp, 'parent-malformed.jsonl');
-    const content = line(dispatchRow('Task')) + '\n' + 'this is not json\n' + '{ "broken":\n' + line(dispatchRow('Agent')) + '\n';
+    const content = line(dispatchRow('Task', {}, 'tu-m1')) + '\n' + 'this is not json\n' + '{ "broken":\n' +
+      line(dispatchRow('Agent', {}, 'tu-m2')) + '\n' + line(resultRow('tu-m1')) + '\n' + line(resultRow('tu-m2')) + '\n';
     fs.writeFileSync(transcriptPath, content, 'utf-8');
 
     assert.strictEqual(countParentDispatches(transcriptPath), 2);
+  });
+
+  it('a dispatch a hook denied is not counted; no dir -> null, not sidecarMissing', () => {
+    const transcriptPath = path.join(tmp, 'denied-dispatch.jsonl');
+    writeJsonl(transcriptPath, [
+      dispatchRow('Agent', {}, 'tu-denied'),
+      resultRow('tu-denied', { isError: true, text: 'PreToolUse:Agent hook error: BLOCKED' })
+    ]);
+
+    assert.strictEqual(countParentDispatches(transcriptPath), 0);
+    assert.strictEqual(summarizeSubagents(transcriptPath), null,
+      'a denied dispatch ran no child; claiming the sidecar is missing would be false');
+  });
+
+  it('rejected (error result) and interrupted (no result) dispatches are not counted', () => {
+    const transcriptPath = path.join(tmp, 'rejected-interrupted.jsonl');
+    writeJsonl(transcriptPath, [
+      dispatchRow('Task', {}, 'tu-rejected'),
+      resultRow('tu-rejected', { isError: true, text: "The user doesn't want to proceed with this tool use." }),
+      dispatchRow('Task', {}, 'tu-interrupted')
+      // No result row for tu-interrupted: cut off before it answered.
+    ]);
+
+    assert.strictEqual(countParentDispatches(transcriptPath), 0);
+    assert.strictEqual(summarizeSubagents(transcriptPath), null);
+  });
+
+  it('one dispatch through and one denied -> parentDispatches 1', () => {
+    const transcriptPath = path.join(tmp, 'mixed-dispatch.jsonl');
+    writeJsonl(transcriptPath, [
+      dispatchRow('Agent', {}, 'tu-ok'),
+      resultRow('tu-ok'),
+      dispatchRow('Agent', {}, 'tu-no'),
+      resultRow('tu-no', { isError: true, text: 'PreToolUse:Agent hook error: BLOCKED' })
+    ]);
+
+    const summary = summarizeSubagents(transcriptPath);
+    assert.strictEqual(summary.sidecarMissing, true);
+    assert.strictEqual(summary.parentDispatches, 1);
+  });
+
+  it('a repeated row for the same tool_use id counts once', () => {
+    const transcriptPath = path.join(tmp, 'repeated-dispatch.jsonl');
+    writeJsonl(transcriptPath, [
+      dispatchRow('Task', {}, 'tu-r'),
+      dispatchRow('Task', {}, 'tu-r'),
+      resultRow('tu-r')
+    ]);
+
+    assert.strictEqual(countParentDispatches(transcriptPath), 1);
+  });
+
+  it('transcriptText is used in place of reading the parent file', () => {
+    // The path does not exist; only the supplied text can produce a count.
+    const transcriptPath = path.join(tmp, 'text-only-never-written.jsonl');
+    const text = [dispatchRow('Task', {}, 'tu-t'), resultRow('tu-t')].map(line).join('\n') + '\n';
+
+    assert.strictEqual(countParentDispatches(transcriptPath), null);
+    assert.strictEqual(countParentDispatches(transcriptPath, { text }), 1);
+    const summary = summarizeSubagents(transcriptPath, { transcriptText: text });
+    assert.strictEqual(summary.sidecarMissing, true);
+    assert.strictEqual(summary.parentDispatches, 1);
   });
 });

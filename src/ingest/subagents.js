@@ -203,29 +203,44 @@ function collectSubagents(transcriptPath) {
 }
 
 /**
- * Count dispatch tool calls in the parent transcript itself.
+ * Count the parent's dispatches that actually went through.
  *
- * Reads the parent JSONL line by line and counts assistant rows whose
- * message.content array holds an item with type 'tool_use' and name 'Task'
- * or 'Agent'. This is a capture of what the parent's own rows say, not a
- * judgment about what they mean: it is the cross-check that lets a caller
- * tell "the parent dispatched children" from "the sidecar dir is gone".
+ * Reads the parent JSONL line by line and collects every content item with
+ * type 'tool_use' and name 'Task' or 'Agent', then counts only those whose id
+ * is answered by a 'tool_result' item (same tool_use_id) that is not marked
+ * `is_error: true`. A dispatch a hook denied, the operator rejected, or an
+ * interrupt cut off carries an error result or none at all; it never ran a
+ * child, so it must not be counted as evidence that a child's transcript
+ * should exist. A dispatch still in flight when the transcript is read has no
+ * result yet and is not counted either: the count errs low, never high.
+ * Repeated rows for the same tool_use id count once.
+ *
+ * This is a capture of what the parent's own rows say, not a judgment about
+ * what they mean: it is the cross-check that lets a caller tell "the parent
+ * dispatched children" from "the sidecar dir is gone".
  *
  * Malformed lines are skipped without counting as anything. An unreadable
  * parent file yields null, so a caller can omit the field rather than guess.
  *
  * @param {string} transcriptPath - Path to the parent <sessionId>.jsonl
+ * @param {{text?: string}} [opts] - `text`: the parent transcript's content,
+ *   when the caller has already read it; the file is then not read again.
  * @returns {number|null} dispatch count, or null when the file is unreadable
  */
-function countParentDispatches(transcriptPath) {
+function countParentDispatches(transcriptPath, opts = {}) {
   let text;
-  try {
-    text = fs.readFileSync(transcriptPath, 'utf-8');
-  } catch (_) {
-    return null;
+  if (opts && typeof opts.text === 'string') {
+    text = opts.text;
+  } else {
+    try {
+      text = fs.readFileSync(transcriptPath, 'utf-8');
+    } catch (_) {
+      return null;
+    }
   }
 
-  let count = 0;
+  const dispatchIds = new Set();
+  const okResultIds = new Set();
   for (const raw of text.split('\n')) {
     if (raw.length === 0) continue;
 
@@ -241,14 +256,26 @@ function countParentDispatches(transcriptPath) {
     if (!Array.isArray(content)) continue;
 
     for (const item of content) {
+      if (!item || typeof item !== 'object') continue;
       if (
-        item && typeof item === 'object' &&
         item.type === 'tool_use' &&
-        (item.name === 'Task' || item.name === 'Agent')
+        (item.name === 'Task' || item.name === 'Agent') &&
+        typeof item.id === 'string'
       ) {
-        count++;
+        dispatchIds.add(item.id);
+      } else if (
+        item.type === 'tool_result' &&
+        typeof item.tool_use_id === 'string' &&
+        item.is_error !== true
+      ) {
+        okResultIds.add(item.tool_use_id);
       }
     }
+  }
+
+  let count = 0;
+  for (const id of dispatchIds) {
+    if (okResultIds.has(id)) count++;
   }
   return count;
 }
@@ -256,28 +283,33 @@ function countParentDispatches(transcriptPath) {
 /**
  * Produce a receipt-bindable subagents summary for a parent transcript.
  *
- * When no subagents directory exists and the parent's own rows dispatched no
- * Task/Agent calls, returns null, so a caller can omit the field rather than
- * record a false zero. When the directory is missing but the parent plainly
- * dispatched, it returns a summary that says so (`sidecarMissing: true`,
- * `count: null`, `parentDispatches`) instead of a silent null: the harness
- * may have renamed the directory or the file pattern, and a bare zero would
- * read as "no subagents ran".
+ * When no subagents directory exists and the parent's own rows hold no
+ * Task/Agent dispatch that went through (see countParentDispatches: denied,
+ * rejected, interrupted and unanswered dispatches do not count), returns null,
+ * so a caller can omit the field rather than record a false zero. When the
+ * directory is missing but a dispatch did go through, it returns a summary
+ * that says so (`sidecarMissing: true`, `count: null`, `parentDispatches`)
+ * instead of a silent null: the harness may have renamed the directory or the
+ * file pattern, and a bare zero would read as "no subagents ran".
  *
  * When the directory exists, the summary adds `parentDispatches` (the parent's
- * own dispatch count, omitted when the parent file was unreadable) and
- * `unmatchedEntries` (sidecar entry names outside the expected pattern). Both
- * are counts and names only; no field interprets intent.
+ * own count of dispatches that went through, omitted when the parent file was
+ * unreadable) and `unmatchedEntries` (sidecar entry names outside the expected
+ * pattern). Both are counts and names only; no field interprets intent.
  *
  * Never computes dollars; a price table, when supplied, is only passed through
  * as a date string.
  *
  * @param {string} transcriptPath - Path to the parent <sessionId>.jsonl
- * @param {{priceTableDate?: string}} [opts]
+ * @param {{priceTableDate?: string, transcriptText?: string}} [opts]
+ *   `transcriptText`: the parent transcript's content when the caller has
+ *   already read it, so it is not read a second time.
  */
 function summarizeSubagents(transcriptPath, opts = {}) {
   const collected = collectSubagents(transcriptPath);
-  const dispatched = countParentDispatches(transcriptPath);
+  const dispatched = countParentDispatches(transcriptPath, {
+    text: opts && typeof opts.transcriptText === 'string' ? opts.transcriptText : undefined
+  });
 
   // No sidecar dir and no parent dispatches => null: the caller omits the
   // field entirely rather than recording a false zero. A present-but-empty

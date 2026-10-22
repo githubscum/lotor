@@ -2664,8 +2664,12 @@ having, and why this one is not yet one.
 **Repo reader, 2026-10-19.** `src/ingest/subagents.js` now cross-checks the
 parent's own dispatch count before it concedes that no subagents ran. The
 function `countParentDispatches` reads the parent transcript and counts its
-`Task` and `Agent` tool calls, so a missing `<sessionId>/subagents/` directory
-whose parent plainly dispatched now returns `sidecarMissing: true` with
+`Task` and `Agent` tool calls that went through: only a call answered by a
+`tool_result` not marked `is_error` counts, so a dispatch a hook denied, the
+operator rejected, or an interrupt cut off (none of which ran a child) is not
+taken as evidence that a child transcript should exist. The count errs low,
+never high. A missing `<sessionId>/subagents/` directory whose parent did
+dispatch now returns `sidecarMissing: true` with
 `count: null` and `parentDispatches` recorded, instead of the silent null that
 read as "no subagents ran". When the directory exists, the summary lists
 `unmatchedEntries`: the sidecar entry names outside the expected
