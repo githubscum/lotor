@@ -71,7 +71,15 @@ const GRANTABLE = Object.freeze({
   // rollout; the deliberate classification is the whole point of this file.
   term: 'colour and TTY detection for the terminal surface; reads env only, cannot widen authority',
   // Added 2026-08-15 (tool-pinning, item 2 of the 08-13 signing stack).
-  toolpins: 'pure functions over tool definitions; no authority over enforcement'
+  toolpins: 'pure functions over tool definitions; no authority over enforcement',
+  // Added 2026-10-22 (v3 V3-03, rung R2). Builds the toolIo field a
+  // post-tool-use receipt carries. Same line as parser and ingest: editing it
+  // can make a receipt misdescribe a response, which is reporting integrity,
+  // not enforcement. Flagged for the owner in the V3-03 PR: once the hook
+  // imports it, it runs inside a core binary's process, as parser, harness and
+  // toolpins already do in the session-start hook. Moving it to core is a
+  // core-paths.js plus policy edit, so it would land at the same sitting.
+  toolio: 'pure digest of a tool response for a receipt field; reporting only, no authority over enforcement'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */

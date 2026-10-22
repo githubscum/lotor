@@ -82,6 +82,13 @@ are provably identical or provably different and never readable.
 The only entry that records anything about a **response**, and only as a digest
 plus a boolean.
 
+**Staged, not yet on the chain (v3 V3-03, 2026-10-22):** a `toolIo` field
+beside these, built by `src/toolio/index.js`: `schema: 'toolio/1'` and either
+`{ recorded: true, digest, bytes, error }` or `{ recorded: false, reason }`.
+The hook wiring waits for a signing sitting
+(`proposals/v3-03-tool-io-digest-2026-10-22.md`); until it lands, no receipt
+carries the field. KNOWN-LIMITS 75 says what it still does not cover.
+
 ### `ledger-head` — **no writer in this repository**
 
 Observed live in the chain at seq 727 and 728. Fields: `limit_id`,

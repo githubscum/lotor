@@ -2968,3 +2968,41 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 `docs/receipt-coverage.md`, under "Session attribution for gate decisions",
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
+
+## 75. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
+
+**Status: OPEN, recorded 2026-10-22 with v3 work order V3-03** (branch
+`lotor-lane/v3-03-tool-io-digest`). `src/toolio/index.js` builds a `toolio/1`
+object: a full SHA-256 over a canonical serialization of the tool's response,
+its byte length, and the host's own error flag, or `recorded: false` with a
+reason when there was no response to see. The wiring into
+`bin/hook-post-tool-use.js` is core and is staged in
+`proposals/v3-03-tool-io-digest-2026-10-22.patch` for a signing sitting. Three
+things it does not do, stated before anyone reads R2 as complete.
+
+**Coverage is the egress-event receipt and nothing else.** The post-tool-use
+hook writes a receipt only for egress-shaped Bash calls (push, publish,
+egress-other) and takes a no-chain-I/O fast path for everything else. A `Read`,
+an `Edit`, a non-egress `Bash` or an MCP call gets no receipt there, so it gets
+no R2 field. R2 stays partial on the ladder until a receipt exists per tool
+call. That is the per-step receipt V3-04 is building; the module is
+receipt-agnostic so the same one-line spread goes onto it. Writing a separate
+per-call receipt here was rejected for this change: every append re-reads the
+whole chain under the lock, so a receipt per tool call is a cost (eval E5) the
+owner should choose with a measurement in hand, not inherit from a builder.
+
+**An unkeyed digest of a guessable response is reversible.** A `yes`, an exit
+status, a six-digit code or a file the reader already has can be recovered by
+hashing candidates and comparing. Content never lands on the chain, but for a
+low-entropy response the digest is as good as content to someone willing to
+guess. `paramsDigest` has had the same property since v1; R2 widens the surface
+from what was asked to what came back. A keyed digest (HMAC under a local key)
+closes it and also stops two installs, or the meter's evals, comparing digests.
+That trade is the owner's.
+
+**CRLF and LF spellings of one response collide on purpose.** Every string leaf
+has `\r\n` folded to `\n` before hashing, so the same file read from a
+`core.autocrlf=true` checkout and an LF checkout digests the same. Two responses
+that differ only in line endings are therefore indistinguishable on the chain,
+and `bytes` is the size after folding, not what the tool emitted. A lone `\r` is
+kept as content. Tested in `test/toolio-digest.test.js`.
