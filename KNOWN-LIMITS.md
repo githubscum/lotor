@@ -1992,6 +1992,18 @@ reading the git history of `src/policy/index.js` for that time range. A
 hash detects, it does not explain. Same for `observer.parser.hash` on
 session-open receipts.
 
+**NARROWED 2026-10-20 (reader half).** `src/views/matcher-history.js`
+re-derives the stamp at every commit that touched `src/policy/` by importing
+that commit's own code and calling its own `matcherVersionHash`, so a reader
+can go from a receipt's `matcherHash` to the commit(s) that produced it and
+from there to `git diff`. Against this clone's history: 28 policy commits, 15
+carry a stamp, 8 distinct stamps, about 2 s. What stays open: it resolves only
+hashes a commit in the reader's own clone produced (not-found is "unknown
+provenance", never "tampered"); it executes historical code, so it is a reader
+for your own clone and not a verifier of a stranger's; there is no CLI yet,
+because a new `bin/` file is a protected write; and `observer.parser.hash` has
+no equivalent reader. Building it found limit 77.
+
 ## 54. Captured thinking is self-report, and a quiet thought channel is unrecorded, not empty
 
 `thinkingBlocks` on a session-end receipt is a list of digests of text the
@@ -2004,6 +2016,14 @@ model that does not produce them) yields a receipt with no
 reader cannot tell from one receipt whether the model had zero thoughts or
 the channel was omitted. The honest reading of an absent thought layer is
 "unrecorded," never "no thoughts."
+
+**Text view, 2026-10-20.** Until this date the rendered session receipt said
+nothing about the thought channel at all, so the distinction above lived only
+in the parser's comments. `renderSessionReceipt` now prints a THOUGHT CHANNEL
+section: a block count and total length when blocks exist, and `(unrecorded)`
+with the never-"no thoughts" note when the field is absent or empty. It prints
+no digests and no text. The limit itself is unchanged: the view states the
+ambiguity, it does not resolve it.
 
 ## 55. `transcriptHash` binds the receipt to a file, not the file to the whole session
 
@@ -2180,6 +2200,22 @@ What it does not do, in three parts:
   counts, a model id and a timestamp. It says nothing about what the
   thought did or why it cost that much — the same silence-is-not-safety
   ceiling every other receipt field already discloses.
+
+**NARROWED 2026-10-20 (reader half; the write side is unchanged).** Until now
+nothing read a sidecar back, so a deleted or edited one was silent: the
+absence was detectable in principle and detected by nobody.
+`src/views/thoughts.js` exports `checkThoughtSidecars(entries, home)`, which
+checks every `thoughts/1` binding against `<home>/thoughts/` and reports each
+as `match`, `mismatch` (with the hash found), `missing`, `none-expected`
+(count 0, no file is written), `malformed` (the binding itself is bad), or,
+for a file no receipt expects, `orphan`. Tested in
+`test/views-thought-sidecars.test.js`. First run against a real store
+(36,433 entries, 2026-10-20): 3,292 match, 0 mismatch, 4 none-expected,
+0 orphan, and **1 missing**, a 15-thought sidecar for a session whose receipt
+is on the chain. Which of the two causes above produced it is exactly what
+the check cannot say. Still open: the sidecar remains deletable without a
+signature, `missing` still cannot separate a crash from a deletion, and the
+check is a function, not yet a CLI or a line in any view.
 
 ## 61. The permissive-posture warning overstates its own inertness
 
@@ -2661,6 +2697,23 @@ built rather than assumed.
 answered. Limit 53 is why a detector that cannot explain itself is still worth
 having, and why this one is not yet one.
 
+**Repo reader, 2026-10-19.** `src/ingest/subagents.js` now cross-checks the
+parent's own dispatch count before it concedes that no subagents ran. The
+function `countParentDispatches` reads the parent transcript and counts its
+`Task` and `Agent` tool calls that went through: only a call answered by a
+`tool_result` not marked `is_error` counts, so a dispatch a hook denied, the
+operator rejected, or an interrupt cut off (none of which ran a child) is not
+taken as evidence that a child transcript should exist. The count errs low,
+never high. A missing `<sessionId>/subagents/` directory whose parent did
+dispatch now returns `sidecarMissing: true` with
+`count: null` and `parentDispatches` recorded, instead of the silent null that
+read as "no subagents ran". When the directory exists, the summary lists
+`unmatchedEntries`: the sidecar entry names outside the expected
+`agent-*.jsonl` pattern, captured by name rather than dropped behind the
+count. This narrows the false zero to one remaining case: the dispatch tool
+itself renamed. If the harness stops calling the dispatch `Task` or `Agent`,
+the parent count reads zero and the absence is still unnoticed.
+
 ## 69. Subagent cost is derived rather than reported, and the derivation carries a price table's staleness
 
 **Found 2026-09-02**, by tracing which inputs produce the dollar figures.
@@ -2968,6 +3021,134 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 `docs/receipt-coverage.md`, under "Session attribution for gate decisions",
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
+
+## 75. One edited file was listed twice in `touched`, once absolute and once relative
+
+**Status: CLOSED 2026-10-19, branch `lotor-lane/touched-path-identity`.**
+(This lands before PR #61, which renumbers its entry to 76.) `parseSession`
+now resolves every touched path against the session working directory (the
+first transcript line carrying `cwd`; in real transcripts that is a user,
+assistant or attachment line, never a file-history line) and keys the map on
+that resolved identity. An absolute Edit/Write `file_path` is normalised
+lexically (`.\`, `..`, doubled separators) so it lands on the same key as its
+resolved file-history twin. Windows-flavoured keys compare case- and
+separator-insensitively; the stored `path` keeps a display form, preferring
+the Edit/Write absolute path. When an Edit/Write and a file-history record hit
+the same file, the entry keeps the edit/write `via` and gains
+`alsoVia: ['file-history']`. A transcript with no `cwd` is not guessed at: a
+relative file-history path stays relative and stays a separate entry.
+
+Found 2026-10-19 while closing PR #61. Claude Code writes an Edit/Write
+`file_path` absolute, and writes the same file into `file-history-snapshot`
+keys and `file-history-delta` `trackingPath` relative to the cwd. The parser
+keyed `touched` on the raw string, so each edited file appeared twice. Measured
+on two real sessions from this machine: 68 touched entries became 39, and 26
+became 15. Every count built on `touched` (receipts' touched lists, the
+since-view's "N files touched", the live view, reconcile's tail matching) was
+overstated by up to about 1.7x.
+
+**What to doubt.** The resolve is lexical, not filesystem: symlinks, junctions
+and 8.3 short names are not folded, so two spellings of one file through a
+link still count twice. Case folding applies only to Windows-flavoured paths;
+a case-insensitive macOS volume is not folded. Receipts already on the chain
+keep their doubled lists; this changes what new receipts say, and the parser
+version hash changes with it. The session cwd is the FIRST `cwd` seen; a
+transcript's `cwd` can change mid-session, and whether file-history paths stay
+relative to the original cwd after such a change is unconfirmed. A
+file-history line that precedes every `cwd`-carrying line stays relative and
+unmerged.
+
+## 76. A refused write was listed as touched, so an attempt read as a change
+
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
+Closed for the parser, the since-view, the text receipt and the live view.
+Still OPEN for retcon's charter reconciliation (core) and three smaller
+readers; see "Still open" below.** The parser
+now records an Edit/Write attempt and settles it against the tool_result that
+answers it. A touched entry from an attempt carries `outcome`: `ok` when the
+harness answered with a success, `error` when it answered with an error
+(`is_error: true`), `unknown` when no answer ever arrived (the session died
+mid-turn). `ok` is sticky: one landed write is a write, whatever later
+attempts to the same path did. Entries added by file-history carry no
+`outcome` key, and `via` is unchanged. The since-view keeps its path list but
+adds `touchedRefused`, marks a refused path with `(refused)` where the reader
+is looking, and ships a caveat saying what a refused marker does and does not
+mean. `touchedRefused` counts DISTINCT refused paths per session: every
+subsession receipt re-parses the whole transcript, so a per-receipt sum
+showed one refusal as "(3 refused)" after three SessionEnd firings. The text
+receipt (`renderSessionReceipt`) prints `(via: write, refused)`, and the live
+view counts `N files (M refused)` and marks the path. Receipts written before
+this change carry no `outcome` and render exactly as they did.
+
+**Still open.**
+- **retcon charter reconciliation (core).** `bin/retcon.js` `reconstruct()`
+  folds every receipt's `touched` into `touchedPaths`, a Set of bare path
+  strings, without reading `outcome`; `src/views/reconcile.js` matches
+  declared file items against that Set. So a refused Write still CONFIRMS a
+  charter item naming that file. The fix is a filter in `reconstruct()` (skip
+  items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
+  and `bin/` is wholesale core, so it waits for a signing sitting.
+  `reconcile.js` itself cannot fix it: it never sees the outcome.
+- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
+  report `touchedCount: p.touched.length`, refused attempts included.
+- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
+  straight from the transcript's tool_use and never joins the tool_result.
+- **`touchedCount` in the since-view** is still summed per receipt, so with
+  subsessions "N files touched" overcounts in the same way `touchedRefused`
+  did. That predates this limit and is left for its own change.
+
+Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
+own hook files was refused. Seq 36204 is that session's receipt, and it lists
+the hook file under `touched`. The file was unchanged on disk. The reader of
+the chain takes `touched` as a write; the transcript recorded only an attempt,
+and the attempt was refused by the gate.
+
+The mechanism is order. `parseSession` (src/parser/index.js) added a path to
+`touched` when it saw the tool_use, before and regardless of the tool_result
+that answers it. The refusal was on the chain the whole time: `failed` carried
+the error digest from the same tool_result. Nothing joined the two records, so
+a refused write and a landed write were indistinguishable in every view built
+on `touched`.
+
+**What to doubt.** `is_error` is the harness's word, self-attested, and an
+`ok` Edit can still be a no-op (the same bytes rewritten), which no parser can
+see; `ok` means the harness answered success, not that the file changed. A
+refused path is reported because the attempt happened, not because a change
+happened. Receipts written before this change carry no `outcome` and must be
+read as "attempted": absent means unrecorded, never "it landed". Non-core:
+src/parser/ and src/views/ are not on the protected list; the retcon half is
+core and is not touched here.
+
+## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
+
+`matcherVersionHash()` digests `Function.prototype.toString()` of the rule
+functions, and `toString()` returns the source text as loaded, line endings
+included. A Windows clone with `core.autocrlf=true` checks out CRLF, so the
+same commit stamps differently there than on an LF checkout (Linux, macOS,
+CI). Measured 2026-10-20 on this machine at `5198a07`: the live stamp is
+`c4165ee9ff7612bd`; the same commit recomputed from `git show` (LF) is
+`e0877fab0f459e0c`. Every receipt this machine has written carries the CRLF
+stamp, and no LF clone of the same code will ever reproduce it.
+
+Consequence for a reader: two receipts with different `matcherHash` values do
+not prove the matcher changed between them, only that the matcher source text
+differed, and a line-ending difference is enough. Limit 53's sentence "the
+matcher changed between them" is true only for receipts written from the same
+checkout configuration.
+
+Mitigation, reader side: `src/views/matcher-history.js` recomputes each commit
+in both LF and CRLF and reports which one matched (`eol`). Any other byte-level
+transform of the checkout (a BOM, a formatter run, a different `eol` attribute)
+still reads as not-found. The real fix normalizes line endings inside
+`matcherHashInputs()`; that is a change to `src/policy` (non-delegable core), so
+it waits for a signing sitting. It would not move every machine's stamp:
+`matcherHashInputs()` is not itself one of the functions it hashes, so on an LF
+checkout the hashed text is byte-identical before and after and the stamp stays
+put. Only CRLF checkouts move, onto the LF stamp. (That holds only if the
+normalization is written in `matcherHashInputs()` itself; put inside one of the
+hashed rule functions, it would move every stamp.) The receipts read across the
+change are therefore the CRLF-era ones, such as every receipt this machine has
+written, and how they are read afterwards still needs a decision.
 
 ## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
 
