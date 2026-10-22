@@ -67,7 +67,29 @@ import { claudeUserText } from '../views/chapters.js';
  *   (parallel calls) share that message's segment and carry a batch index. A
  *   real human prompt closes the open segment: reasoning that ended a turn
  *   without an action is counted as unattributed, not credited to the next
- *   turn's first action. Sidechain (subagent) lines are skipped.
+ *   turn's first action. Sidechain (subagent) lines are skipped for the
+ *   parent transcript and for traceTranscript; a child cursor keeps them
+ *   (SUBAGENTS below).
+ *
+ * SUBAGENTS
+ *   A tool call made INSIDE a subagent fires this same hook with the PARENT's
+ *   session_id and transcript_path, plus agent_id/agent_type. Measured
+ *   2026-10-22: recorded as the parent's step with the parent's cursor
+ *   advanced past bytes of the PARENT transcript. Such a call now reads the
+ *   CHILD transcript (agent_transcript_path if given, ending in .jsonl and
+ *   present, else the src/ingest/subagents.js convention
+ *   <dirname>/<sessionId>/subagents/agent-<agentId>.jsonl), keeps a separate
+ *   cursor under <home>/reasoning/cursors/agents/<safe session id>/
+ *   <sha256(agentId) first 32 hex>.json — a location a parent-call path can
+ *   never produce, and one whose agent id is hashed, not safeId'd, so no
+ *   truncation or character substitution of a long combined key can alias the
+ *   parent's cursor file (the parent's cursor is never loaded, advanced or
+ *   saved) — carries agentId/agentType on the step payload (agentType capped
+ *   at 128 characters; an agentId outside [A-Za-z0-9_-], or longer than 128
+ *   characters, is reported as `unrecorded` with reason `agent-id-invalid`
+ *   and touches no cursor), and is excluded from the parent's
+ *   reconcileTrace: a child step is evidence about the child transcript, and
+ *   only the child transcript can confirm or contradict it.
  *
  * THE RACE
  *   A hook can fire before the harness has flushed the tool_use line. Then
@@ -207,9 +229,16 @@ function isHumanPrompt(entry) {
 /**
  * Advance the scan state by one parsed transcript line. Calls onToolUse(seg)
  * for every tool_use block, with the segment that preceded it.
+ *
+ * includeSidechain defaults to false, which skips sidechain (subagent) lines:
+ * today's behaviour, kept byte-for-byte for traceTranscript (whole-trace pass,
+ * which only ever walks a parent transcript) and for a parent cursor. A child
+ * cursor is READING a sidechain transcript whose lines carry isSidechain:
+ * true; it passes true and skips nothing.
  */
-function scanEntry(entry, state, onToolUse) {
-  if (!entry || typeof entry !== 'object' || entry.isSidechain === true) return;
+function scanEntry(entry, state, onToolUse, includeSidechain = false) {
+  if (!entry || typeof entry !== 'object') return;
+  if (entry.isSidechain === true && !includeSidechain) return;
   const msg = entry.message;
   if (!msg || typeof msg !== 'object') return;
   if (msg.role === 'user') {
@@ -307,6 +336,11 @@ export function reconcileTrace(trace, chainEntries, sessionId) {
   for (const e of chainEntries || []) {
     const p = e?.payload;
     if (p && p.type === 'reasoning-step' && p.sessionId === sessionId && p.toolUseId) {
+      // A step carrying agentId was recorded from a CHILD transcript (a
+      // subagent's own reasoning, sharing only the parent's session id). It
+      // must not be counted for or against the parent's trace rows, which
+      // scan the parent transcript.
+      if (p.agentId) continue;
       const prev = steps.get(p.toolUseId);
       if (!prev || prev.status !== 'recorded') steps.set(p.toolUseId, p);
     }
@@ -366,23 +400,55 @@ function cursorPath(home, sessionId) {
   return path.join(home, 'reasoning', 'cursors', `${safeId(sessionId)}.json`);
 }
 
-function loadCursor(home, sessionId) {
+/**
+ * Child cursor location. Beside the parent cursors, in a directory of its
+ * own, keyed by the safe session id and the sha256 of the agent id (first 32
+ * hex). Two properties this gives that the old flattened key
+ * `<safeId(session)>--agent-<safeId(agent)>` (safeId'd again to 128 chars by
+ * cursorPath) did not:
+ *
+ *   - A parent cursor path is IMPOSSIBLE to produce from a child call: a
+ *     parent lives straight under cursors/, a child one level down under
+ *     agents/. A long session id once made the child key truncate back to
+ *     exactly the parent's name and the child's save overwrote the parent's
+ *     cursor.
+ *   - The agent id is hashed, not safeId'd, so `a.b` and `a_b` (which both
+ *     become `a_b` under safeId) can no longer collide.
+ */
+function childCursorPath(home, sessionId, agentId) {
+  return path.join(
+    home, 'reasoning', 'cursors', 'agents',
+    safeId(sessionId),
+    `${sha256(String(agentId)).slice(0, 32)}.json`
+  );
+}
+
+/**
+ * Read a cursor file of the EXPECTED kind: a child cursor for a child call,
+ * a parent cursor for a parent call. A cursor is a child cursor iff it
+ * carries includeSidechain: true. A cursor of the wrong kind is treated as
+ * absent, so a parent call can never adopt a strayed child cursor (or vice
+ * versa), whatever the file names happen to look like. Legacy parent cursors
+ * written before child cursors existed carry no includeSidechain key and
+ * load as parent cursors, exactly as before.
+ */
+function loadCursor(file, isSubagent) {
   try {
-    const c = JSON.parse(fs.readFileSync(cursorPath(home, sessionId), 'utf8'));
-    if (c && c.schema === CURSOR_SCHEMA) return c;
-  } catch (e) { /* absent or unreadable: start fresh */ }
+    const c = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (c && c.schema === CURSOR_SCHEMA
+        && (isSubagent ? c.includeSidechain === true : c.includeSidechain !== true)) return c;
+  } catch (e) { /* absent or unreadable, or the wrong kind: start fresh */ }
   return null;
 }
 
-function saveCursor(home, sessionId, cursor) {
-  const file = cursorPath(home, sessionId);
+function saveCursor(file, cursor) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(cursor), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 
-function newCursor(sessionId, transcriptPath) {
+function newCursor(sessionId, transcriptPath, includeSidechain = false) {
   return {
     schema: CURSOR_SCHEMA,
     sessionId,
@@ -392,7 +458,11 @@ function newCursor(sessionId, transcriptPath) {
     headDigest: null,
     state: freshState(),
     unclaimed: [],   // [{ toolUseId, tool, inputDigest, batchIndex, rows }]
-    claimed: []      // toolUseIds already on the chain
+    claimed: [],      // toolUseIds already on the chain
+    // A child cursor reads a child transcript whose lines carry
+    // isSidechain: true, so scanEntry must not skip them. Omitted for a
+    // parent cursor, so a parent cursor's shape stays exactly as before.
+    ...(includeSidechain ? { includeSidechain: true } : {})
   };
 }
 
@@ -428,7 +498,9 @@ function advanceCursor(cursor, transcriptPath) {
     }
     if (reset) {
       const claimed = cursor.claimed;
-      Object.assign(cursor, newCursor(cursor.sessionId, transcriptPath));
+      // Carry includeSidechain across a reset: a child cursor stays a child
+      // cursor after its transcript is rewritten or swapped.
+      Object.assign(cursor, newCursor(cursor.sessionId, transcriptPath, cursor.includeSidechain === true));
       cursor.claimed = claimed;   // never record the same step twice after a reset
       io.cursorReset = reset;
       io.fromOffset = 0;
@@ -444,7 +516,7 @@ function advanceCursor(cursor, transcriptPath) {
           scanEntry(entry, cursor.state, seg => {
             if (seg.toolUseId && claimedSet.has(seg.toolUseId)) return;
             cursor.unclaimed.push(seg);
-          });
+          }, cursor.includeSidechain === true);
         }
         cursor.offset += lastNl + 1;
       }
@@ -498,8 +570,13 @@ function unrecordedPayload(base, reason, io) {
  * Build (but do not append) the reasoning-step payload for one tool call,
  * updating the session's cursor. Exported for tests; the hook path is
  * recordReasoningStep below, which runs this under the chain lock.
+ *
+ * A call with agentId set is a SUBAGENT's call: it reads the child transcript
+ * and the child cursor in its own directory under cursors/agents/, and never
+ * touches the parent's cursor. Without agentId the behaviour is exactly as
+ * before agent_id existed.
  */
-export function captureStep({ home, sessionId, transcriptPath, toolUseId, toolName, toolInput, now = Date.now }) {
+export function captureStep({ home, sessionId, transcriptPath, toolUseId, toolName, toolInput, agentId, agentType, agentTranscriptPath, now = Date.now }) {
   const started = process.hrtime.bigint();
   const base = {
     type: 'reasoning-step',
@@ -508,22 +585,84 @@ export function captureStep({ home, sessionId, transcriptPath, toolUseId, toolNa
     toolUseId: toolUseId || null,
     tool: toolName || 'unknown'
   };
+  // A whitespace-only agentId is absent, here exactly as recordReasoningStep
+  // treats it (it trims before passing): the agent id names a cursor file,
+  // and blank is not a name.
+  const agentIdNorm = typeof agentId === 'string' && agentId.trim() !== '' ? agentId.trim() : null;
+  const isSubagent = agentIdNorm !== null;
+  if (isSubagent) {
+    base.agentId = agentIdNorm;
+    base.agentType = typeof agentType === 'string' && agentType !== '' ? agentType.slice(0, 128) : null;
+  }
   const finish = p => ({ ...p, captureMs: Number(process.hrtime.bigint() - started) / 1e6, timestamp: now() });
 
   if (!sessionId) return finish(unrecordedPayload(base, 'no-session-id'));
-  if (typeof transcriptPath !== 'string' || transcriptPath === '') return finish(unrecordedPayload(base, 'no-transcript-path'));
-  if (!fs.existsSync(transcriptPath)) return finish(unrecordedPayload(base, 'transcript-missing'));
 
-  const cursor = loadCursor(home, sessionId) || newCursor(sessionId, transcriptPath);
+  // agent_id hardening. The id is joined verbatim into the convention
+  // transcript path (agent-<agentId>.jsonl), so it must be a single safe
+  // path component: only [A-Za-z0-9_-], at most 128 characters. An id like
+  // `../../x` must never escape subagents/. The rejected call touches no
+  // cursor: neither file is read, written or created.
+  if (isSubagent && !/^[A-Za-z0-9_-]{1,128}$/.test(agentIdNorm)) {
+    return finish(unrecordedPayload(base, 'agent-id-invalid'));
+  }
+
+  // Which transcript to read and which cursor FILE to advance. A subagent's
+  // call fires with the PARENT's session_id, so keying the cursor by session
+  // id alone had a child's call claiming — and advancing — the parent's
+  // cursor past bytes of the parent's transcript (measured 2026-10-22). A
+  // child cursor lives in its own directory under cursors/agents/
+  // (childCursorPath); the parent's cursor file is never loaded, advanced or
+  // saved by a child call.
+  let readPath;
+  let cursorFile;
+  if (isSubagent) {
+    // Child transcript resolution: agent_transcript_path wins when it is
+    // given, ends in .jsonl (anything else is ignored, not trusted as a
+    // transcript: the fallback convention path is used instead), and exists.
+    // Otherwise the same convention src/ingest/subagents.js
+    // (collectSubagents) reads:
+    // <dirname>/<sessionId>/subagents/agent-<agentId>.jsonl.
+    if (typeof agentTranscriptPath === 'string' && agentTranscriptPath !== ''
+        && agentTranscriptPath.endsWith('.jsonl') && fs.existsSync(agentTranscriptPath)) {
+      readPath = agentTranscriptPath;
+    } else if (typeof transcriptPath === 'string' && transcriptPath !== '') {
+      const convention = path.join(
+        path.dirname(transcriptPath),
+        path.basename(transcriptPath, '.jsonl'),
+        'subagents',
+        `agent-${agentIdNorm}.jsonl`
+      );
+      if (!fs.existsSync(convention)) {
+        // No cursor is touched on this path: the parent's cursor is not
+        // loaded, advanced or saved, and no child cursor file is created.
+        return finish(unrecordedPayload(base, 'subagent-transcript-not-found'));
+      }
+      readPath = convention;
+    } else {
+      // A subagent call may carry agent_transcript_path without a parent
+      // transcript_path; it still records, from the agent transcript. What
+      // names no readable transcript is reported here and touches no cursor.
+      return finish(unrecordedPayload(base, 'no-transcript-path'));
+    }
+    cursorFile = childCursorPath(home, sessionId, agentIdNorm);
+  } else {
+    if (typeof transcriptPath !== 'string' || transcriptPath === '') return finish(unrecordedPayload(base, 'no-transcript-path'));
+    if (!fs.existsSync(transcriptPath)) return finish(unrecordedPayload(base, 'transcript-missing'));
+    readPath = transcriptPath;
+    cursorFile = cursorPath(home, sessionId);
+  }
+
+  const cursor = loadCursor(cursorFile, isSubagent) || newCursor(sessionId, readPath, isSubagent);
   let io;
   try {
-    io = advanceCursor(cursor, transcriptPath);
+    io = advanceCursor(cursor, readPath);
   } catch (e) {
     return finish(unrecordedPayload(base, `transcript-unreadable: ${e.code || 'error'}`));
   }
   io.malformedLines = cursor.state.malformedLines;
   const hit = claim(cursor, { toolUseId, toolName, toolInput });
-  saveCursor(home, sessionId, cursor);
+  saveCursor(cursorFile, cursor);
 
   if (!hit) return finish(unrecordedPayload(base, 'tool-use-not-in-transcript', io));
 
@@ -573,7 +712,17 @@ export function recordReasoningStep(hookPayload, { home } = {}) {
       transcriptPath: typeof p.transcript_path === 'string' ? p.transcript_path : null,
       toolUseId: typeof p.tool_use_id === 'string' && p.tool_use_id ? p.tool_use_id : null,
       toolName: typeof p.tool_name === 'string' ? p.tool_name : null,
-      toolInput: p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : undefined
+      toolInput: p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : undefined,
+      // PostToolUse also fires for calls made INSIDE a subagent, carrying the
+      // PARENT's session_id and transcript_path, plus agent_id/agent_type (and
+      // optionally agent_transcript_path). Without reading these, a child's
+      // call was recorded as a reasoning step of the parent and advanced the
+      // parent's cursor past bytes of the parent transcript.
+      agentId: typeof p.agent_id === 'string' && p.agent_id.trim() ? p.agent_id : null,
+      agentType: typeof p.agent_type === 'string' && p.agent_type.trim() ? p.agent_type : null,
+      agentTranscriptPath: typeof p.agent_transcript_path === 'string' && p.agent_transcript_path.trim()
+        ? p.agent_transcript_path
+        : null
     };
     const store = createStore(home);
     // withChain:false: the step never consults the chain, only the lock. With
