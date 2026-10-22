@@ -1,7 +1,11 @@
 /**
- * src/reach/index.js
+ * src/reach/certificate.js
  *
  * The reach certificate (Lotor v3, work order V3-02).
+ *
+ * (src/reach/index.js is the V3-05 observer, observeRungs and reachReport.
+ * The certificate lives beside it in its own module so the two lanes do not
+ * share one file.)
  *
  * WHAT IT IS
  *   A statement, on the chain, of how deep the record of a session goes: the

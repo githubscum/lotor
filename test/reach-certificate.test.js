@@ -46,7 +46,7 @@ import {
   measureCloseCertificate,
   attachOpenReference,
   checkCertificate
-} from '../src/reach/index.js';
+} from '../src/reach/certificate.js';
 import { parseSession } from '../src/parser/index.js';
 import { verifyChain } from '../src/chain/index.js';
 

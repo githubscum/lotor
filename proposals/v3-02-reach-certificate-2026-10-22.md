@@ -16,11 +16,11 @@ field out.
 
 | Part | Where | State |
 |---|---|---|
-| Certificate builder, measurer, checker | `src/reach/index.js` (new) | in the branch |
+| Certificate builder, measurer, checker | `src/reach/certificate.js` (new; `src/reach/index.js` is #60's V3-05 observer) | in the branch |
 | Close half on every session receipt | `src/ingest/index.js` | in the branch |
 | Tests | `test/reach-certificate.test.js` | in the branch; one marked todo |
 | Open half on the session-open receipt | `bin/hook-session-start.js` | **staged**: `v3-02-session-open-reach.patch` |
-| Classification of `src/reach` | `test/core-classification.test.js` or core-paths + policy | **left for the owner**; that test fails until decided |
+| Classification of `src/reach` | `test/core-classification.test.js` or core-paths + policy | **left for the owner**; that test fails on this branch alone. #60 (merges first) adds `reach` to GRANTABLE, which settles it for both modules unless the owner reverses it |
 
 The hook is gated by the self-mod rule in every mode, so the lane did not
 apply the two-line wiring. It is staged as a patch (`git apply --check`
