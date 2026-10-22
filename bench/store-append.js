@@ -10,6 +10,13 @@
  *     node bench/store-append.js            # sizes 0, 10000, 40000
  *     node bench/store-append.js 0 1000     # custom sizes
  *
+ * It measures whichever store module is LIVE at src/store/index.js. Before the
+ * tail-append candidate lands, that is main's module, so a plain run gives the
+ * "before" numbers. The "after" numbers come from the same bench run against
+ * the candidate through the test-only module hook:
+ *
+ *     NODE_OPTIONS="--import=file:///<repo>/proposals/store-tail-append/run-against-candidate.mjs" node bench/store-append.js
+ *
  * Every step is measured in-process, the way a hook that already exists pays
  * it (node start-up excluded), in the two shapes the code base uses:
  *

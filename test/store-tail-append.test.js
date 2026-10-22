@@ -13,9 +13,15 @@
  * find the previous entry, and store.entries is loaded on first access instead
  * of at construction. Anything that is not a well-formed tail (torn last line,
  * no trailing newline, an unparseable or non-entry last line) falls back to the
- * old full-read path, so the bytes written are the same as before in every
- * case. The fidelity tests below check that byte for byte against a reference
- * implementation of the old append path.
+ * old full-read path. The fidelity tests below check the bytes written against
+ * a reference implementation of the old append path. They are identical in
+ * every scenario except one class, pinned on purpose below ("the one
+ * documented divergence"): a file whose parseable-line count is not
+ * tail.seq + 1 because an entry line before the last was lost or added.
+ *
+ * On the branch, before landing, createStore here IS main's store module, so
+ * the fidelity tests also check the reference implementation (oldAppend)
+ * against main's real appendReceipt, field by field and byte for byte.
  */
 
 import { describe, it, afterEach } from 'node:test';
@@ -39,13 +45,28 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * The store change itself is core (src/store) and lands under signature at a
  * signing sitting: the candidate is proposals/store-tail-append/index.js.
  * Until it lands, the tests that need it run as `todo` (they still run and
- * report; a failure does not fail the suite). After landing, set this to {}
- * so they become ordinary tests.
+ * report; a failure does not fail the suite).
  *
- * To run the whole suite against the candidate before landing:
+ * LANDING: set PENDING_LANDING = {} IN THE SAME COMMIT as the src/store file
+ * replacement, not in a follow-up. The "landing tripwire" test below fails
+ * `npm test` if the two disagree: candidate in place with tests still todo,
+ * or tests flipped with the candidate not in place.
+ *
+ * To run the whole suite against the candidate before landing (the tests
+ * below then run as ordinary tests, not todo):
  *   NODE_OPTIONS="--import=file:///<repo>/proposals/store-tail-append/run-against-candidate.mjs" npm test
+ * (absolute URL: some tests spawn children in a temp cwd)
  */
 const PENDING_LANDING = { todo: 'needs proposals/store-tail-append landed in src/store (signing sitting)' };
+
+/** Set by proposals/store-tail-append/run-against-candidate.mjs when active. */
+const HOOK_ACTIVE = Boolean(globalThis[Symbol.for('lotor.storeCandidateHook')]);
+
+/** The store module in play is the tail-append one (landed, or via the hook). */
+const CANDIDATE_LOADED = typeof storeMod.readChainTail === 'function';
+
+/** Options for tests that need the candidate. Ordinary tests under the hook. */
+const NEEDS_CANDIDATE = HOOK_ACTIVE ? {} : PENDING_LANDING;
 
 let tempDirs = [];
 function tempHome(prefix = 'lotor-tail-') {
@@ -155,8 +176,36 @@ function scenarios(keyPair) {
     'last line complete but no trailing newline': clean.slice(0, -1),
     'unparseable last line, newline-terminated': clean + 'garbage\n',
     'last line is JSON but not an entry': clean + '{"hello":"world"}\n',
-    'corrupt line in the middle': linesOf(two) + 'garbage\n'
+    // Garbage BETWEEN two valid entries (inserted, nothing lost): the
+    // parseable count still equals tail.seq + 1, so the paths agree. A line
+    // that REPLACES an entry is the divergent class, tested separately below.
+    'corrupt line in the middle': linesOf([two[0]]) + 'garbage\n' + linesOf([two[1]]),
+    'blank bytes only, no trailing newline': '   '
   };
+}
+
+/**
+ * The divergent class: an entry line before the last is lost or added, so
+ * the parseable-line count is not tail.seq + 1. Each returns the seed bytes
+ * and the seq each path is expected to choose for the next append.
+ */
+function divergentScenarios(keyPair) {
+  const five = seedEntries(keyPair, 5, 'div');
+  const lines = five.map((e) => JSON.stringify(e));
+  return { tail: five[4], cases: {
+    'entry line replaced by garbage mid-chain': {
+      seed: [lines[0], lines[1], 'garbage', lines[3], lines[4]].join('\n') + '\n',
+      oldSeq: 4, newSeq: 5, brokenAt: 2
+    },
+    'entry line deleted mid-chain': {
+      seed: [lines[0], lines[1], lines[3], lines[4]].join('\n') + '\n',
+      oldSeq: 4, newSeq: 5, brokenAt: 2
+    },
+    'entry line duplicated mid-chain': {
+      seed: [lines[0], lines[1], lines[1], lines[2], lines[3], lines[4]].join('\n') + '\n',
+      oldSeq: 6, newSeq: 5, brokenAt: 2
+    }
+  } };
 }
 
 // --------------------------------------------------------------------------
@@ -224,6 +273,67 @@ describe('store tail-only append: fidelity with the old full-read path', () => {
   });
 });
 
+describe('store tail-only append: the one documented divergence from the old path', () => {
+  // A chain whose parseable-line count is not tail.seq + 1. The old path took
+  // seq = count (reusing or skipping a seq already on disk); the tail path
+  // takes tail.seq + 1. prevHash is the same. The chain fails verifyChain at
+  // the gap both before and after the append, so the append does not turn a
+  // good chain bad. Pinned deliberately: if this starts failing, either the
+  // fast path learned to fall back here (update the docs) or seq changed.
+  const names = Object.keys(divergentScenarios(loadOrCreateKeyPair(tempHome('lotor-tail-keys-'))).cases);
+  for (const name of names) {
+    it(`old and tail paths choose different seqs: ${name}`, NEEDS_CANDIDATE, () => {
+      const { a, b, keyPair } = twinHomes();
+      const { tail, cases } = divergentScenarios(keyPair);
+      const { seed, oldSeq, newSeq, brokenAt } = cases[name];
+      fs.writeFileSync(chainFileOf(a), seed);
+      fs.writeFileSync(chainFileOf(b), seed);
+      const pub = crypto.createPublicKey(keyPair.publicKey);
+      const before = verifyChain(loadChain(a), pub);
+      assert.strictEqual(before.ok, false);
+      assert.strictEqual(before.brokenAt, brokenAt);
+
+      const payload = { divergent: name };
+      const oldEntry = withDeterminism(() => oldAppend(a, keyPair, payload));
+      const newEntry = withDeterminism(() => createStore(b).appendReceipt(payload));
+
+      assert.strictEqual(oldEntry.seq, oldSeq, 'old path seq (parseable count)');
+      assert.strictEqual(newEntry.seq, newSeq, 'tail path seq (tail.seq + 1)');
+      assert.strictEqual(newEntry.seq, tail.seq + 1);
+      assert.strictEqual(oldEntry.prevHash, tail.hash);
+      assert.strictEqual(newEntry.prevHash, tail.hash);
+      assert.ok(!fs.readFileSync(chainFileOf(a)).equals(fs.readFileSync(chainFileOf(b))),
+        'bytes are expected to differ in this class');
+
+      for (const home of [a, b]) {
+        const after = verifyChain(loadChain(home), pub);
+        assert.strictEqual(after.ok, false);
+        assert.strictEqual(after.brokenAt, brokenAt, 'the break stays where it was');
+      }
+    });
+  }
+});
+
+describe('store tail-only append: landing tripwire', () => {
+  it('PENDING_LANDING agrees with the store module actually in place', () => {
+    const pending = Object.keys(PENDING_LANDING).length > 0;
+    if (HOOK_ACTIVE) {
+      assert.ok(CANDIDATE_LOADED,
+        'the candidate hook is active but the store module has no readChainTail: ' +
+        'the import was not redirected, so this run is against the live module');
+      return;
+    }
+    if (CANDIDATE_LOADED) {
+      assert.ok(!pending,
+        'src/store is the tail-append module but PENDING_LANDING still marks its tests todo. ' +
+        'Set PENDING_LANDING = {} in the same commit as the file replacement.');
+    } else {
+      assert.ok(pending,
+        'PENDING_LANDING is {} but src/store does not export readChainTail: the candidate has not landed.');
+    }
+  });
+});
+
 describe('store tail-only append: reading the tail', () => {
   const readChainTail = (home) => {
     assert.strictEqual(typeof storeMod.readChainTail, 'function', 'readChainTail is not exported');
@@ -237,13 +347,16 @@ describe('store tail-only append: reading the tail', () => {
     return home;
   }
 
-  it('reports empty for a missing, empty, or whitespace-only file', PENDING_LANDING, () => {
+  it('reports empty for a missing, empty, or whitespace-only file', NEEDS_CANDIDATE, () => {
     assert.deepStrictEqual(readChainTail(homeWith(null)), { status: 'empty' });
     assert.deepStrictEqual(readChainTail(homeWith('')), { status: 'empty' });
     assert.deepStrictEqual(readChainTail(homeWith('\n \r\n\t\n')), { status: 'empty' });
+    // Blank bytes with no trailing newline: an append would be glued on, so
+    // it is an anomaly (the full-read fallback handles it), not 'empty'.
+    assert.strictEqual(readChainTail(homeWith('   ')).status, 'anomaly');
   });
 
-  it('returns the last entry of a clean chain, with or without trailing blank lines, LF or CRLF', PENDING_LANDING, () => {
+  it('returns the last entry of a clean chain, with or without trailing blank lines, LF or CRLF', NEEDS_CANDIDATE, () => {
     const keyPair = loadOrCreateKeyPair(tempHome());
     const es = seedEntries(keyPair, 4);
     for (const bytes of [linesOf(es), linesOf(es) + '\n\n', linesOf(es, '\r\n'), linesOf(es, '\r\n') + '\r\n']) {
@@ -253,7 +366,7 @@ describe('store tail-only append: reading the tail', () => {
     }
   });
 
-  it('finds a last line larger than the read chunk', PENDING_LANDING, () => {
+  it('finds a last line larger than the read chunk', NEEDS_CANDIDATE, () => {
     const keyPair = loadOrCreateKeyPair(tempHome());
     const chain = createChain(keyPair, 0, []);
     chain.append({ small: true });
@@ -263,7 +376,7 @@ describe('store tail-only append: reading the tail', () => {
     assert.strictEqual(r.tail.hash, big.hash);
   });
 
-  it('handles a single-entry file and multi-byte UTF-8 in the tail', PENDING_LANDING, () => {
+  it('handles a single-entry file and multi-byte UTF-8 in the tail', NEEDS_CANDIDATE, () => {
     const keyPair = loadOrCreateKeyPair(tempHome());
     const chain = createChain(keyPair, 0, []);
     const e = chain.append({ note: 'grüße \u{1F531} 中文' });
@@ -272,7 +385,7 @@ describe('store tail-only append: reading the tail', () => {
     assert.deepStrictEqual(r.tail, e);
   });
 
-  it('never treats a torn last line as the tail', PENDING_LANDING, () => {
+  it('never treats a torn last line as the tail', NEEDS_CANDIDATE, () => {
     const keyPair = loadOrCreateKeyPair(tempHome());
     const es = seedEntries(keyPair, 3);
     const torn = JSON.stringify(createChain(keyPair, 3, es).append({ t: 1 }));
@@ -284,7 +397,7 @@ describe('store tail-only append: reading the tail', () => {
     }
   });
 
-  it('flags non-entry and unparseable last lines as anomalies', PENDING_LANDING, () => {
+  it('flags non-entry and unparseable last lines as anomalies', NEEDS_CANDIDATE, () => {
     const keyPair = loadOrCreateKeyPair(tempHome());
     const es = seedEntries(keyPair, 2);
     for (const tailLine of ['garbage', '{"hello":"world"}', 'null', '0', '{"seq":"1","hash":"x"}',
@@ -371,7 +484,7 @@ describe('store tail-only append: cost does not depend on chain length', () => {
     return { home, es };
   }
 
-  it('createStore does not read the chain until entries is used', PENDING_LANDING, () => {
+  it('createStore does not read the chain until entries is used', NEEDS_CANDIDATE, () => {
     const { home, es } = bigHome(2000);
     let store;
     const r = instrumentReads(chainFileOf(home), () => { store = createStore(home); });
@@ -381,7 +494,7 @@ describe('store tail-only append: cost does not depend on chain length', () => {
     assert.strictEqual(store.entries[es.length - 1].hash, es[es.length - 1].hash);
   });
 
-  it('appendReceipt reads only the tail of a clean chain', PENDING_LANDING, () => {
+  it('appendReceipt reads only the tail of a clean chain', NEEDS_CANDIDATE, () => {
     const { home, es } = bigHome(2000);
     const size = fs.statSync(chainFileOf(home)).size;
     const store = createStore(home);
@@ -394,7 +507,7 @@ describe('store tail-only append: cost does not depend on chain length', () => {
     assert.strictEqual(entry.prevHash, es[es.length - 1].hash);
   });
 
-  it('createStore + appendReceiptGuarded(build, { withChain: false }) reads only the tail', PENDING_LANDING, () => {
+  it('createStore + appendReceiptGuarded(build, { withChain: false }) reads only the tail', NEEDS_CANDIDATE, () => {
     const { home, es } = bigHome(2000);
     let entry;
     let argCount = -1;

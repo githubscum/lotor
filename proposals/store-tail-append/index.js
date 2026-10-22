@@ -21,8 +21,18 @@ import { withLock } from './lock.js';
  * length (eval E5: ~6 ms at 0 entries, ~93 ms median at 30k). Now an append
  * on a well-formed chain reads only the end of the file under the lock
  * (readChainTail), and store.entries is loaded on first access. Anything that
- * is not a well-formed tail falls back to the full-read path, unchanged, so
- * the bytes written are the same as before in every case.
+ * is not a well-formed tail falls back to the full-read path, unchanged.
+ *
+ * The bytes written are the same as before EXCEPT in one class of file: one
+ * where the number of parseable lines is not tail.seq + 1, because an entry
+ * line before the last was lost or added (overwritten with garbage, deleted,
+ * or duplicated, by hand or by disk damage). There the old path took
+ * seq = parseable count, which reuses or skips a seq already on disk, and the
+ * fast path takes tail.seq + 1. prevHash is the same on both paths. Such a
+ * chain already fails verifyChain at the gap (prevHash link), before and after
+ * the append. A chain written only by this store never falls in that class,
+ * including after a torn-tail glue. See test/store-tail-append.test.js,
+ * "the one documented divergence".
  */
 
 const DEFAULT_BASE_DIR = '.';
@@ -155,12 +165,17 @@ function readFullyAt(fd, buf, pos) {
  *   - it parses, but is not an entry (no non-negative integer seq, or no
  *     64-hex hash).
  *
- * Must be called under the chain lock when the result feeds an append.
+ * Read-only. Must be called under the chain lock (withLock) when the result
+ * feeds an append: building an entry from it and writing it outside the lock
+ * is the same race as doing so with loadChain + appendEntry.
  *
  * @param {string} baseDir - Lotor home (the dir that contains receipts/)
  * @returns {{status: 'empty'} | {status: 'ok', tail: Object} | {status: 'anomaly', reason: string}}
- *   'empty' when the file is missing, zero-length, or only blank lines
- *   (loadChain returns [] for all three).
+ *   'empty' when the file is missing, zero-length, or consists only of blank
+ *   bytes (space, tab, CR, LF) AND ends in "\n". A blank-only file with no
+ *   trailing newline (e.g. "   ") is an 'anomaly', because the next append
+ *   would be glued onto it; the fallback full read handles it exactly as
+ *   before (loadChain returns [] for all of these).
  */
 function readChainTail(baseDir = DEFAULT_BASE_DIR) {
   const chainFile = path.join(baseDir, 'receipts', 'chain.jsonl');
@@ -358,7 +373,13 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
 
       // seq: on a chain written only by this store, every entry's seq equals
       // the number of parseable entries before it, so tail.seq + 1 is exactly
-      // what loadChain(...).length would give.
+      // what loadChain(...).length would give. If a line before the tail was
+      // lost or added (see the module comment) the two differ, and this path
+      // does NOT fall back: detecting it needs the parseable-line count, which
+      // is the full read this path exists to avoid (no O(1) signal in the tail
+      // carries it). tail.seq + 1 is also the safer of the two values: the
+      // count reuses or skips a seq already on disk. The chain is already
+      // broken at the gap either way (verifyChain fails on prevHash there).
       const seq = prev ? prev.seq + 1 : 0;
       const entry = createChain(keyPair, seq, prev ? [prev] : []).append(payload);
       appendEntry(entry, baseDir);

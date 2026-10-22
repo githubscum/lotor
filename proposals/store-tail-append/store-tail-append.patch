@@ -1,5 +1,5 @@
 diff --git a/src/store/index.js b/src/store/index.js
-index 4ae6197..82b1dd5 100644
+index 4ae6197..463a5b8 100644
 --- a/src/store/index.js
 +++ b/src/store/index.js
 @@ -1,7 +1,7 @@
@@ -11,7 +11,7 @@ index 4ae6197..82b1dd5 100644
  import { withLock } from './lock.js';
  
  /**
-@@ -13,10 +13,26 @@ import { withLock } from './lock.js';
+@@ -13,10 +13,36 @@ import { withLock } from './lock.js';
   * This key signs the CHAIN (integrity of the log). It is NOT the approval/gate
   * key. That one is the owner's passphrase-derived key.
   * The distinction: chain key = log integrity; approval key = authorization gate.
@@ -23,8 +23,18 @@ index 4ae6197..82b1dd5 100644
 + * length (eval E5: ~6 ms at 0 entries, ~93 ms median at 30k). Now an append
 + * on a well-formed chain reads only the end of the file under the lock
 + * (readChainTail), and store.entries is loaded on first access. Anything that
-+ * is not a well-formed tail falls back to the full-read path, unchanged, so
-+ * the bytes written are the same as before in every case.
++ * is not a well-formed tail falls back to the full-read path, unchanged.
++ *
++ * The bytes written are the same as before EXCEPT in one class of file: one
++ * where the number of parseable lines is not tail.seq + 1, because an entry
++ * line before the last was lost or added (overwritten with garbage, deleted,
++ * or duplicated, by hand or by disk damage). There the old path took
++ * seq = parseable count, which reuses or skips a seq already on disk, and the
++ * fast path takes tail.seq + 1. prevHash is the same on both paths. Such a
++ * chain already fails verifyChain at the gap (prevHash link), before and after
++ * the append. A chain written only by this store never falls in that class,
++ * including after a torn-tail glue. See test/store-tail-append.test.js,
++ * "the one documented divergence".
   */
  
  const DEFAULT_BASE_DIR = '.';
@@ -38,7 +48,7 @@ index 4ae6197..82b1dd5 100644
  /**
   * Ensure directory exists.
   */
-@@ -103,6 +119,121 @@ function loadChain(baseDir = DEFAULT_BASE_DIR) {
+@@ -103,6 +129,126 @@ function loadChain(baseDir = DEFAULT_BASE_DIR) {
    }).filter(Boolean);
  }
  
@@ -78,12 +88,17 @@ index 4ae6197..82b1dd5 100644
 + *   - it parses, but is not an entry (no non-negative integer seq, or no
 + *     64-hex hash).
 + *
-+ * Must be called under the chain lock when the result feeds an append.
++ * Read-only. Must be called under the chain lock (withLock) when the result
++ * feeds an append: building an entry from it and writing it outside the lock
++ * is the same race as doing so with loadChain + appendEntry.
 + *
 + * @param {string} baseDir - Lotor home (the dir that contains receipts/)
 + * @returns {{status: 'empty'} | {status: 'ok', tail: Object} | {status: 'anomaly', reason: string}}
-+ *   'empty' when the file is missing, zero-length, or only blank lines
-+ *   (loadChain returns [] for all three).
++ *   'empty' when the file is missing, zero-length, or consists only of blank
++ *   bytes (space, tab, CR, LF) AND ends in "\n". A blank-only file with no
++ *   trailing newline (e.g. "   ") is an 'anomaly', because the next append
++ *   would be glued onto it; the fallback full read handles it exactly as
++ *   before (loadChain returns [] for all of these).
 + */
 +function readChainTail(baseDir = DEFAULT_BASE_DIR) {
 +  const chainFile = path.join(baseDir, 'receipts', 'chain.jsonl');
@@ -160,7 +175,7 @@ index 4ae6197..82b1dd5 100644
  /**
   * Append a receipt (chain entry) to the append-only chain file.
   * Creates the chain file if it doesn't exist.
-@@ -135,15 +266,117 @@ function appendEntry(entry, baseDir = DEFAULT_BASE_DIR) {
+@@ -135,15 +281,123 @@ function appendEntry(entry, baseDir = DEFAULT_BASE_DIR) {
   */
  function createStore(baseDir = DEFAULT_BASE_DIR) {
    const keyPair = loadOrCreateKeyPair(baseDir);
@@ -261,7 +276,13 @@ index 4ae6197..82b1dd5 100644
 +
 +      // seq: on a chain written only by this store, every entry's seq equals
 +      // the number of parseable entries before it, so tail.seq + 1 is exactly
-+      // what loadChain(...).length would give.
++      // what loadChain(...).length would give. If a line before the tail was
++      // lost or added (see the module comment) the two differ, and this path
++      // does NOT fall back: detecting it needs the parseable-line count, which
++      // is the full read this path exists to avoid (no O(1) signal in the tail
++      // carries it). tail.seq + 1 is also the safer of the two values: the
++      // count reuses or skips a seq already on disk. The chain is already
++      // broken at the gap either way (verifyChain fails on prevHash there).
 +      const seq = prev ? prev.seq + 1 : 0;
 +      const entry = createChain(keyPair, seq, prev ? [prev] : []).append(payload);
 +      appendEntry(entry, baseDir);
@@ -284,7 +305,7 @@ index 4ae6197..82b1dd5 100644
      keyPair,
  
      /**
-@@ -153,28 +386,14 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+@@ -153,28 +407,14 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
       * so two processes appending at the same time cannot compute the same seq
       * or the same prevHash. Locking only the write would not be enough.
       *
@@ -317,7 +338,7 @@ index 4ae6197..82b1dd5 100644
      },
  
      /**
-@@ -187,32 +406,22 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+@@ -187,32 +427,22 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
       * read-decide-append sequence runs under withLock so the view buildPayload
       * sees is the same view the append lands on.
       *
@@ -362,7 +383,7 @@ index 4ae6197..82b1dd5 100644
      },
  
      /**
-@@ -221,11 +430,12 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+@@ -221,11 +451,12 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
       */
      reload() {
        const entries = loadChain(baseDir);
@@ -379,7 +400,7 @@ index 4ae6197..82b1dd5 100644
      },
  
      /**
-@@ -235,7 +445,7 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+@@ -235,7 +466,7 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
      verify() {
        // Import public key from PEM for verification
        const publicKey = crypto.createPublicKey(keyPair.publicKey);
@@ -388,7 +409,7 @@ index 4ae6197..82b1dd5 100644
      }
    };
  }
-@@ -243,6 +453,7 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+@@ -243,6 +474,7 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
  export {
    createStore,
    loadChain,
