@@ -13,30 +13,53 @@
  *   describeToolResponse(toolResponse) returns the `toolIo` object a receipt
  *   embeds. Recorded:
  *
- *     { schema: 'toolio/1',
+ *     { schema: 'toolio/1', hash: <16 hex>,
  *       response: { recorded: true, digest: <64 hex>, bytes: <int>,
  *                   error: true | false | null } }
  *
  *   Unrecorded (no digest field AT ALL, never an empty or sentinel digest):
  *
- *     { schema: 'toolio/1',
+ *     { schema: 'toolio/1', hash: <16 hex>,
  *       response: { recorded: false, reason: 'absent' | 'null' | 'unserializable' } }
  *
  *   'absent' means the host payload had no tool_response. 'null' means the host
- *   sent tool_response: null. 'unserializable' means a value was there and could
- *   not be put into canonical form (circular, BigInt, a bare function). In every
- *   one of those the honest reading is "Lotor did not see what came back", which
- *   is a different fact from "the tool returned nothing". A tool that returned
- *   an empty string or an empty object IS recorded, with the digest of `""` or
+ *   sent tool_response: null. 'unserializable' means a value was there and has
+ *   no exact JSON form (see THE CANONICAL FORM, step 0). In every one of those
+ *   the honest reading is "Lotor did not see what came back", which is a
+ *   different fact from "the tool returned nothing". A tool that returned an
+ *   empty string or an empty object IS recorded, with the digest of `""` or
  *   `{}`, because an empty answer is still an answer.
  *
+ * THE CODE STAMP (`hash`)
+ *   `schema` names the method; `hash` names the code that ran it, the same pair
+ *   the session-start receipt carries as `parser: { schema, hash }`. It is the
+ *   first 16 hex of SHA-256 over the source text of every function in this
+ *   module that shapes the record (toolioVersionHash below). An edit to any of
+ *   them moves the stamp even if nobody remembers to bump the schema, so two
+ *   `toolio/1` entries made by different code are told apart on the chain.
+ *   Unlike matcherHash and parserVersionHash, the source text has CRLF folded
+ *   to LF before hashing, so a CRLF checkout and an LF checkout of the same
+ *   commit stamp the same.
+ *
  * THE toolio/1 CANONICAL FORM (bump the marker if any of this changes)
+ *   0. The value must have an exact JSON form, or it is 'unserializable'.
+ *      Rejected anywhere in the tree: undefined, a function, a symbol, a
+ *      BigInt, NaN or an infinity, an array hole, a symbol-keyed property, an
+ *      object whose prototype is neither Object.prototype nor null (a Date, a
+ *      Map, a class instance: anything whose JSON.stringify output is not its
+ *      own keys), and a cycle. Each of these is something JSON.stringify would
+ *      silently drop, null out or substitute, so two different values would
+ *      share a digest. A value from JSON.parse never trips this.
  *   1. Every STRING LEAF has each CRLF ("\r\n") replaced by LF ("\n"). A lone
  *      CR is left alone: it is content (progress bars, old Mac files), not a
  *      line ending. Object KEYS are not rewritten.
- *   2. Object keys sorted recursively at every depth, arrays kept in order:
- *      the params/1 canonicalizer, imported from src/parser/index.js rather
- *      than copied a third time.
+ *   2. Object keys sorted at every depth, arrays kept in order. Built into
+ *      null-prototype objects, so an own "__proto__" key (which JSON.parse
+ *      creates) is kept as data instead of being swallowed by the inherited
+ *      setter. Byte-identical to the params/1 canonicalizer in
+ *      src/parser/index.js for every value without such a key; deliberately
+ *      not that function, whose object-literal pattern drops the key (see
+ *      KNOWN-LIMITS 78) and whose output is pinned on gate receipts already.
  *   3. JSON.stringify of the result, UTF-8 encoded.
  *   digest = full SHA-256 hex of those bytes (64 chars; no truncation, for the
  *   same birthday-bound reason as paramsDigestCanonical). bytes = their count.
@@ -58,6 +81,19 @@
  *   signal", NOT "succeeded". Grepping stderr for the word "error" would be
  *   judging content, which is the meter's job, not the witness's.
  *
+ *   PRECEDENCE OVER THE LEGACY responseOk. The egress-event receipt also
+ *   carries `responseOk`, computed in bin/hook-post-tool-use.js. It treats ANY
+ *   `error` key that is not undefined or null as failure, so it reads
+ *   `error: false`, `error: ''` and `error: 0` as "not ok", where this module
+ *   reads false, null and null. On those inputs one signed receipt carries two
+ *   readings that disagree. When `toolIo.response.recorded` is true, `toolIo`
+ *   is authoritative: `error === false` means the host said it succeeded,
+ *   `error === true` that it failed, `null` that it said nothing a reader can
+ *   use. `responseOk` is kept only so older readers keep working. On every
+ *   other input the two agree (`responseOk === !error`, or both null), and
+ *   test/hook-post-tool-use-toolio.test.js holds both halves of that against
+ *   the real hook. Tightening responseOk is a core edit and is not staged.
+ *
  * PRIVACY
  *   No response content, no prefix, no excerpt, no field name from the
  *   response is ever returned. Two things DO leave: the size (bytes), and a
@@ -68,23 +104,58 @@
  */
 
 import crypto from 'node:crypto';
-import { canonicalize } from '../parser/index.js';
 
 export const TOOLIO_SCHEMA = 'toolio/1';
 
 /**
- * Replace CRLF with LF in every string leaf, recursively. Keys untouched.
- * Returns a new structure; the caller's value is never mutated.
+ * Steps 0 to 2 of the canonical form in one walk: reject anything without an
+ * exact JSON form, fold CRLF in string leaves, sort keys into null-prototype
+ * objects. Returns a new structure; the caller's value is never mutated.
+ * Throws a TypeError on anything step 0 rejects.
  * @param {*} value
+ * @param {Set<object>} ancestors - the objects on the current path (cycle check)
  * @returns {*}
  */
-function normalizeLineEndings(value) {
-  if (typeof value === 'string') return value.replace(/\r\n/g, '\n');
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(normalizeLineEndings);
-  const out = {};
-  for (const k of Object.keys(value)) out[k] = normalizeLineEndings(value[k]);
-  return out;
+function canonicalValue(value, ancestors) {
+  switch (typeof value) {
+    case 'string':
+      return value.replace(/\r\n/g, '\n');
+    case 'boolean':
+      return value;
+    case 'number':
+      if (!Number.isFinite(value)) throw new TypeError('toolio/1: non-finite number');
+      return value;
+    case 'object':
+      break;
+    default:
+      // undefined, function, symbol, bigint: JSON drops, nulls or throws.
+      throw new TypeError(`toolio/1: a ${typeof value} has no JSON form`);
+  }
+  if (value === null) return null;
+  if (ancestors.has(value)) throw new TypeError('toolio/1: circular structure');
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const out = new Array(value.length);
+      for (let i = 0; i < value.length; i++) {
+        if (!(i in value)) throw new TypeError('toolio/1: array hole');
+        out[i] = canonicalValue(value[i], ancestors);
+      }
+      return out;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new TypeError('toolio/1: not a plain object');
+    }
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throw new TypeError('toolio/1: symbol-keyed property');
+    }
+    const out = Object.create(null);
+    for (const k of Object.keys(value).sort()) out[k] = canonicalValue(value[k], ancestors);
+    return out;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 /**
@@ -98,13 +169,11 @@ export function canonicalResponseText(toolResponse) {
   if (toolResponse === undefined || toolResponse === null) return null;
   let text;
   try {
-    text = JSON.stringify(canonicalize(normalizeLineEndings(toolResponse)));
+    text = JSON.stringify(canonicalValue(toolResponse, new Set()));
   } catch (_) {
-    // Circular structure (RangeError from the recursion) or BigInt (TypeError
-    // from JSON.stringify). Either way there is no canonical form.
+    // Step 0 rejected something. There is no canonical form.
     return null;
   }
-  // JSON.stringify returns undefined for a bare function or symbol.
   return typeof text === 'string' ? text : null;
 }
 
@@ -137,19 +206,21 @@ export function reportedError(toolResponse) {
  * @returns {{schema: string, response: object}}
  */
 export function describeToolResponse(toolResponse) {
+  const hash = toolioVersionHash();
   if (toolResponse === undefined) {
-    return { schema: TOOLIO_SCHEMA, response: { recorded: false, reason: 'absent' } };
+    return { schema: TOOLIO_SCHEMA, hash, response: { recorded: false, reason: 'absent' } };
   }
   if (toolResponse === null) {
-    return { schema: TOOLIO_SCHEMA, response: { recorded: false, reason: 'null' } };
+    return { schema: TOOLIO_SCHEMA, hash, response: { recorded: false, reason: 'null' } };
   }
   const text = canonicalResponseText(toolResponse);
   if (text === null) {
-    return { schema: TOOLIO_SCHEMA, response: { recorded: false, reason: 'unserializable' } };
+    return { schema: TOOLIO_SCHEMA, hash, response: { recorded: false, reason: 'unserializable' } };
   }
   const bytes = Buffer.from(text, 'utf8');
   return {
     schema: TOOLIO_SCHEMA,
+    hash,
     response: {
       recorded: true,
       digest: crypto.createHash('sha256').update(bytes).digest('hex'),
@@ -157,4 +228,29 @@ export function describeToolResponse(toolResponse) {
       error: reportedError(toolResponse)
     }
   };
+}
+
+let cachedToolioHash = null;
+
+/**
+ * The code stamp. See THE CODE STAMP above. Pure, in-memory, cached after the
+ * first call in a process. Covers every function that shapes the record,
+ * including the stamp's own definition, so the list cannot quietly shrink.
+ * @returns {string} 16 lowercase hex chars
+ */
+export function toolioVersionHash() {
+  if (cachedToolioHash) return cachedToolioHash;
+  const parts = [
+    TOOLIO_SCHEMA,
+    canonicalValue.toString(),
+    canonicalResponseText.toString(),
+    reportedError.toString(),
+    describeToolResponse.toString(),
+    toolioVersionHash.toString()
+  ].map(s => s.replace(/\r\n/g, '\n'));
+  cachedToolioHash = crypto.createHash('sha256')
+    .update(parts.join('\n'))
+    .digest('hex')
+    .slice(0, 16);
+  return cachedToolioHash;
 }

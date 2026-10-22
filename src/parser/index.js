@@ -332,13 +332,8 @@ function digestParams(input) {
  * until then the two are textually similar but semantically identical over
  * JSON-compatible input. Strings, numbers, booleans, and nulls survive
  * `JSON.stringify` unchanged, which is the surface a tool_input carries.
- *
- * Exported 2026-10-22 (v3 V3-03) so src/toolio/ digests tool responses with
- * the SAME canonicalizer as params/1 rather than a third copy. Export only;
- * the function is unchanged, and the params/1 pin in
- * test/params-canonical.test.js still guards it.
  */
-export function canonicalize(value) {
+function canonicalize(value) {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) {
     const out = new Array(value.length);

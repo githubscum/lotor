@@ -28,6 +28,7 @@ The receipt gains one field, beside the legacy ones, never replacing them:
 ```json
 "toolIo": {
   "schema": "toolio/1",
+  "hash": "<16 hex>",
   "response": { "recorded": true, "digest": "<64 hex>", "bytes": 54, "error": false }
 }
 ```
@@ -35,26 +36,31 @@ The receipt gains one field, beside the legacy ones, never replacing them:
 or, when there was nothing to see:
 
 ```json
-"toolIo": { "schema": "toolio/1", "response": { "recorded": false, "reason": "absent" } }
+"toolIo": { "schema": "toolio/1", "hash": "<16 hex>", "response": { "recorded": false, "reason": "absent" } }
 ```
 
 `reason` is `absent` (no `tool_response` in the host payload), `null` (the host
-sent `null`), or `unserializable` (circular, BigInt, a bare function). There is
-no digest key at all in that case, so no reader can mistake it for a digest.
+sent `null`), or `unserializable` (anything without an exact JSON form: a cycle,
+BigInt, a function, `undefined`, a Date, NaN, an array hole). There is no digest
+key at all in that case, so no reader can mistake it for a digest. `hash` is the
+code stamp: which code produced the record, beside `schema`, which names the
+method.
 
 All of the logic lives in `src/toolio/index.js` (not core, tested on the branch):
-CRLF folded to LF in every string leaf, keys sorted recursively with the
-`params/1` canonicalizer (now exported from `src/parser/index.js` rather than
-copied), full SHA-256, UTF-8 byte length, and the host's error flag copied
-tri-state (`null` means no signal, never success). The module's header comment
-is the full contract.
+CRLF folded to LF in every string leaf, keys sorted recursively into
+null-prototype objects (byte-identical to the `params/1` canonicalizer except
+that an own `__proto__` key is kept; `src/parser/` is not touched), full
+SHA-256, UTF-8 byte length, and the host's error flag copied tri-state (`null`
+means no signal, never success). Where it disagrees with the legacy
+`responseOk`, `toolIo` is authoritative (KNOWN-LIMITS 78). The module's header
+comment is the full contract.
 
 The hook change is one import and one property:
 
 - `proposals/v3-03-tool-io-digest-2026-10-22.patch`, hunks 1 and 2:
   `bin/hook-post-tool-use.js`.
 - Hunk 3 flips `WIRED` to `true` in `test/hook-post-tool-use-toolio.test.js`, so
-  its five wiring tests stop being TODO and become ordinary tests.
+  its six wiring tests stop being TODO and become ordinary tests.
 
 ## Applying it at the sitting
 
@@ -63,10 +69,35 @@ git apply proposals/v3-03-tool-io-digest-2026-10-22.patch
 npm test
 ```
 
-Checked on the branch with `git apply --check --cached` (exit 0, no offset).
-Before staging, the five wiring tests were run against a scratch copy of the
-hook with this exact `toolIo` line added: 5 of 5 pass. Against the unpatched
-hook they fail and are reported as TODO. That is the fail-first evidence.
+**The gate on landing, not an expectation:** after the apply, the six tests in
+the first `describe` of `test/hook-post-tool-use-toolio.test.js` must report
+6 pass, 0 todo. If any is still TODO the flip did not apply; if any fails, the
+wiring is wrong. Either way, do not commit the apply.
+
+What runs before the sitting. The three tests in that file's second `describe`
+are not TODO: they take the receipt the real, unpatched hook writes, add the
+staged field in the staged position, sign it onto a real chain, and scan the
+chain file on disk for response content (review F4). They also pin where the
+legacy `responseOk` and `toolIo.error` agree and the three inputs where they do
+not (F2), and that the engine-error receipt never gains the field (F8). What
+they cannot cover is the hook itself calling `describeToolResponse`, which is
+the staged line.
+
+Checked on the branch with `git apply --check` (exit 0), both in a
+`core.autocrlf=true` checkout and with the patch in LF form. Before the review
+fixes it failed in the CRLF checkout ("corrupt patch"): two blank context lines
+were written as empty lines rather than a single space, and a CR-terminated
+empty line is not a context line to `git apply`. They are now a single space.
+The six wiring tests
+were run against a scratch worktree with the hook hunks applied by Edit: 6 of 6
+pass. Against the unpatched hook they fail and are reported as TODO. That is
+the fail-first evidence for the wiring. For the module, fail-first on main is
+an import failure (`src/toolio/` does not exist), which proves only that; the
+review-fix tests (stamp, `__proto__`, unserializable values) were also run
+against the pre-review module and fail there for their own reasons. The
+`toolio` entry added to `test/core-classification.test.js` records a
+classification decision; it is not fail-first evidence and is not counted as
+such.
 
 Limit 73 applies: this is one signature for one file. Do not split the two
 hook hunks into separate staged edits, or the second is purged when the first
@@ -86,5 +117,9 @@ covers both hunks, or one whole-file Write.
 
 `describeToolResponse` per call: about 0.03 ms for a 1 KB response, 1 ms for
 100 KB, 9.5 ms for 1 MB, 155 ms for 10 MB. The field adds about 155 bytes to
-the receipt regardless of response size. No new chain I/O: it rides on a
+the receipt regardless of response size. Re-measured after the review fixes
+(strict walk, code stamp), same shape of input, Node in the fix lane: 0.006 ms
+at 1 KB, 0.15 ms at 100 KB, 1.9 ms at 1 MB, 17 ms at 10 MB; about 184 bytes per
+receipt with the stamp. The two runs are different sittings on one machine, so
+read them as the same order of magnitude, not as a speed-up. No new chain I/O: it rides on a
 receipt the hook already writes.

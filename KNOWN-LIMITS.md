@@ -3006,3 +3006,36 @@ has `\r\n` folded to `\n` before hashing, so the same file read from a
 that differ only in line endings are therefore indistinguishable on the chain,
 and `bytes` is the size after folding, not what the tool emitted. A lone `\r` is
 kept as content. Tested in `test/toolio-digest.test.js`.
+
+**Added 2026-10-22, after the second-family review of PR 71 (minimax-m3).**
+Four things the review found, and where each landed.
+
+- *Fixed: the digest had no code stamp.* `toolIo` now carries `hash`, the first
+  16 hex of SHA-256 over the source of every function in `src/toolio/` that
+  shapes the record, beside `schema`, as `parser: { schema, hash }` does on the
+  session-start receipt. Source CRLF is folded before hashing, so a CRLF and an
+  LF checkout of one commit stamp the same (tested by importing both).
+  `matcherHash` and `parserVersionHash` do not fold, and still differ across
+  checkouts.
+- *Fixed: distinct responses could share a digest.* An own `__proto__` key
+  (which `JSON.parse` creates) was swallowed by the object-literal setter, and
+  `undefined`, functions, `toJSON`, Dates, NaN and array holes were dropped,
+  nulled or substituted by `JSON.stringify`. The module now walks the value once
+  into null-prototype objects and calls anything without an exact JSON form
+  `unserializable`. It no longer imports the `params/1` canonicalizer; for every
+  value without an own `__proto__` key its output is byte-identical (the pin is
+  unchanged). One fold is still accepted: `-0` serializes as `0`.
+- *Not fixed, pre-existing, out of this change:* `canonicalize` in
+  `src/parser/index.js` has the same `__proto__` hole, so `params/1`
+  (`paramsDigestCanonical` on gate receipts, matched by `src/views/autograph.js`)
+  gives `{"__proto__":{..},"b":2}` and `{"b":2}` one digest. And `canonicalize`
+  is not in `parserVersionHash`'s parts list, so an edit to it does not move the
+  parser stamp. Fixing the first moves `params/1` digests already on chains and
+  needs its own marker decision; it is left for its own change.
+- *Documented, not reconciled: two error readings on one receipt.* The legacy
+  `responseOk` in `bin/hook-post-tool-use.js` reads any non-null `error` key as
+  failure, so `error: false`, `error: ''` and `error: 0` give `responseOk: false`
+  where `toolIo.response.error` is `false`, `null`, `null`. When
+  `toolIo.response.recorded` is true, `toolIo` is authoritative. Tightening
+  `responseOk` is a one-token core edit and is not staged; the agreement table is
+  pinned against the real hook in `test/hook-post-tool-use-toolio.test.js`.

@@ -7,7 +7,9 @@
  *
  * FAIL-FIRST. On main this file fails at import: src/toolio/ does not exist,
  * so there is no R2 field to put on any receipt. Every assertion below is the
- * contract the new field is held to.
+ * contract the new field is held to. The blocks marked "review F1/F2/F3" were
+ * added after the second-family review; the F1 and F3 ones fail against the
+ * pre-review module for their own reasons, not at import.
  *
  * THE PIN. Derived out of band, not by running the code under test:
  *
@@ -38,6 +40,7 @@ import {
   describeToolResponse,
   canonicalResponseText,
   reportedError,
+  toolioVersionHash,
   TOOLIO_SCHEMA
 } from '../src/toolio/index.js';
 import { createStore, loadChain } from '../src/store/index.js';
@@ -104,7 +107,7 @@ describe('toolio/1: digest stability', () => {
     assert.strictEqual(digestOf('x\r\ny\r\n'), digestOf('x\ny\n'));
   });
 
-  it('a real file read from a CRLF checkout digests the same as from an LF checkout', () => {
+  it('a real source file, with CRLF injected in memory, digests the same as its LF spelling', () => {
     // This test file itself is the sample. Whatever line endings the checkout
     // gave it, build both spellings explicitly and compare.
     const raw = fs.readFileSync(__filename, 'utf8');
@@ -167,7 +170,11 @@ describe('toolio/1: the error flag', () => {
 describe('toolio/1: absent and unreadable responses are unrecorded, never an empty digest', () => {
   it('missing tool_response is recorded:false, reason absent, with no digest or bytes field', () => {
     const io = describeToolResponse(undefined);
-    assert.deepStrictEqual(io, { schema: 'toolio/1', response: { recorded: false, reason: 'absent' } });
+    assert.deepStrictEqual(io, {
+      schema: 'toolio/1',
+      hash: toolioVersionHash(),
+      response: { recorded: false, reason: 'absent' }
+    });
     assert.ok(!('digest' in io.response), 'no digest key at all');
     assert.ok(!('bytes' in io.response), 'no bytes key at all');
     assert.ok(!('error' in io.response), 'no error claim about a response nobody saw');
@@ -218,7 +225,8 @@ describe('toolio/1: no response content leaks into the receipt', () => {
     }
     // The shape is closed: only these keys, so a later edit cannot quietly add
     // an excerpt field without failing here.
-    assert.deepStrictEqual(Object.keys(io).sort(), ['response', 'schema']);
+    assert.deepStrictEqual(Object.keys(io).sort(), ['hash', 'response', 'schema']);
+    assert.match(io.hash, /^[0-9a-f]{16}$/, 'the stamp is code identity, never response-derived');
     assert.deepStrictEqual(Object.keys(io.response).sort(), ['bytes', 'digest', 'error', 'recorded']);
   });
 });
@@ -294,12 +302,23 @@ describe('toolio/1 on the chain (eval E2: chain fidelity)', () => {
   it('tampering with the error flag or the byte count breaks verification', () => {
     const flag = seed('tamper-flag');
     rewriteEntry(flag, 2, e => { e.payload.toolIo.response.error = false; });
-    assert.strictEqual(verifyFresh(flag).ok, false);
-    assert.strictEqual(verifyFresh(flag).brokenAt, 2);
+    const vf = verifyFresh(flag);
+    assert.strictEqual(vf.ok, false);
+    assert.strictEqual(vf.brokenAt, 2);
 
     const size = seed('tamper-bytes');
     rewriteEntry(size, 0, e => { e.payload.toolIo.response.bytes += 1; });
-    assert.strictEqual(verifyFresh(size).brokenAt, 0);
+    const vs = verifyFresh(size);
+    assert.strictEqual(vs.ok, false);
+    assert.strictEqual(vs.brokenAt, 0);
+  });
+
+  it('rewriting the code stamp after the fact breaks verification', () => {
+    const home = seed('tamper-stamp');
+    rewriteEntry(home, 0, e => { e.payload.toolIo.hash = '0000000000000000'; });
+    const v = verifyFresh(home);
+    assert.strictEqual(v.ok, false);
+    assert.strictEqual(v.brokenAt, 0);
   });
 
   it('upgrading an unrecorded response to a recorded one after the fact breaks verification', () => {
@@ -315,6 +334,109 @@ describe('toolio/1 on the chain (eval E2: chain fidelity)', () => {
   it('stripping the toolIo field off a receipt breaks verification', () => {
     const home = seed('tamper-strip');
     rewriteEntry(home, 2, e => { delete e.payload.toolIo; });
-    assert.strictEqual(verifyFresh(home).brokenAt, 2);
+    const v = verifyFresh(home);
+    assert.strictEqual(v.ok, false);
+    assert.strictEqual(v.brokenAt, 2);
+  });
+});
+
+describe('toolio/1: the code stamp (review F1)', () => {
+  it('every toolIo carries the same 16-hex stamp, recorded or not', () => {
+    const h = toolioVersionHash();
+    assert.match(h, /^[0-9a-f]{16}$/);
+    assert.strictEqual(toolioVersionHash(), h, 'stable in-process');
+    for (const r of [undefined, null, () => 1, '', { a: 1 }, PINNED_INPUT]) {
+      assert.strictEqual(describeToolResponse(r).hash, h);
+    }
+  });
+
+  it('the stamp does not depend on the checkout\'s line endings', async () => {
+    // Import two copies of the module, one with LF source and one with CRLF
+    // source (what a core.autocrlf=true checkout gives), whatever this
+    // checkout happens to be. Same commit, same stamp, same as the live one.
+    const lfSrc = fs.readFileSync(new URL('../src/toolio/index.js', import.meta.url), 'utf8')
+      .replace(/\r\n/g, '\n');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-toolio-eol-'));
+    try {
+      const load = async (name, text) => {
+        const file = path.join(dir, name);
+        fs.writeFileSync(file, text);
+        return import(new URL(`file:///${file.replace(/\\/g, '/')}`).href);
+      };
+      const lf = await load('lf.mjs', lfSrc);
+      const crlf = await load('crlf.mjs', lfSrc.replace(/\n/g, '\r\n'));
+      assert.notStrictEqual(crlf.describeToolResponse.toString(), lf.describeToolResponse.toString(),
+        'precondition: the two copies really differ in source line endings');
+      assert.strictEqual(lf.toolioVersionHash(), crlf.toolioVersionHash());
+      assert.strictEqual(lf.toolioVersionHash(), toolioVersionHash());
+      assert.deepStrictEqual(crlf.describeToolResponse(PINNED_INPUT), describeToolResponse(PINNED_INPUT));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('toolio/1: distinct values never share a digest (review F3)', () => {
+  it('an own "__proto__" key, as JSON.parse creates it, is data and changes the digest', () => {
+    const withKey = JSON.parse('{"__proto__":{"a":1},"b":2}');
+    assert.deepStrictEqual(Object.keys(withKey), ['__proto__', 'b'], 'precondition: own key');
+    const a = describeToolResponse(withKey).response;
+    const b = describeToolResponse({ b: 2 }).response;
+    assert.notStrictEqual(a.digest, b.digest);
+    assert.notStrictEqual(a.bytes, b.bytes);
+    assert.strictEqual(canonicalResponseText(withKey), '{"__proto__":{"a":1},"b":2}');
+    // Nested too, and the canonical text round-trips to the same own keys.
+    const nested = JSON.parse('{"x":{"__proto__":1}}');
+    assert.notStrictEqual(digestOf(nested), digestOf({ x: {} }));
+    assert.deepStrictEqual(Object.keys(JSON.parse(canonicalResponseText(nested)).x), ['__proto__']);
+  });
+
+  it('a value JSON would drop, null out or substitute is unserializable, not silently digested', () => {
+    const cases = {
+      'nested undefined': { a: undefined, is_error: true },
+      'undefined in an array': [1, undefined],
+      'array hole': [1, , 3], // eslint-disable-line no-sparse-arrays
+      'nested function': { a: () => 1 },
+      'own toJSON': { x: 'content', toJSON() { return {}; } },
+      'a Date (inherited toJSON)': { when: new Date(0) },
+      'a Map': { m: new Map([[1, 2]]) },
+      'a class instance': { v: new (class Box { constructor() { this.a = 1; } })() },
+      'NaN': { n: NaN },
+      'Infinity': { n: Infinity },
+      'a symbol value': { s: Symbol('x') },
+      'a symbol key': { [Symbol('k')]: 1, a: 1 },
+      'nested BigInt': { n: [1n] }
+    };
+    for (const [name, value] of Object.entries(cases)) {
+      assert.deepStrictEqual(describeToolResponse(value).response,
+        { recorded: false, reason: 'unserializable' }, name);
+      assert.strictEqual(canonicalResponseText(value), null, name);
+    }
+  });
+
+  it('a shared (non-circular) reference is fine; only a real cycle is rejected', () => {
+    const shared = { k: 'v' };
+    assert.strictEqual(describeToolResponse({ a: shared, b: [shared, shared] }).response.recorded, true);
+    const cyc = [];
+    cyc.push({ back: cyc });
+    assert.strictEqual(describeToolResponse(cyc).response.reason, 'unserializable');
+  });
+
+  it('a null-prototype object is accepted and digests like its plain twin', () => {
+    const bare = Object.assign(Object.create(null), { b: 1, a: 'x\r\n' });
+    assert.strictEqual(digestOf(bare), digestOf({ a: 'x\n', b: 1 }));
+  });
+});
+
+describe('toolio/1: precedence over the legacy responseOk (review F2)', () => {
+  // The divergent inputs, by name. bin/hook-post-tool-use.js's responseOk reads
+  // each as failure; toolio reads the host's actual value. The receipt-level
+  // half of this, against the real hook, is in hook-post-tool-use-toolio.test.js.
+  it('reads error:false as success, and error:"" / error:0 as no signal', () => {
+    assert.strictEqual(describeToolResponse({ error: false, content: 'x' }).response.error, false);
+    assert.strictEqual(describeToolResponse({ error: '' }).response.error, null);
+    assert.strictEqual(describeToolResponse({ error: 0 }).response.error, null);
+    // An explicit is_error still wins over an error key, in both readers.
+    assert.strictEqual(describeToolResponse({ is_error: true, error: false }).response.error, true);
   });
 });
