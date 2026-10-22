@@ -88,10 +88,17 @@ Checked on the branch with `git apply --check` (exit 0), both in a
 fixes it failed in the CRLF checkout ("corrupt patch"): two blank context lines
 were written as empty lines rather than a single space, and a CR-terminated
 empty line is not a context line to `git apply`. They are now a single space.
-The six wiring tests
-were run against a scratch worktree with the hook hunks applied by Edit: 6 of 6
-pass. Against the unpatched hook they fail and are reported as TODO. That is
-the fail-first evidence for the wiring. For the module, fail-first on main is
+Before the review,
+the original five wiring tests were run against a scratch copy of the hook
+with the `toolIo` line added and passed 5 of 5 (the builder's claim, not
+re-run). After the review fixes, the six wiring tests have **not** been run
+wired: the self-mod gate blocks an Edit to `bin/hook-post-tool-use.js` even in
+a scratch worktree, and the fix lane did not route around it. Two of the six
+changed (the absent-case literal now includes `hash`; the precedence test is
+new). Their assertions are exercised on the composed receipt in the second
+`describe`, which runs today, but the 6 of 6 above is the sitting's to confirm.
+Against the unpatched hook all six fail and are reported as TODO. That is the
+fail-first evidence for the wiring. For the module, fail-first on main is
 an import failure (`src/toolio/` does not exist), which proves only that; the
 review-fix tests (stamp, `__proto__`, unserializable values) were also run
 against the pre-review module and fail there for their own reasons. The
