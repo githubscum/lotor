@@ -39,6 +39,13 @@ function parseSession(jsonlText, opts = {}) {
   };
 
   const ran = [];        // { tool, id, paramsDigest }
+  // Edit/Write attempts awaiting their tool_result (limit 76, closed
+  // 2026-10-19). tool_use_id -> CANONICAL touched-map key (limit 75), so a
+  // result settles the same entry a file-history twin merged into. The
+  // attempt is recorded at tool_use time with outcome 'pending'; the matching
+  // tool_result settles it. An attempt with no result stays unknown, never a
+  // plain write.
+  const touchToolIds = new Map();
   const failed = [];     // { tool, id, errorDigest }
   const cost = {
     inputTokens: 0,
@@ -218,13 +225,21 @@ function parseSession(jsonlText, opts = {}) {
               });
             }
 
-            // Track file mutations for 'touched'
+            // Track file mutations for 'touched'. An attempt is recorded
+            // here, before its tool_result, with outcome 'pending'. The
+            // tool_result below settles it: is_error makes it 'error', a
+            // non-erroring result makes it 'ok'. 'ok' is sticky: one landed
+            // write is a write, no matter what later attempts to the same
+            // path did. Entries that only ever came from file-history carry
+            // no outcome key.
             if (toolName === 'Edit' || toolName === 'Write') {
               // Edit/Write carries the absolute display form and must
               // overwrite `via` even when file-history has already claimed
-              // the same canonical key (see recordTouched).
-              recordTouched(touched, item.input?.file_path,
+              // the same canonical key (see recordTouched), and it opens
+              // the attempt's outcome there too.
+              const key = recordTouched(touched, item.input?.file_path,
                 toolName.toLowerCase(), sessionCwd, true);
+              if (key !== null) touchToolIds.set(toolId, key);
             }
           }
         }
@@ -235,6 +250,16 @@ function parseSession(jsonlText, opts = {}) {
     if (entry.message?.role === 'user' && Array.isArray(entry.message.content)) {
       for (const item of entry.message.content) {
         if (item.type === 'tool_result') {
+          // Settle the touched outcome this result answers (limit 76).
+          // is_error is the harness's word for the attempt; a non-erroring
+          // result (absent is_error = success per spec) lands the write.
+          const touchedKey = touchToolIds.get(item.tool_use_id);
+          if (touchedKey !== undefined) {
+            const meta = touched.get(touchedKey);
+            if (meta && meta.outcome !== 'ok') {
+              meta.outcome = item.is_error === true ? 'error' : 'ok';
+            }
+          }
           // Must walk EVERY tool_result to check for is_error
           if (item.is_error === true) {
             failures++;
@@ -263,6 +288,12 @@ function parseSession(jsonlText, opts = {}) {
         recordTouched(touched, entry.trackingPath, 'file-history', sessionCwd);
       }
     }
+  }
+
+  // Attempts that never saw a tool_result (the session died mid-turn) read
+  // as 'unknown': not an error, not a plain write (limit 76).
+  for (const meta of touched.values()) {
+    if (meta.outcome === 'pending') meta.outcome = 'unknown';
   }
 
   // Session timing: first and last entries that actually carry a usable
@@ -378,25 +409,36 @@ function toTouchMapKey(key) {
  *   - A `via: 'file-history'` displaced this way moves into `alsoVia`
  *     (array, no duplicates); a file-history record arriving after an
  *     Edit/Write keeps the edit/write `via` and joins `alsoVia` itself.
+ *   - Outcome (limit 76): an Edit/Write record opens an attempt, so the
+ *     entry's `outcome` becomes 'pending' unless it is already 'ok' ('ok'
+ *     is sticky: one landed write is a write). The caller settles it from
+ *     the tool_result via the returned key. A file-history record never
+ *     sets or changes `outcome`; an entry only file-history ever touched
+ *     carries no outcome key.
  *
  * @param {Map} touched
  * @param {string} rawPath - path as recorded in the transcript
  * @param {string} via - 'edit' | 'write' | 'file-history'
  * @param {string|null} cwd - session working directory, if known
  * @param {boolean} fromEditWrite - caller is an Edit/Write tool_use record
+ * @returns {string|null} the canonical map key the record landed on, or
+ *   null when the path was empty and nothing was recorded
  */
 function recordTouched(touched, rawPath, via, cwd, fromEditWrite = false) {
   const resolved = touchKey(rawPath, cwd);
-  if (resolved === null) return;
+  if (resolved === null) return null;
   const key = toTouchMapKey(resolved);
   const existing = touched.get(key);
   if (!existing) {
-    touched.set(key, { path: resolved, via });
-    return;
+    touched.set(key, fromEditWrite
+      ? { path: resolved, via, outcome: 'pending' }
+      : { path: resolved, via });
+    return key;
   }
   const priorVia = existing.via;
   if (fromEditWrite) {
     existing.via = via;
+    existing.outcome = existing.outcome === 'ok' ? 'ok' : 'pending';
     // Prefer the Edit/Write absolute form as the display path when it is
     // one: an absolute `file_path` always wins, including over a relative
     // form stored earlier when no cwd was known yet.
@@ -412,6 +454,7 @@ function recordTouched(touched, rawPath, via, cwd, fromEditWrite = false) {
   }
   // A file-history record over an existing file-history entry changes
   // nothing: the first-seen display form of `path` stands.
+  return key;
 }
 
 /**

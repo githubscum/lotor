@@ -3045,3 +3045,64 @@ transcript's `cwd` can change mid-session, and whether file-history paths stay
 relative to the original cwd after such a change is unconfirmed. A
 file-history line that precedes every `cwd`-carrying line stays relative and
 unmerged.
+
+## 76. A refused write was listed as touched, so an attempt read as a change
+
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
+Closed for the parser, the since-view, the text receipt and the live view.
+Still OPEN for retcon's charter reconciliation (core) and three smaller
+readers; see "Still open" below.** The parser
+now records an Edit/Write attempt and settles it against the tool_result that
+answers it. A touched entry from an attempt carries `outcome`: `ok` when the
+harness answered with a success, `error` when it answered with an error
+(`is_error: true`), `unknown` when no answer ever arrived (the session died
+mid-turn). `ok` is sticky: one landed write is a write, whatever later
+attempts to the same path did. Entries added by file-history carry no
+`outcome` key, and `via` is unchanged. The since-view keeps its path list but
+adds `touchedRefused`, marks a refused path with `(refused)` where the reader
+is looking, and ships a caveat saying what a refused marker does and does not
+mean. `touchedRefused` counts DISTINCT refused paths per session: every
+subsession receipt re-parses the whole transcript, so a per-receipt sum
+showed one refusal as "(3 refused)" after three SessionEnd firings. The text
+receipt (`renderSessionReceipt`) prints `(via: write, refused)`, and the live
+view counts `N files (M refused)` and marks the path. Receipts written before
+this change carry no `outcome` and render exactly as they did.
+
+**Still open.**
+- **retcon charter reconciliation (core).** `bin/retcon.js` `reconstruct()`
+  folds every receipt's `touched` into `touchedPaths`, a Set of bare path
+  strings, without reading `outcome`; `src/views/reconcile.js` matches
+  declared file items against that Set. So a refused Write still CONFIRMS a
+  charter item naming that file. The fix is a filter in `reconstruct()` (skip
+  items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
+  and `bin/` is wholesale core, so it waits for a signing sitting.
+  `reconcile.js` itself cannot fix it: it never sees the outcome.
+- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
+  report `touchedCount: p.touched.length`, refused attempts included.
+- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
+  straight from the transcript's tool_use and never joins the tool_result.
+- **`touchedCount` in the since-view** is still summed per receipt, so with
+  subsessions "N files touched" overcounts in the same way `touchedRefused`
+  did. That predates this limit and is left for its own change.
+
+Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
+own hook files was refused. Seq 36204 is that session's receipt, and it lists
+the hook file under `touched`. The file was unchanged on disk. The reader of
+the chain takes `touched` as a write; the transcript recorded only an attempt,
+and the attempt was refused by the gate.
+
+The mechanism is order. `parseSession` (src/parser/index.js) added a path to
+`touched` when it saw the tool_use, before and regardless of the tool_result
+that answers it. The refusal was on the chain the whole time: `failed` carried
+the error digest from the same tool_result. Nothing joined the two records, so
+a refused write and a landed write were indistinguishable in every view built
+on `touched`.
+
+**What to doubt.** `is_error` is the harness's word, self-attested, and an
+`ok` Edit can still be a no-op (the same bytes rewritten), which no parser can
+see; `ok` means the harness answered success, not that the file changed. A
+refused path is reported because the attempt happened, not because a change
+happened. Receipts written before this change carry no `outcome` and must be
+read as "attempted": absent means unrecorded, never "it landed". Non-core:
+src/parser/ and src/views/ are not on the protected list; the retcon half is
+core and is not touched here.
