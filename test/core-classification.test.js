@@ -71,7 +71,13 @@ const GRANTABLE = Object.freeze({
   // rollout; the deliberate classification is the whole point of this file.
   term: 'colour and TTY detection for the terminal surface; reads env only, cannot widen authority',
   // Added 2026-08-15 (tool-pinning, item 2 of the 08-13 signing stack).
-  toolpins: 'pure functions over tool definitions; no authority over enforcement'
+  toolpins: 'pure functions over tool definitions; no authority over enforcement',
+  // Added 2026-10-18 (v3 spec, V3-05). Pure functions over a model response
+  // body: which reach rungs came back, and a digest of the logprobs. Nothing
+  // in the gate imports it. If reach is ever used to decide what a model may
+  // touch (the spec's sensitive-material proposal), that is a policy change
+  // and this directory moves to CORE_DIRS in the same signed change.
+  reach: 'pure functions over a model response; reports reach, cannot change what is permitted'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */
