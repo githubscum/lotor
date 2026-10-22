@@ -84,7 +84,15 @@ const GRANTABLE = Object.freeze({
   // PROPOSED in the V3-04 PR; the owner keeps it here or moves it to
   // CORE_DIRS at the signing sitting. An edit to it can still mislead a
   // reader of R3, the same residual risk views and ingest carry.
-  reasoning: 'reads transcripts into the store (R3 per step); no authority over enforcement'
+  reasoning: 'reads transcripts into the store (R3 per step); no authority over enforcement',
+  // Added 2026-10-22 (v3 V3-03, rung R2). Builds the toolIo field a
+  // post-tool-use receipt carries. Same line as parser and ingest: editing it
+  // can make a receipt misdescribe a response, which is reporting integrity,
+  // not enforcement. Flagged for the owner in the V3-03 PR: once the hook
+  // imports it, it runs inside a core binary's process, as parser, harness and
+  // toolpins already do in the session-start hook. Moving it to core is a
+  // core-paths.js plus policy edit, so it would land at the same sitting.
+  toolio: 'pure digest of a tool response for a receipt field; reporting only, no authority over enforcement'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */

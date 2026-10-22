@@ -3149,3 +3149,74 @@ normalization is written in `matcherHashInputs()` itself; put inside one of the
 hashed rule functions, it would move every stamp.) The receipts read across the
 change are therefore the CRLF-era ones, such as every receipt this machine has
 written, and how they are read afterwards still needs a decision.
+
+## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
+
+**Status: OPEN, recorded 2026-10-22 with v3 work order V3-03** (branch
+`lotor-lane/v3-03-tool-io-digest`). `src/toolio/index.js` builds a `toolio/1`
+object: a full SHA-256 over a canonical serialization of the tool's response,
+its byte length, and the host's own error flag, or `recorded: false` with a
+reason when there was no response to see. The wiring into
+`bin/hook-post-tool-use.js` is core and is staged in
+`proposals/v3-03-tool-io-digest-2026-10-22.patch` for a signing sitting. Three
+things it does not do, stated before anyone reads R2 as complete.
+
+**Coverage is the egress-event receipt and nothing else.** The post-tool-use
+hook writes a receipt only for egress-shaped Bash calls (push, publish,
+egress-other) and takes a no-chain-I/O fast path for everything else. A `Read`,
+an `Edit`, a non-egress `Bash` or an MCP call gets no receipt there, so it gets
+no R2 field. R2 stays partial on the ladder until a receipt exists per tool
+call. That is the per-step receipt V3-04 is building; the module is
+receipt-agnostic so the same one-line spread goes onto it. Writing a separate
+per-call receipt here was rejected for this change: every append re-reads the
+whole chain under the lock, so a receipt per tool call is a cost (eval E5) the
+owner should choose with a measurement in hand, not inherit from a builder.
+
+**An unkeyed digest of a guessable response is reversible.** A `yes`, an exit
+status, a six-digit code or a file the reader already has can be recovered by
+hashing candidates and comparing. Content never lands on the chain, but for a
+low-entropy response the digest is as good as content to someone willing to
+guess. `paramsDigest` has had the same property since v1; R2 widens the surface
+from what was asked to what came back. A keyed digest (HMAC under a local key)
+closes it and also stops two installs, or the meter's evals, comparing digests.
+That trade is the owner's.
+
+**CRLF and LF spellings of one response collide on purpose.** Every string leaf
+has `\r\n` folded to `\n` before hashing, so the same file read from a
+`core.autocrlf=true` checkout and an LF checkout digests the same. Two responses
+that differ only in line endings are therefore indistinguishable on the chain,
+and `bytes` is the size after folding, not what the tool emitted. A lone `\r` is
+kept as content. Tested in `test/toolio-digest.test.js`.
+
+**Added 2026-10-22, after the second-family review of PR 71 (minimax-m3).**
+Four things the review found, and where each landed.
+
+- *Fixed: the digest had no code stamp.* `toolIo` now carries `hash`, the first
+  16 hex of SHA-256 over the source of every function in `src/toolio/` that
+  shapes the record, beside `schema`, as `parser: { schema, hash }` does on the
+  session-start receipt. Source CRLF is folded before hashing, so a CRLF and an
+  LF checkout of one commit stamp the same (tested by importing both).
+  `matcherHash` and `parserVersionHash` do not fold, and still differ across
+  checkouts.
+- *Fixed: distinct responses could share a digest.* An own `__proto__` key
+  (which `JSON.parse` creates) was swallowed by the object-literal setter, and
+  `undefined`, functions, `toJSON`, Dates, NaN and array holes were dropped,
+  nulled or substituted by `JSON.stringify`. The module now walks the value once
+  into null-prototype objects and calls anything without an exact JSON form
+  `unserializable`. It no longer imports the `params/1` canonicalizer; for every
+  value without an own `__proto__` key its output is byte-identical (the pin is
+  unchanged). One fold is still accepted: `-0` serializes as `0`.
+- *Not fixed, pre-existing, out of this change:* `canonicalize` in
+  `src/parser/index.js` has the same `__proto__` hole, so `params/1`
+  (`paramsDigestCanonical` on gate receipts, matched by `src/views/autograph.js`)
+  gives `{"__proto__":{..},"b":2}` and `{"b":2}` one digest. And `canonicalize`
+  is not in `parserVersionHash`'s parts list, so an edit to it does not move the
+  parser stamp. Fixing the first moves `params/1` digests already on chains and
+  needs its own marker decision; it is left for its own change.
+- *Documented, not reconciled: two error readings on one receipt.* The legacy
+  `responseOk` in `bin/hook-post-tool-use.js` reads any non-null `error` key as
+  failure, so `error: false`, `error: ''` and `error: 0` give `responseOk: false`
+  where `toolIo.response.error` is `false`, `null`, `null`. When
+  `toolIo.response.recorded` is true, `toolIo` is authoritative. Tightening
+  `responseOk` is a one-token core edit and is not staged; the agreement table is
+  pinned against the real hook in `test/hook-post-tool-use-toolio.test.js`.
