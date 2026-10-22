@@ -6,6 +6,7 @@ import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
 import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
+import { reasoningBinding } from '../reasoning/index.js';
 
 /**
  * src/ingest/index.js
@@ -84,6 +85,26 @@ function ingestSession(jsonlText, opts = {}) {
   // written, because the transcript already is one.
   receiptSummary.chapters = chaptersBinding(chaptersFromClaudeTranscript(jsonlText));
 
+  // Reasoning trace reconciliation (V3-04, rung R3). The per-step receipts
+  // written at PostToolUse can miss a step (the hook fired before the
+  // tool_use line was flushed, or the call was denied and no PostToolUse
+  // fired). This pass recomputes every step's segment from the whole
+  // transcript and compares it with the reasoning-step receipts on the chain:
+  // matched, late (filled in here), or mismatched (surfaced, never smoothed).
+  // Rows go to a sidecar bound by digest, same pattern as thoughts/1. It
+  // must see the chain under the lock, so it runs inside buildPayload.
+  let reasoningSidecar = null;
+  const bindReasoning = (currentEntries) => {
+    try {
+      const b = reasoningBinding(jsonlText, currentEntries, sessionId);
+      receiptSummary.reasoning = b.field;
+      reasoningSidecar = b.sidecarText;
+    } catch (e) {
+      receiptSummary.reasoning = { schema: 'reasoning-trace/1', error: String(e && e.message || e).slice(0, 200) };
+      reasoningSidecar = null;
+    }
+  };
+
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot
   // both decide to append subsession 0.
@@ -94,6 +115,7 @@ function ingestSession(jsonlText, opts = {}) {
 
     if (existing.length === 0) {
       receiptSummary.session.subsession = 0;
+      bindReasoning(currentEntries);
       return receiptSummary;
     }
 
@@ -108,6 +130,7 @@ function ingestSession(jsonlText, opts = {}) {
     }
 
     receiptSummary.session.subsession = existing.length;
+    bindReasoning(currentEntries);
     return receiptSummary;
   });
 
@@ -129,6 +152,18 @@ function ingestSession(jsonlText, opts = {}) {
       dir, `${safeId}-s${entry.payload.session.subsession}.jsonl`
     );
     fs.writeFileSync(file, sidecarText, 'utf-8');
+  }
+
+  // Reasoning trace sidecar: digests, kinds and reconcile verdicts per step,
+  // never reasoning text. Same crash seam as the thought sidecar above.
+  if (reasoningSidecar && entry.payload.reasoning && entry.payload.reasoning.steps > 0) {
+    const dir = path.join(home, 'reasoning');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeId = String(sessionId).replace(/[^A-Za-z0-9_-]/g, '_');
+    fs.writeFileSync(
+      path.join(dir, `${safeId}-s${entry.payload.session.subsession}.jsonl`),
+      reasoningSidecar, 'utf-8'
+    );
   }
 
   return {
