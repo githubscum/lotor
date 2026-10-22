@@ -2181,6 +2181,22 @@ What it does not do, in three parts:
   thought did or why it cost that much — the same silence-is-not-safety
   ceiling every other receipt field already discloses.
 
+**NARROWED 2026-10-20 (reader half; the write side is unchanged).** Until now
+nothing read a sidecar back, so a deleted or edited one was silent: the
+absence was detectable in principle and detected by nobody.
+`src/views/thoughts.js` exports `checkThoughtSidecars(entries, home)`, which
+checks every `thoughts/1` binding against `<home>/thoughts/` and reports each
+as `match`, `mismatch` (with the hash found), `missing`, `none-expected`
+(count 0, no file is written), `malformed` (the binding itself is bad), or,
+for a file no receipt expects, `orphan`. Tested in
+`test/views-thought-sidecars.test.js`. First run against a real store
+(36,433 entries, 2026-10-20): 3,292 match, 0 mismatch, 4 none-expected,
+0 orphan, and **1 missing**, a 15-thought sidecar for a session whose receipt
+is on the chain. Which of the two causes above produced it is exactly what
+the check cannot say. Still open: the sidecar remains deletable without a
+signature, `missing` still cannot separate a crash from a deletion, and the
+check is a function, not yet a CLI or a line in any view.
+
 ## 61. The permissive-posture warning overstates its own inertness
 
 Found 2026-08-31, by tripping it twice in one session.
