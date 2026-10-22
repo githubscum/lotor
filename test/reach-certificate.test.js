@@ -677,7 +677,6 @@ function runStart(home, stdin) {
 
 describe('reach certificate on the session-open receipt (hook wiring)', () => {
   it('session-open carries an open certificate that verifies on the chain',
-    { todo: 'applied at the signing sitting: proposals/v3-02-session-open-reach.patch' },
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-reach-open-'));
       try {

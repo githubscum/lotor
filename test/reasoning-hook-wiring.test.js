@@ -28,7 +28,7 @@ after(() => {
 });
 
 describe('PostToolUse hook wiring (V3-04)', () => {
-  it('a non-egress tool call still lands one reasoning-step receipt', { todo: 'apply proposals/v3-04-hook-post-tool-use.patch at the signing sitting' }, () => {
+  it('a non-egress tool call still lands one reasoning-step receipt', () => {
     const tx = path.join(tmp, 't.jsonl');
     fs.writeFileSync(tx,
       JSON.stringify({ type: 'assistant', message: { id: 'm1', role: 'assistant', content: [{ type: 'thinking', thinking: 'synthetic', signature: 's' }] } }) + '\n' +

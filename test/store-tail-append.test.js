@@ -57,7 +57,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  *   NODE_OPTIONS="--import=file:///<repo>/proposals/store-tail-append/run-against-candidate.mjs" npm test
  * (absolute URL: some tests spawn children in a temp cwd)
  */
-const PENDING_LANDING = { todo: 'needs proposals/store-tail-append landed in src/store (signing sitting)' };
+const PENDING_LANDING = {};
 
 /** Set by proposals/store-tail-append/run-against-candidate.mjs when active. */
 const HOOK_ACTIVE = Boolean(globalThis[Symbol.for('lotor.storeCandidateHook')]);

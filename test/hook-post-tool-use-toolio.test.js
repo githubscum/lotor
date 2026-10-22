@@ -34,7 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = path.join(__dirname, '..', 'bin', 'hook-post-tool-use.js');
 
 // Flipped to true by the staged diff, in the same sitting as the hook edit.
-const WIRED = false;
+const WIRED = true;
 const opts = WIRED ? {} : { todo: 'V3-03 hook wiring staged for the signing sitting' };
 
 function runHook({ stdin = '', home }) {
