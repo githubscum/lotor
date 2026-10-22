@@ -205,7 +205,11 @@ function renderSessionReceipt(receiptPayload) {
   lines.push('─'.repeat(60));
   if (touched?.length > 0) {
     for (const file of touched) {
-      lines.push(`  • ${file.path} (via: ${file.via})`);
+      // Limit 76: an attempt the harness answered with an error is marked
+      // where the reader is looking, so a refused write does not read as a
+      // change. Receipts without `outcome` render exactly as before.
+      const refused = file.outcome === 'error' ? ', refused' : '';
+      lines.push(`  • ${file.path} (via: ${file.via}${refused})`);
     }
   } else {
     lines.push('  (none)');

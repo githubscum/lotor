@@ -153,8 +153,12 @@ export function sinceReport(entries, opts = {}) {
               s.refusedPaths.splice(s.refusedPaths.indexOf(pth), 1);
             }
           }
-          s.touchedRefused = (s.touchedRefused ?? 0) +
-            p.touched.filter(t => typeof t === 'object' && t?.outcome === 'error').length;
+          // DISTINCT refused paths for the session, not a per-receipt sum.
+          // Every subsession receipt re-parses the whole transcript
+          // (src/ingest), so one refused write in a session with three
+          // SessionEnd firings appears in three receipts; summing them read
+          // as "(3 refused)" for one refusal.
+          s.touchedRefused = s.refusedPaths.length;
         }
         break;
       }

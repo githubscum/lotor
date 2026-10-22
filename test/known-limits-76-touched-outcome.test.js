@@ -29,6 +29,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { parseSession } from '../src/parser/index.js';
 import { sinceReport, renderSince } from '../src/views/since.js';
+import { renderSessionReceipt } from '../src/views/index.js';
+import { liveReport, renderLive } from '../src/views/live.js';
+import { createStore } from '../src/store/index.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /** One assistant turn carrying a single tool_use, then optionally its result. */
 function turnUse(name, id, input) {
@@ -234,8 +240,125 @@ describe('KNOWN-LIMITS 76: the since-view separates a landed write from a refuse
     const s = report.sessions[0];
     assert.deepEqual(s.refusedPaths, [],
       'one landed write is a write: the refusal is withdrawn');
+    assert.strictEqual(s.touchedRefused, 0, 'the count follows the withdrawn refusal');
     const out = renderSince(report);
     assert.ok(!out.includes('a.js (refused)'), 'the reader must not see a landed write as refused');
     assert.ok(out.includes('    touched     /w/a.js\n'), 'the path renders bare, no suffix');
+  });
+});
+
+describe('KNOWN-LIMITS 76 review fixes: per-session refused count, canonical join, other readers', () => {
+  const at = (seq, ts, payload) => ({ seq, timestamp: ts, hash: 'h', payload });
+
+  it('g5. one refused write across three subsession receipts counts as 1 refused, not 3', () => {
+    // Every SessionEnd re-parses the whole transcript (src/ingest), so each
+    // subsession receipt repeats the same refused path.
+    const receipt = sub => ({
+      session: { id: 'sess-76-subs', model: 'test-model', subsession: sub },
+      counts: { turns: 1 + sub, toolCalls: 1 + sub, failures: 1 },
+      touched: [
+        { path: '/w/bin/hook-pre-tool-use.js', via: 'write', outcome: 'error' },
+        { path: '/w/src/ok.js', via: 'edit', outcome: 'ok' }
+      ]
+    });
+    const entries = [
+      at(1, 1000, { type: 'session-open', sessionId: 'sess-76-subs', source: 'startup', cwd: '/w' }),
+      at(2, 2000, receipt(0)),
+      at(3, 3000, receipt(1)),
+      at(4, 4000, receipt(2))
+    ];
+    const report = sinceReport(entries);
+    assert.strictEqual(report.sessions[0].touchedRefused, 1, 'distinct refused paths, not a per-receipt sum');
+    const workLine = renderSince(report).split('\n').find(l => l.startsWith('    work        '));
+    assert.ok(workLine.includes('(1 refused)'), `work line: ${workLine}`);
+    assert.ok(!workLine.includes('(3 refused)'));
+  });
+
+  it('g6. a refusal landed in a later receipt leaves touchedRefused at 0', () => {
+    const r = (sub, outcome) => ({
+      session: { id: 'sess-76-relanded', model: 'test-model', subsession: sub },
+      counts: { turns: 1, toolCalls: 1, failures: 0 },
+      touched: [{ path: '/w/a.js', via: 'write', outcome }]
+    });
+    const entries = [
+      at(1, 1000, { type: 'session-open', sessionId: 'sess-76-relanded', source: 'startup', cwd: '/w' }),
+      at(2, 2000, r(0, 'error')),
+      at(3, 3000, r(1, 'ok'))
+    ];
+    const report = sinceReport(entries);
+    assert.strictEqual(report.sessions[0].touchedRefused, 0);
+    assert.ok(!renderSince(report).includes('refused)'));
+  });
+
+  it('h1. Edit absolute + file-history relative + refused result: one entry, outcome error (canonical key join)', () => {
+    const jsonl = [
+      JSON.stringify({ cwd: '/w', type: 'user', message: { role: 'user', content: 'go' } }),
+      turnUse('Write', 'write-76h1', { file_path: '/w/bin/hook.js', content: 'x' }),
+      fileHistory('bin/hook.js'),
+      turnResult('write-76h1', true)
+    ].join('\n');
+    const result = parseSession(jsonl);
+    assert.strictEqual(result.touched.length, 1, 'limit 75 identity still holds with outcome');
+    assert.strictEqual(result.touched[0].path, '/w/bin/hook.js');
+    assert.strictEqual(result.touched[0].via, 'write');
+    assert.deepEqual(result.touched[0].alsoVia, ['file-history']);
+    assert.strictEqual(result.touched[0].outcome, 'error');
+  });
+
+  it('h2. file-history first, then a landed Edit through a non-normalised path: outcome ok on the merged entry', () => {
+    const jsonl = [
+      JSON.stringify({ cwd: '/w', type: 'user', message: { role: 'user', content: 'go' } }),
+      fileHistory('src/a.js'),
+      turnUse('Edit', 'edit-76h2', { file_path: '/w/lib/../src/a.js' }),
+      turnResult('edit-76h2', false)
+    ].join('\n');
+    const result = parseSession(jsonl);
+    assert.strictEqual(result.touched.length, 1);
+    assert.strictEqual(result.touched[0].via, 'edit');
+    assert.strictEqual(result.touched[0].outcome, 'ok');
+  });
+
+  it('i. the text receipt marks a refused path and leaves a landed or legacy one bare', () => {
+    const out = renderSessionReceipt({
+      session: { id: 'sess-76-text', model: 'test-model' },
+      ran: [], failed: [], cost: {}, sent: { items: [] }, counts: {},
+      touched: [
+        { path: '/w/bin/hook.js', via: 'write', outcome: 'error' },
+        { path: '/w/src/ok.js', via: 'edit', outcome: 'ok' },
+        { path: '/w/old.js', via: 'write' }
+      ]
+    });
+    assert.ok(out.includes('/w/bin/hook.js (via: write, refused)'));
+    assert.ok(out.includes('/w/src/ok.js (via: edit)\n'));
+    assert.ok(out.includes('/w/old.js (via: write)\n'));
+  });
+
+  it('j. the live view counts and marks a refused write', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-76-live-'));
+    try {
+      const transcript = path.join(home, 'sess-76-live.jsonl');
+      fs.writeFileSync(transcript, [
+        JSON.stringify({ cwd: '/w', type: 'user', message: { role: 'user', content: 'go' } }),
+        turnUse('Write', 'write-76j1', { file_path: '/w/bin/hook.js', content: 'x' }),
+        turnResult('write-76j1', true),
+        turnUse('Edit', 'edit-76j2', { file_path: '/w/src/ok.js' }),
+        turnResult('edit-76j2', false)
+      ].join('\n') + '\n');
+      createStore(home).appendReceipt({
+        type: 'session-open', sessionId: 'sess-76-live', source: 'startup', cwd: '/w',
+        transcriptPath: transcript
+      });
+
+      const r = liveReport(home);
+      const s = r.sessions.find(x => x.sessionId === 'sess-76-live');
+      assert.ok(s, 'the in-flight session is reported');
+      assert.deepEqual(s.refusedPaths, ['/w/bin/hook.js']);
+      const out = renderLive(r);
+      assert.ok(out.includes('2 files (1 refused)'), out);
+      assert.ok(out.includes('/w/bin/hook.js (refused)'));
+      assert.ok(!out.includes('/w/src/ok.js (refused)'));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
