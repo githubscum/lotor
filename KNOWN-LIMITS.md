@@ -1992,6 +1992,18 @@ reading the git history of `src/policy/index.js` for that time range. A
 hash detects, it does not explain. Same for `observer.parser.hash` on
 session-open receipts.
 
+**NARROWED 2026-10-20 (reader half).** `src/views/matcher-history.js`
+re-derives the stamp at every commit that touched `src/policy/` by importing
+that commit's own code and calling its own `matcherVersionHash`, so a reader
+can go from a receipt's `matcherHash` to the commit(s) that produced it and
+from there to `git diff`. Against this clone's history: 28 policy commits, 15
+carry a stamp, 8 distinct stamps, about 2 s. What stays open: it resolves only
+hashes a commit in the reader's own clone produced (not-found is "unknown
+provenance", never "tampered"); it executes historical code, so it is a reader
+for your own clone and not a verifier of a stranger's; there is no CLI yet,
+because a new `bin/` file is a protected write; and `observer.parser.hash` has
+no equivalent reader. Building it found limit 77.
+
 ## 54. Captured thinking is self-report, and a quiet thought channel is unrecorded, not empty
 
 `thinkingBlocks` on a session-end receipt is a list of digests of text the
@@ -3106,3 +3118,34 @@ happened. Receipts written before this change carry no `outcome` and must be
 read as "attempted": absent means unrecorded, never "it landed". Non-core:
 src/parser/ and src/views/ are not on the protected list; the retcon half is
 core and is not touched here.
+
+## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
+
+`matcherVersionHash()` digests `Function.prototype.toString()` of the rule
+functions, and `toString()` returns the source text as loaded, line endings
+included. A Windows clone with `core.autocrlf=true` checks out CRLF, so the
+same commit stamps differently there than on an LF checkout (Linux, macOS,
+CI). Measured 2026-10-20 on this machine at `5198a07`: the live stamp is
+`c4165ee9ff7612bd`; the same commit recomputed from `git show` (LF) is
+`e0877fab0f459e0c`. Every receipt this machine has written carries the CRLF
+stamp, and no LF clone of the same code will ever reproduce it.
+
+Consequence for a reader: two receipts with different `matcherHash` values do
+not prove the matcher changed between them, only that the matcher source text
+differed, and a line-ending difference is enough. Limit 53's sentence "the
+matcher changed between them" is true only for receipts written from the same
+checkout configuration.
+
+Mitigation, reader side: `src/views/matcher-history.js` recomputes each commit
+in both LF and CRLF and reports which one matched (`eol`). Any other byte-level
+transform of the checkout (a BOM, a formatter run, a different `eol` attribute)
+still reads as not-found. The real fix normalizes line endings inside
+`matcherHashInputs()`; that is a change to `src/policy` (non-delegable core), so
+it waits for a signing sitting. It would not move every machine's stamp:
+`matcherHashInputs()` is not itself one of the functions it hashes, so on an LF
+checkout the hashed text is byte-identical before and after and the stamp stays
+put. Only CRLF checkouts move, onto the LF stamp. (That holds only if the
+normalization is written in `matcherHashInputs()` itself; put inside one of the
+hashed rule functions, it would move every stamp.) The receipts read across the
+change are therefore the CRLF-era ones, such as every receipt this machine has
+written, and how they are read afterwards still needs a decision.
