@@ -28,7 +28,7 @@
  *      is the reader explaining their own history; run against a stranger's
  *      tree it is arbitrary code execution by another name. This is a reader
  *      for your own clone, not a verifier of anyone else's.
- *   4. The stamp is line-ending-sensitive (KNOWN-LIMITS 75): it digests
+ *   4. The stamp is line-ending-sensitive (KNOWN-LIMITS 77): it digests
  *      Function.prototype.toString(), and that string carries the checkout's
  *      line endings, so the same commit stamps differently on a CRLF clone
  *      than it did in its LF era. This reader recomputes the stamp BOTH ways

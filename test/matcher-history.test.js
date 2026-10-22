@@ -225,7 +225,7 @@ describe('matcher-history (KNOWN-LIMITS 53, reader half)', () => {
       // A fixture that derives its stamp from its own source: toString() of a
       // function carries the materialized file's line endings, so the LF and
       // CRLF materializations of the SAME commit produce DIFFERENT stamps.
-      // This is the shape KNOWN-LIMITS 75 bites on; one-line fixtures cannot
+      // This is the shape KNOWN-LIMITS 77 bites on; one-line fixtures cannot
       // show it because toString() excludes the trailing newline.
       const multilinePolicy = [
         "import crypto from 'node:crypto';",

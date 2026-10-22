@@ -2002,7 +2002,7 @@ hashes a commit in the reader's own clone produced (not-found is "unknown
 provenance", never "tampered"); it executes historical code, so it is a reader
 for your own clone and not a verifier of a stranger's; there is no CLI yet,
 because a new `bin/` file is a protected write; and `observer.parser.hash` has
-no equivalent reader. Building it found limit 75.
+no equivalent reader. Building it found limit 77.
 
 ## 54. Captured thinking is self-report, and a quiet thought channel is unrecorded, not empty
 
@@ -3119,7 +3119,7 @@ read as "attempted": absent means unrecorded, never "it landed". Non-core:
 src/parser/ and src/views/ are not on the protected list; the retcon half is
 core and is not touched here.
 
-## 75. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
+## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
 
 `matcherVersionHash()` digests `Function.prototype.toString()` of the rule
 functions, and `toString()` returns the source text as loaded, line endings
