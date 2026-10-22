@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 /**
  * src/parser/index.js
@@ -38,7 +39,6 @@ function parseSession(jsonlText, opts = {}) {
   };
 
   const ran = [];        // { tool, id, paramsDigest }
-  const touched = new Map(); // path -> { via }
   const failed = [];     // { tool, id, errorDigest }
   const cost = {
     inputTokens: 0,
@@ -66,6 +66,19 @@ function parseSession(jsonlText, opts = {}) {
   let failures = 0;
   let assistantMessages = 0;
 
+  // Touched-path identity. Claude Code writes Edit/Write tool_use file_path as
+  // an ABSOLUTE path, but file-history (snapshot keys, delta trackingPath) as a
+  // path RELATIVE to the session cwd — the same file twice unless the two
+  // shapes are resolved to one canonical key. Transcript lines carry that cwd
+  // field in a top-level `cwd` field; the first non-empty one is the session
+  // cwd. touchKey() resolves a recorded path to its absolute identity,
+  // toTouchMapKey() folds Windows-flavoured keys case- and
+  // separator-insensitively, and recordTouched() merges the two record
+  // sources onto one map entry.
+  let sessionCwd = null;
+
+  const touched = new Map(); // canonical key -> { path, via, alsoVia? }
+
   // Track tool_use to tool_result linkage
   const toolUseMap = new Map(); // tool_use_id -> { tool, paramsDigest }
   // Dedup usage across the lines Claude Code writes for one assistant message.
@@ -75,6 +88,12 @@ function parseSession(jsonlText, opts = {}) {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
+    // Session cwd: the first entry with a non-empty string `cwd`. Recorded per
+    // line in real transcripts; taken once, before any touched records in that
+    // same entry are processed.
+    if (sessionCwd === null && typeof entry.cwd === 'string' && entry.cwd !== '') {
+      sessionCwd = entry.cwd;
+    }
     // Count assistant turns
     if (entry.message?.role === 'assistant') {
       turns++;
@@ -201,10 +220,11 @@ function parseSession(jsonlText, opts = {}) {
 
             // Track file mutations for 'touched'
             if (toolName === 'Edit' || toolName === 'Write') {
-              const path = item.input?.file_path;
-              if (path) {
-                touched.set(path, { via: toolName.toLowerCase() });
-              }
+              // Edit/Write carries the absolute display form and must
+              // overwrite `via` even when file-history has already claimed
+              // the same canonical key (see recordTouched).
+              recordTouched(touched, item.input?.file_path,
+                toolName.toLowerCase(), sessionCwd, true);
             }
           }
         }
@@ -233,16 +253,14 @@ function parseSession(jsonlText, opts = {}) {
 
     // File history tracking (additional touch records)
     if (entry.type === 'file-history-snapshot' && entry.snapshot?.trackedFileBackups) {
-      for (const [path, backup] of Object.entries(entry.snapshot.trackedFileBackups)) {
-        if (!touched.has(path)) {
-          touched.set(path, { via: 'file-history' });
-        }
+      for (const [rawPath] of Object.entries(entry.snapshot.trackedFileBackups)) {
+        recordTouched(touched, rawPath, 'file-history', sessionCwd);
       }
     }
 
     if (entry.type === 'file-history-delta' && entry.trackingPath) {
-      if (!touched.has(entry.trackingPath)) {
-        touched.set(entry.trackingPath, { via: 'file-history' });
+      if (typeof entry.trackingPath === 'string' && entry.trackingPath !== '') {
+        recordTouched(touched, entry.trackingPath, 'file-history', sessionCwd);
       }
     }
   }
@@ -278,6 +296,122 @@ function parseSession(jsonlText, opts = {}) {
     sent,
     counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };
+}
+
+/**
+ * Is a recorded path ALREADY absolute in a recognizable flavour: posix
+ * `/...`, a Windows drive (`X:\` / `X:/`), or UNC (`\\...`)?
+ */
+function isTouchPathAbsolute(p) {
+  if (typeof p !== 'string' || p === '') return false;
+  return p.startsWith('/') || p.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(p);
+}
+
+/**
+ * Does a cwd/path look Windows-flavoured: a drive letter, or any backslash?
+ */
+function windowsFlavoured(p) {
+  return /^[A-Za-z]:/.test(p) || p.includes('\\');
+}
+
+/**
+ * Resolve one recorded file path to its canonical identity for the
+ * `touched` map, so the same file written once absolutely (Edit/Write
+ * `file_path`) and once relatively (file-history snapshot keys,
+ * `trackingPath`) lands on ONE entry instead of two.
+ *
+ *   - Already absolute (posix `/...`, Windows drive, UNC `\\`):
+ *     normalised lexically in its own flavour (path.win32.normalize for a
+ *     drive or UNC path, path.posix.normalize otherwise), so `.\`, `..`
+ *     and doubled separators in an Edit/Write `file_path` land on the same
+ *     key as the resolved file-history twin.
+ *   - Relative with a known cwd: joined to cwd using cwd's flavour
+ *     (path.win32 vs path.posix).
+ *   - Relative with NO cwd: unchanged — no guess; the entry keeps its
+ *     relative path and stays distinct from any absolute twin.
+ *
+ * @param {string} p - path exactly as recorded in the transcript
+ * @param {string|null} cwd - session working directory, if known
+ * @returns {string|null} resolved identity, or null for empty input
+ */
+function touchKey(p, cwd) {
+  if (typeof p !== 'string' || p === '') return null;
+  if (isTouchPathAbsolute(p)) {
+    const win = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+    return win ? path.win32.normalize(p) : path.posix.normalize(p);
+  }
+  if (cwd) {
+    return windowsFlavoured(cwd) ? path.win32.resolve(cwd, p) : path.posix.resolve(cwd, p);
+  }
+  return p;
+}
+
+/**
+ * Canonical MAP KEY for a resolved touched path. Windows-flavoured keys
+ * compare case- and separator-insensitively (NTFS semantics), so the map
+ * key is lowercased with `/` normalised to `\`; posix keys pass through
+ * untouched. The stored `path` value keeps its display form — the
+ * lowercasing happens here and nowhere else.
+ */
+function toTouchMapKey(key) {
+  if (!key) return key;
+  if (/^[A-Za-z]:/.test(key) || key.startsWith('\\\\')) {
+    return key.replace(/\//g, '\\').toLowerCase();
+  }
+  return key;
+}
+
+/**
+ * Fold one recorded touch (an Edit/Write `file_path`, a file-history
+ * snapshot key, or a `trackingPath`) into the `touched` map, merging the
+ * two record sources when their canonical keys collide.
+ *
+ * Merge rules:
+ *   - A fresh key inserts `{ path, via }`, keeping first-seen order.
+ *     `path` is the ABSOLUTE resolved form when one is available
+ *     (Edit/Write's `file_path`, or the resolved file-history path), else
+ *     the unchanged relative form (no cwd => nothing to resolve to).
+ *   - Edit/Write arriving on an existing entry overwrites `via` (a single
+ *     mutation is a mutation, whatever backup tracking later says) and
+ *     prefers its absolute `file_path` as the display `path` whenever
+ *     one is resolvable.
+ *   - A `via: 'file-history'` displaced this way moves into `alsoVia`
+ *     (array, no duplicates); a file-history record arriving after an
+ *     Edit/Write keeps the edit/write `via` and joins `alsoVia` itself.
+ *
+ * @param {Map} touched
+ * @param {string} rawPath - path as recorded in the transcript
+ * @param {string} via - 'edit' | 'write' | 'file-history'
+ * @param {string|null} cwd - session working directory, if known
+ * @param {boolean} fromEditWrite - caller is an Edit/Write tool_use record
+ */
+function recordTouched(touched, rawPath, via, cwd, fromEditWrite = false) {
+  const resolved = touchKey(rawPath, cwd);
+  if (resolved === null) return;
+  const key = toTouchMapKey(resolved);
+  const existing = touched.get(key);
+  if (!existing) {
+    touched.set(key, { path: resolved, via });
+    return;
+  }
+  const priorVia = existing.via;
+  if (fromEditWrite) {
+    existing.via = via;
+    // Prefer the Edit/Write absolute form as the display path when it is
+    // one: an absolute `file_path` always wins, including over a relative
+    // form stored earlier when no cwd was known yet.
+    if (isTouchPathAbsolute(resolved)) existing.path = resolved;
+    if (priorVia === 'file-history' && !(existing.alsoVia || []).includes('file-history')) {
+      existing.alsoVia = [...(existing.alsoVia || []), 'file-history'];
+    }
+  } else if (priorVia !== 'file-history') {
+    // file-history after an Edit/Write: keep the edit/write `via`.
+    if (!(existing.alsoVia || []).includes(via)) {
+      existing.alsoVia = [...(existing.alsoVia || []), via];
+    }
+  }
+  // A file-history record over an existing file-history entry changes
+  // nothing: the first-seen display form of `path` stands.
 }
 
 /**
@@ -463,6 +597,11 @@ export function parserVersionHash() {
     extractTarget.toString(),
     entryTimestamp.toString(),
     usageIdentity.toString(),
+    isTouchPathAbsolute.toString(),
+    windowsFlavoured.toString(),
+    touchKey.toString(),
+    toTouchMapKey.toString(),
+    recordTouched.toString(),
     digestParams.toString(),
     digestContent.toString(),
     digestParamsCanonical.toString()
