@@ -19,7 +19,25 @@ import { parseSession } from '../src/parser/index.js';
  * Transcripts are built in-memory the way test/parser-dedup.test.js
  * builds its split-message fixture: plain objects, JSON.stringify, joined
  * with '\n'.
+ *
+ * Fixture shape follows real Claude Code transcripts: `cwd` rides on
+ * user/assistant (and attachment) lines only. `file-history-snapshot` and
+ * `file-history-delta` lines never carry it (checked against this
+ * machine's transcripts on 2026-10-22: snapshot keys are type, messageId,
+ * snapshot, isSnapshotUpdate; delta keys are type, messageId,
+ * snapshotMessageId, trackingPath, backup, timestamp). The helpers below
+ * therefore cannot put a cwd on those lines; a test that wants a cwd must
+ * supply it from an earlier user or assistant line.
  */
+
+function userLine({ cwd, text = 'go' }) {
+  return JSON.stringify({
+    ...(cwd !== undefined ? { cwd } : {}),
+    type: 'user',
+    message: { role: 'user', content: text },
+    createdAt: '2026-10-19T09:59:59Z'
+  });
+}
 
 function assistantToolUse({ cwd, tool, id, filePath }) {
   return JSON.stringify({
@@ -33,18 +51,16 @@ function assistantToolUse({ cwd, tool, id, filePath }) {
   });
 }
 
-function snapshotLine({ cwd, tracked }) {
+function snapshotLine({ tracked }) {
   return JSON.stringify({
-    ...(cwd !== undefined ? { cwd } : {}),
     type: 'file-history-snapshot',
     snapshot: { trackedFileBackups: tracked },
     createdAt: '2026-10-19T10:00:01Z'
   });
 }
 
-function deltaLine({ cwd, trackingPath }) {
+function deltaLine({ trackingPath }) {
   return JSON.stringify({
-    ...(cwd !== undefined ? { cwd } : {}),
     type: 'file-history-delta',
     trackingPath,
     createdAt: '2026-10-19T10:00:02Z'
@@ -52,10 +68,15 @@ function deltaLine({ cwd, trackingPath }) {
 }
 
 describe('parseSession touched-path identity', () => {
+  it('fixture shape: snapshot and delta lines carry no cwd, as in real transcripts', () => {
+    assert.ok(!('cwd' in JSON.parse(snapshotLine({ tracked: {} }))));
+    assert.ok(!('cwd' in JSON.parse(deltaLine({ trackingPath: 'a.js' }))));
+  });
+
   it('posix: Edit absolute + snapshot relative with cwd collapse to ONE entry (edit first)', () => {
     const jsonl = [
       assistantToolUse({ cwd: '/home/u/repo', tool: 'Edit', id: 't1', filePath: '/home/u/repo/src/a.js' }),
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/a.js': { version: 1 } } })
+      snapshotLine({ tracked: { 'src/a.js': { version: 1 } } })
     ].join('\n');
     const result = parseSession(jsonl);
 
@@ -68,8 +89,11 @@ describe('parseSession touched-path identity', () => {
   it('posix: snapshot BEFORE the Edit collapses to the same ONE entry', () => {
     // The parser may meet the file-history record first: the Edit/Write
     // arrival must still overwrite `via` and move file-history to alsoVia.
+    // As in a real transcript, the snapshot line has no cwd; the session
+    // cwd comes from the user line before it.
     const jsonl = [
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/a.js': { version: 1 } } }),
+      userLine({ cwd: '/home/u/repo' }),
+      snapshotLine({ tracked: { 'src/a.js': { version: 1 } } }),
       assistantToolUse({ cwd: '/home/u/repo', tool: 'Edit', id: 't1', filePath: '/home/u/repo/src/a.js' })
     ].join('\n');
     const result = parseSession(jsonl);
@@ -83,7 +107,7 @@ describe('parseSession touched-path identity', () => {
   it('windows: Write absolute + delta trackingPath with cwd collapse to ONE entry', () => {
     const jsonl = [
       assistantToolUse({ cwd: 'C:\\Users\\u\\repo', tool: 'Write', id: 't1', filePath: 'C:\\Users\\u\\repo\\src\\b.js' }),
-      deltaLine({ cwd: 'C:\\Users\\u\\repo', trackingPath: 'src/b.js' })
+      deltaLine({ trackingPath: 'src/b.js' })
     ].join('\n');
     const result = parseSession(jsonl);
 
@@ -99,7 +123,7 @@ describe('parseSession touched-path identity', () => {
     // form while the map key is folded.
     const jsonl = [
       assistantToolUse({ cwd: 'C:\\Users\\u\\repo', tool: 'Edit', id: 't1', filePath: 'c:\\users\\u\\repo\\x.js' }),
-      snapshotLine({ cwd: 'C:\\Users\\u\\repo', tracked: { 'X.js': { version: 1 } } })
+      snapshotLine({ tracked: { 'X.js': { version: 1 } } })
     ].join('\n');
     const result = parseSession(jsonl);
 
@@ -112,9 +136,9 @@ describe('parseSession touched-path identity', () => {
   it('two different files stay two touched entries', () => {
     const jsonl = [
       assistantToolUse({ cwd: '/home/u/repo', tool: 'Edit', id: 't1', filePath: '/home/u/repo/src/a.js' }),
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/a.js': { version: 1 } } }),
+      snapshotLine({ tracked: { 'src/a.js': { version: 1 } } }),
       assistantToolUse({ cwd: '/home/u/repo', tool: 'Write', id: 't2', filePath: '/home/u/repo/src/b.js' }),
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/b.js': { version: 1 } } })
+      snapshotLine({ tracked: { 'src/b.js': { version: 1 } } })
     ].join('\n');
     const result = parseSession(jsonl);
 
@@ -145,8 +169,9 @@ describe('parseSession touched-path identity', () => {
 
   it('file-history-only relative path with cwd is reported resolved to absolute', () => {
     const jsonl = [
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/c.js': { version: 1 } } }),
-      deltaLine({ cwd: '/home/u/repo', trackingPath: 'src/d.js' })
+      userLine({ cwd: '/home/u/repo' }),
+      snapshotLine({ tracked: { 'src/c.js': { version: 1 } } }),
+      deltaLine({ trackingPath: 'src/d.js' })
     ].join('\n');
     const result = parseSession(jsonl);
 
@@ -161,7 +186,8 @@ describe('parseSession touched-path identity', () => {
 
   it('output order keeps first-seen order of the canonical key', () => {
     const jsonl = [
-      snapshotLine({ cwd: '/home/u/repo', tracked: { 'src/first.js': { version: 1 } } }),
+      userLine({ cwd: '/home/u/repo' }),
+      snapshotLine({ tracked: { 'src/first.js': { version: 1 } } }),
       assistantToolUse({ cwd: '/home/u/repo', tool: 'Edit', id: 't1', filePath: '/home/u/repo/src/second.js' })
     ].join('\n');
     const result = parseSession(jsonl);
@@ -170,5 +196,39 @@ describe('parseSession touched-path identity', () => {
       result.touched.map(t => t.path),
       ['/home/u/repo/src/first.js', '/home/u/repo/src/second.js']
     );
+  });
+
+  it('windows: `.\\`, `..` and doubled separators in an Edit path collide with the file-history twin', () => {
+    const cwd = 'C:\\Users\\u\\repo';
+    const spellings = [
+      'C:\\Users\\u\\repo\\.\\src\\b.js',
+      'C:\\Users\\u\\repo\\lib\\..\\src\\b.js',
+      'C:\\Users\\u\\repo\\src\\\\b.js',
+      'C:/Users/u/repo//src/./b.js'
+    ];
+    for (const filePath of spellings) {
+      const jsonl = [
+        userLine({ cwd }),
+        snapshotLine({ tracked: { 'src\\b.js': { version: 1 } } }),
+        assistantToolUse({ cwd, tool: 'Edit', id: 't1', filePath })
+      ].join('\n');
+      const result = parseSession(jsonl);
+      assert.strictEqual(result.touched.length, 1, `${filePath}: one file, not two entries`);
+      assert.strictEqual(result.touched[0].path, 'C:\\Users\\u\\repo\\src\\b.js');
+      assert.strictEqual(result.touched[0].via, 'edit');
+      assert.deepEqual(result.touched[0].alsoVia, ['file-history']);
+    }
+  });
+
+  it('posix: `./`, `..` and doubled separators in an Edit path collide with the file-history twin', () => {
+    for (const filePath of ['/home/u/repo/./src/a.js', '/home/u/repo/lib/../src/a.js', '/home/u/repo//src/a.js']) {
+      const jsonl = [
+        assistantToolUse({ cwd: '/home/u/repo', tool: 'Edit', id: 't1', filePath }),
+        deltaLine({ trackingPath: 'src/a.js' })
+      ].join('\n');
+      const result = parseSession(jsonl);
+      assert.strictEqual(result.touched.length, 1, `${filePath}: one file, not two entries`);
+      assert.strictEqual(result.touched[0].path, '/home/u/repo/src/a.js');
+    }
   });
 });

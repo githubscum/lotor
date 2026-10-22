@@ -320,7 +320,11 @@ function windowsFlavoured(p) {
  * `file_path`) and once relatively (file-history snapshot keys,
  * `trackingPath`) lands on ONE entry instead of two.
  *
- *   - Already absolute (posix `/...`, Windows drive, UNC `\\`): as-is.
+ *   - Already absolute (posix `/...`, Windows drive, UNC `\\`):
+ *     normalised lexically in its own flavour (path.win32.normalize for a
+ *     drive or UNC path, path.posix.normalize otherwise), so `.\`, `..`
+ *     and doubled separators in an Edit/Write `file_path` land on the same
+ *     key as the resolved file-history twin.
  *   - Relative with a known cwd: joined to cwd using cwd's flavour
  *     (path.win32 vs path.posix).
  *   - Relative with NO cwd: unchanged — no guess; the entry keeps its
@@ -332,7 +336,10 @@ function windowsFlavoured(p) {
  */
 function touchKey(p, cwd) {
   if (typeof p !== 'string' || p === '') return null;
-  if (isTouchPathAbsolute(p)) return p;
+  if (isTouchPathAbsolute(p)) {
+    const win = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+    return win ? path.win32.normalize(p) : path.posix.normalize(p);
+  }
   if (cwd) {
     return windowsFlavoured(cwd) ? path.win32.resolve(cwd, p) : path.posix.resolve(cwd, p);
   }

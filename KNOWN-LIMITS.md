@@ -2972,10 +2972,13 @@ so this one stays reviewable.
 ## 75. One edited file was listed twice in `touched`, once absolute and once relative
 
 **Status: CLOSED 2026-10-19, branch `lotor-lane/touched-path-identity`.**
-(PR #61 also claims 75 for a different limit. Whichever of the two lands
-second renumbers to 76.) `parseSession` now resolves every touched path against the
-session working directory (the first transcript line carrying `cwd`) and keys
-the map on that resolved identity. Windows-flavoured keys compare case- and
+(This lands before PR #61, which renumbers its entry to 76.) `parseSession`
+now resolves every touched path against the session working directory (the
+first transcript line carrying `cwd`; in real transcripts that is a user,
+assistant or attachment line, never a file-history line) and keys the map on
+that resolved identity. An absolute Edit/Write `file_path` is normalised
+lexically (`.\`, `..`, doubled separators) so it lands on the same key as its
+resolved file-history twin. Windows-flavoured keys compare case- and
 separator-insensitively; the stored `path` keeps a display form, preferring
 the Edit/Write absolute path. When an Edit/Write and a file-history record hit
 the same file, the entry keeps the edit/write `via` and gains
@@ -2996,4 +2999,8 @@ and 8.3 short names are not folded, so two spellings of one file through a
 link still count twice. Case folding applies only to Windows-flavoured paths;
 a case-insensitive macOS volume is not folded. Receipts already on the chain
 keep their doubled lists; this changes what new receipts say, and the parser
-version hash changes with it.
+version hash changes with it. The session cwd is the FIRST `cwd` seen; a
+transcript's `cwd` can change mid-session, and whether file-history paths stay
+relative to the original cwd after such a change is unconfirmed. A
+file-history line that precedes every `cwd`-carrying line stays relative and
+unmerged.
