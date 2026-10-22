@@ -1,0 +1,6 @@
+# Staged patches must keep LF line endings in every checkout. With
+# core.autocrlf=true (the Windows default) a .patch is otherwise written as
+# CRLF, its blank context lines become "\r", and `git apply` rejects the file
+# as "corrupt patch" before reading a hunk; --ignore-whitespace does not help,
+# because the failure is a parse error, not a whitespace mismatch.
+proposals/*.patch text eol=lf
