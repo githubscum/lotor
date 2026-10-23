@@ -13,8 +13,10 @@
  *
  * The record holds no text (no message content, no thinking text, no
  * tool call arguments, no token text), only shapes and digests.
- * (reach.logprobs is already digest-only.) It also holds no credentials:
- * userinfo in the host URL is redacted before storage, including in a
+ * (reach.logprobs is already digest-only.) The record carries both the
+ * requested model (`model`) and the model the response says served it
+ * (`servedModel`), so a silent substitution is visible on the record.
+ * It also holds no credentials: userinfo in the host URL is redacted before storage, including in a
  * thrown fetch error message, which Node quotes the whole URL from. A
  * failed call is loud, never silent: a non-2xx without a body error
  * string becomes `{ error: 'http <status>' }`, and a thrown fetch
@@ -101,6 +103,7 @@ export async function chatWithReach(
     at: now(),
     host: redactHost(host),
     model: request.model ?? null,
+    servedModel: isPlainObject(body) && typeof body.model === 'string' ? body.model : null,
     status,
     requested: reach.requested,
     observed: reach.observed,

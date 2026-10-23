@@ -3,7 +3,8 @@
  *
  * Synthetic fixtures and a fake fetchImpl only: no real network. Covers
  * the 9 cases in WO-V3-05-WIRE, cases 10 and 11 in WO-V3-05-WIRE-FIX1
- * and case 12 in WO-V3-05-WIRE-FIX2.
+ * and case 12 in WO-V3-05-WIRE-FIX2, and cases 13 to 17 in
+ * WO-V3-05-SERVED-MODEL.
  */
 
 import { test } from 'node:test';
@@ -181,4 +182,93 @@ test('12. fetch error quoting a credentials URL: userinfo redacted out of the re
   assert.ok(!str.includes('u:pw'), 'record leaked the credentials');
   assert.ok(result.record.error.includes('http://example.test:9999/api/chat'));
   assert.ok(result.record.error.startsWith('fetch: '));
+});
+
+test('13. matching models: servedModel and model both hold the served name', async () => {
+  const fetchImpl = recordingFetch(200, JSON.stringify({
+    model: 'llama3.2:1b',
+    message: { content: 'ok' }
+  }));
+  const result = await chatWithReach(
+    { model: 'llama3.2:1b', messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.record.servedModel, 'llama3.2:1b');
+  assert.equal(result.record.model, 'llama3.2:1b');
+});
+
+test('14. mismatch: model keeps the requested name, servedModel the served name, exact key list', async () => {
+  const fetchImpl = recordingFetch(200, JSON.stringify({
+    model: 'b:7b',
+    message: { content: 'ok' }
+  }));
+  const result = await chatWithReach(
+    { model: 'a:1b', messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.record.model, 'a:1b');
+  assert.equal(result.record.servedModel, 'b:7b');
+  assert.deepEqual(Object.keys(result.record), [
+    'kind',
+    'at',
+    'host',
+    'model',
+    'servedModel',
+    'status',
+    'requested',
+    'observed',
+    'silentlyDropped',
+    'deepest',
+    'error',
+    'r3Sources',
+    'logprobs'
+  ]);
+});
+
+test('15. HTTP 500 with non-JSON body: servedModel is null', async () => {
+  const fetchImpl = recordingFetch(500, 'server blew up');
+  const result = await chatWithReach(
+    { model: 'a:1b', messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.status, 500);
+  assert.equal(result.record.servedModel, null);
+  assert.equal(result.record.model, 'a:1b');
+});
+
+test('16. fetch throws: servedModel is null', async () => {
+  const fetchImpl = async () => { throw new Error('ECONNREFUSED'); };
+  const result = await chatWithReach(
+    { model: 'a:1b', messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.status, null);
+  assert.equal(result.record.servedModel, null);
+  assert.equal(result.record.model, 'a:1b');
+});
+
+test('17. body model is a number or an object: servedModel is null', async () => {
+  const fetchImpl = recordingFetch(200, JSON.stringify({
+    model: 42,
+    message: { content: 'ok' }
+  }));
+  const numberResult = await chatWithReach(
+    { model: 'a:1b', messages: [] },
+    { fetchImpl }
+  );
+  assert.equal(numberResult.record.servedModel, null);
+
+  const objectFetch = recordingFetch(200, JSON.stringify({
+    model: { name: 'a:1b' },
+    message: { content: 'ok' }
+  }));
+  const objectResult = await chatWithReach(
+    { model: 'a:1b', messages: [] },
+    { fetchImpl: objectFetch }
+  );
+  assert.equal(objectResult.record.servedModel, null);
 });
