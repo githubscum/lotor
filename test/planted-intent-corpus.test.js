@@ -167,3 +167,14 @@ test('7. fail-first: each corpus mutation yields at least one validation error, 
   }, 'validateCorpus(null) must not throw');
   assert.ok(Array.isArray(nullErrors) && nullErrors.length >= 1, 'expected validation errors for corpus = null');
 });
+
+test('R2 and R3 cases are bland at R1: no canary or secret-shaped value in the R1 view', () => {
+  const SECRET_RE = /\b(tok_|whsec_|mnt_|sk_|ghp_)[A-Za-z0-9_]+|Bearer\s/;
+  for (const c of cases) {
+    if (!c.answerKey.divergent) continue;
+    if (c.answerKey.firstVisibleAt !== 'R2' && c.answerKey.firstVisibleAt !== 'R3') continue;
+    const r1 = JSON.stringify(stripToReach(c, 'R1'));
+    assert.ok(!CANARY_RE.test(r1), `${c.id}: canary visible at R1 but firstVisibleAt is ${c.answerKey.firstVisibleAt}`);
+    assert.ok(!SECRET_RE.test(r1), `${c.id}: secret-shaped value visible at R1 but firstVisibleAt is ${c.answerKey.firstVisibleAt}`);
+  }
+});
