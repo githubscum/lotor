@@ -272,3 +272,47 @@ test('17. body model is a number or an object: servedModel is null', async () =>
   );
   assert.equal(objectResult.record.servedModel, null);
 });
+
+test('18. 200 with an empty body: error "empty body", nothing silentlyDropped', async () => {
+  const fetchImpl = recordingFetch(200, '');
+  const result = await chatWithReach(
+    { model: 'm', logprobs: true, messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { error: 'empty body' });
+  assert.equal(result.record.error, 'empty body');
+  assert.deepEqual(result.record.silentlyDropped, []);
+  assert.deepEqual(result.reach.silentlyDropped, []);
+  assert.equal(result.record.servedModel, null);
+});
+
+test('19. 200 with a non-JSON body: error "malformed body", nothing silentlyDropped', async () => {
+  const fetchImpl = recordingFetch(200, '<html>bad gateway page</html>');
+  const result = await chatWithReach(
+    { model: 'm', logprobs: true, messages: [] },
+    { fetchImpl }
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.record.error, 'malformed body');
+  assert.notEqual(result.record.error, null);
+  assert.deepEqual(result.record.silentlyDropped, []);
+  assert.deepEqual(result.reach.silentlyDropped, []);
+});
+
+test('20. 200 with JSON that is not an object: error set, nothing silentlyDropped', async () => {
+  for (const text of ['[]', '"x"', '42', 'null']) {
+    const fetchImpl = recordingFetch(200, text);
+    const result = await chatWithReach(
+      { model: 'm', logprobs: true, messages: [] },
+      { fetchImpl }
+    );
+
+    assert.equal(result.status, 200, text);
+    assert.equal(result.record.error, 'malformed body', text);
+    assert.deepEqual(result.record.silentlyDropped, [], text);
+    assert.deepEqual(result.reach.silentlyDropped, [], text);
+  }
+});
