@@ -92,7 +92,9 @@ const GRANTABLE = Object.freeze({
   // imports it, it runs inside a core binary's process, as parser, harness and
   // toolpins already do in the session-start hook. Moving it to core is a
   // core-paths.js plus policy edit, so it would land at the same sitting.
-  toolio: 'pure digest of a tool response for a receipt field; reporting only, no authority over enforcement'
+  toolio: 'pure digest of a tool response for a receipt field; reporting only, no authority over enforcement',
+  // Classified 2026-10-23 (WO-KEYED-DIGEST-01-FIX2).
+  digest: 'pure keyed (HMAC) digest helper for short texts; no call site yet, no authority over enforcement, key custody open'
 });
 
 /** Top-level directory names under src/, as they appear on disk. */

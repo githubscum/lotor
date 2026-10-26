@@ -36,11 +36,21 @@ function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+// Matches src/reasoning's THINK_TAG so the two witnesses agree.
+const THINK_TAG = /<\/?think>/i;
+
 // A top_logprobs element that is not an object (null, a number, a string)
 // is malformed. It hashes as null, so the digest still moves if it changes,
 // and its position is reported instead of throwing a TypeError.
+//
+// A top_logprobs that is absent (undefined or null) canonicalizes to [].
+// One that is PRESENT but not an array (a string, number, boolean or plain
+// object) is malformed at the entry level: canonicalTopLogprobs returns
+// null (not [], so the digest differs from the absent case) and its
+// position is reported as { entry, index: null }.
 function canonicalTopLogprobs(entry) {
-  if (!Array.isArray(entry.top_logprobs)) return [];
+  if (entry.top_logprobs === undefined || entry.top_logprobs === null) return [];
+  if (!Array.isArray(entry.top_logprobs)) return null;
   return entry.top_logprobs.map(x => (isPlainObject(x) ? { t: x.token, l: x.logprob } : null));
 }
 
@@ -48,7 +58,11 @@ function canonicalTopLogprobs(entry) {
 function malformedTopLogprobs(entries) {
   const found = [];
   entries.forEach((e, i) => {
-    if (!Array.isArray(e.top_logprobs)) return;
+    if (e.top_logprobs === undefined || e.top_logprobs === null) return;
+    if (!Array.isArray(e.top_logprobs)) {
+      found.push({ entry: i, index: null });
+      return;
+    }
     e.top_logprobs.forEach((x, j) => {
       if (!isPlainObject(x)) found.push({ entry: i, index: j });
     });
@@ -116,8 +130,7 @@ export function observeRungs(body) {
   if (isNonWhitespaceString(message.thinking)) {
     r3Sources.push('thinking');
   }
-  if (typeof message.content === 'string' &&
-      (message.content.includes('<think>') || message.content.includes('</think>'))) {
+  if (typeof message.content === 'string' && THINK_TAG.test(message.content)) {
     r3Sources.push('content-markers');
   }
 
