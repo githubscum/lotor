@@ -574,6 +574,72 @@ export function digestParamsCanonical(input) {
 }
 
 /**
+ * Canonicalize a value for hashing under the params/2 rules. Behavior is
+ * identical to `canonicalize` except that every object it builds is a
+ * null-prototype object and keys are set with plain assignment on that
+ * object.
+ *
+ * The reason this copy exists: `JSON.parse('{"__proto__":{"a":1}}')` defines
+ * an own `__proto__` data property, which `Object.keys` lists, but assigning
+ * `sorted['__proto__']` on a plain `{}` target hits the Object.prototype
+ * setter and ends up changing the prototype instead of storing a key. The
+ * params/1 canonicalizer therefore silently swallows such a key. On a
+ * null-prototype target there is no inherited setter, so plain assignment
+ * creates an own data property and the key survives, serializing through
+ * `JSON.stringify` as the literal string `"__proto__"`.
+ */
+function canonicalizeV2(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) out[i] = canonicalizeV2(value[i]);
+    return out;
+  }
+  const sorted = Object.create(null);
+  for (const k of Object.keys(value).sort()) {
+    sorted[k] = canonicalizeV2(value[k]);
+  }
+  return sorted;
+}
+
+/**
+ * Schema marker for digests produced by `digestParamsCanonicalV2`, extending
+ * the `<class>/N` convention `matcher/1` established in src/policy/index.js.
+ */
+export const PARAMS_V2_SCHEMA = 'params/2';
+
+/**
+ * Compute a canonical SHA-256 hex digest of a tool's parameters under the
+ * params/2 rules. Returns the full 64-character lowercase hex digest (no
+ * truncation) over `JSON.stringify(canonicalizeV2(input))`, or 'empty' for
+ * undefined or null input, exactly as `digestParamsCanonical` returns
+ * 'empty' for those cases.
+ *
+ * NOT WIRED INTO RECEIPT EMISSION. This function is exported only; no
+ * receipt path consumes its output today. params/1 is unchanged:
+ * `digestParamsCanonical` keeps its current behavior, and every digest
+ * already recorded on chains under the params/1 marker is untouched.
+ *
+ * Byte compatibility: for any input with no own `__proto__` key at any
+ * depth, this function's output is byte-identical to
+ * `digestParamsCanonical`. The two differ only for inputs carrying such a
+ * key somewhere: params/1 silently drops the key and can collide with a
+ * proto-free input, while params/2 keeps it as the literal key
+ * `"__proto__"` and separates them.
+ *
+ * Choosing which marker receipts carry (params/1 vs params/2) is the
+ * owner's decision, not this module's.
+ *
+ * @param {*} input - any JSON-compatible value (typically a tool input)
+ * @returns {string} 64 lowercase hex chars, or 'empty' for absent input
+ */
+export function digestParamsCanonicalV2(input) {
+  if (input === undefined || input === null) return 'empty';
+  const text = JSON.stringify(canonicalizeV2(input));
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/**
  * Create a short digest of content (for error reporting)
  */
 function digestContent(content) {

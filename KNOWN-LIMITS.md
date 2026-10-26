@@ -3221,6 +3221,18 @@ Four things the review found, and where each landed.
   `responseOk` is a one-token core edit and is not staged; the agreement table is
   pinned against the real hook in `test/hook-post-tool-use-toolio.test.js`.
 
+**Added 2026-10-23: a `params/2` canonicalizer exists, unwired.**
+`digestParamsCanonicalV2` and `PARAMS_V2_SCHEMA = 'params/2'` in
+`src/parser/index.js` build null-prototype objects, so an own `__proto__` key
+survives into the digest. For every input with no own `__proto__` key at any
+depth the output is byte-identical to `params/1`. Nothing emits it yet:
+`params/1` digests on existing chains do not move, and which marker receipts
+carry is still the owner's decision. Probing found the `params/1` hole is wider
+than first written: two inputs whose `__proto__` payloads differ (`{"a":1}` vs
+`{"a":2}`) also share one digest, as do `__proto__` values that are scalars or
+null. Pinned in `test/params-v2-canonical.test.js`. The `parserVersionHash`
+parts-list gap is unchanged.
+
 ## 79. Reach and reasoning disagreed on mixed-case think tags, and the lane's executors cannot type the tag
 
 Before this change, `observeRungs` found content markers with two case-sensitive

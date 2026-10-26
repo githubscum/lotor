@@ -34,6 +34,10 @@ Nothing written in the present tense here is unbuilt. Anything not built is name
 
 ## Herding modes
 
+When multiple agents coordinate, they should be treated as cattle, not pets. Lotor is built for that.
+
+One agent is easy to trust. It acts on the intent you gave it, and the modes below only ever restate that intent. Put agents to work together and the picture changes. Herds move in ways no single animal chose, and people do the same: in a crowd they get carried along and decide things that cut against what they would choose alone. A gated action is not a verdict on any one agent. It is the fence that holds while the herd moves.
+
 Ten matchers is not a posture anyone can hold in their head. Three presets replace the matrix with one choice.
 
 | Mode | Posture | Egress rules (push, publish, egress-other, opaque-exec) | Local-only rules (destructive, scope-escalation) |
