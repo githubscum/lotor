@@ -3283,3 +3283,19 @@ LF in every checkout, so the bytes hashed are the bytes stored. A checkout made
 before that rule, or one that overrides attributes, still sees CRLF until the
 file is re-checked-out. The fix is to fold CRLF in `bodyDigest` before hashing;
 it is not staged here.
+
+## 82. A patch file launders a core edit past the self-mod gate
+
+Self-mod classification reads the paths named in the command string. A patch
+carries its target paths inside its bytes, so `git apply proposals/x.patch`
+rewrote `src/chain/index.js` in the live install on 2026-10-26 with no gate
+stop and no gated-action receipt; the chain shows nothing between the signed
+scan before it and the reasoning steps after it. The same channel covers
+`git am`, `patch -p1 < file`, and any tool that takes its write targets from a
+file rather than argv. Found during the 2026-10-26 signing sitting; the edit was
+reverted under signature and every core patch was re-applied with each target
+named on the command line (`git apply --include=<path> ...`), which the matcher
+does see, so each landing carries one signature. That is a convention, not a
+control: nothing forces it. The fix is core: when a command applies a patch,
+read the patch's `+++`/`---` targets and classify those paths too, failing
+closed when the patch file cannot be read. Not staged.

@@ -1,7 +1,7 @@
 /**
  * test/policy-matcher-stamp-eol.test.js
  *
- * TRIPWIRE, not a regression test. It asserts CURRENT DEFECTIVE behaviour,
+ * REGRESSION GUARD. Until 2026-10-25 this file was a tripwire asserting defective behaviour,
  * found 2026-10-19 (run 39, recorded as a KNOWN-LIMITS entry in PR #67).
  *
  * `matcherVersionHash()` is sha256 of the text `matcherHashInputs()` returns.
@@ -19,42 +19,21 @@
  * on an LF checkout and on a CRLF one, and it fails once the stamp stops
  * depending on line endings, wherever in the module the fix is written.
  *
- * WHEN THE FIX LANDS, THIS FILE FAILS. That is the point. The repair is:
- * normalize CRLF to LF inside `matcherHashInputs()` before it is cached, bump
- * MATCHER_SCHEMA to `matcher/3` (the hashing METHOD changes; only CRLF-checkout
- * stamps move, onto the LF value), amend the KNOWN-LIMITS entry in the same
- * change, and then turn this file around test by test. Do not flip every
- * assertion blindly:
- *   - Test 1 (control): keep as is.
- *   - Test 2: change `notEqual` to `equal`. That is the regression guard from
- *     then on: the LF copy and the CRLF copy must stamp the same.
- *   - Test 3 (structural): invert it only if the fix is written as a `\r`
- *     pattern inside `matcherHashInputs()`. Otherwise delete it; test 2 holds
- *     the line.
- *   - Test 4: do NOT just flip `notEqual` to `equal`. With the fix inside
- *     `matcherHashInputs()` its inputs never contain `\r`, so the CRLF branch
- *     is never reached and an inverted test 4 would skip forever on every
- *     machine. Rewrite it to assert, without the skip, that
- *     `matcherVersionHash()` equals the LF copy's stamp from test 2: on a CRLF
- *     checkout that proves live receipts now carry the canonical stamp.
- * Do NOT delete the file: a confession that can be closed by deleting its
- * evidence is not a confession.
- *
- * The fix is `src/policy` and therefore non-delegable core. It is not
- * attempted here; it queues for a signing sitting.
+ * The fix landed 2026-10-25 (matcher/3): matcherHashInputs() folds CRLF to LF
+ * before caching. Test 2 now asserts the LF and CRLF copies stamp the same;
+ * the structural test 3 was deleted because the fix is written with
+ * String.fromCharCode, not a pattern; test 4 asserts the live stamp equals
+ * the LF copy's stamp on any checkout.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { matcherHashInputs, matcherVersionHash } from '../src/policy/index.js';
-
-const sha16 = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
 
 const POLICY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'policy');
 
@@ -94,50 +73,29 @@ async function stampOfCopy(eol) {
   }
 }
 
-describe('matcher stamp line-ending dependence (tripwire)', () => {
+describe('matcher stamp line-ending independence', () => {
   it('CONTROL: the hashed inputs span lines, so line endings matter', () => {
     assert.equal(lf.includes('\n'), true, 'inputs do not span lines; this file is vacuous');
     assert.ok(lf.length > 1000, 'hashed inputs are implausibly short');
   });
 
-  it('CONFESSION (any checkout): the same policy source stamps differently as LF and as CRLF', async () => {
+  it('GUARD (any checkout): the same policy source stamps the same as LF and as CRLF', async () => {
     const lfStamp = await stampOfCopy('lf');
     const crlfStamp = await stampOfCopy('crlf');
     assert.match(lfStamp, /^[0-9a-f]{16}$/);
     assert.match(crlfStamp, /^[0-9a-f]{16}$/);
-    // The copies must reproduce the live stamp, or this test proves nothing
-    // about the real module: this checkout is one of the two shapes.
     assert.equal(
-      matcherVersionHash(),
-      hashed.includes('\r') ? crlfStamp : lfStamp,
-      'the copied module does not reproduce this checkout\'s live stamp; the copy is not a faithful stand-in'
-    );
-    assert.notEqual(
       lfStamp,
       crlfStamp,
-      'the LF and CRLF copies stamp the same: line endings no longer reach the stamp, the fix landed; turn this file around (see header)'
+      'the LF and CRLF copies stamp differently: line endings reach the stamp again (KNOWN-LIMITS 77)'
     );
   });
 
-  it('CONFESSION (structural): matcherHashInputs() does no CR-normalization', () => {
-    // If the fix is in, the function body contains a `\r` literal (the replace
-    // pattern) and this assertion fails. See the header for what to do then.
-    assert.doesNotMatch(
-      matcherHashInputs.toString(),
-      /\\r/,
-      'matcherHashInputs now normalizes line endings: the fix landed, see the header'
+  it('GUARD (this checkout): the live stamp equals the LF copy stamp', async () => {
+    assert.equal(
+      matcherVersionHash(),
+      await stampOfCopy('lf'),
+      'this checkout stamps a value an LF clone of the same source cannot reproduce'
     );
-  });
-
-  it('CONFESSION (this checkout only): a CRLF clone stamps a value an LF clone cannot reproduce', (t) => {
-    if (hashed.includes('\r')) {
-      assert.notEqual(
-        matcherVersionHash(),
-        sha16(lf),
-        'this checkout stamps CRLF bytes; the LF-normalized digest differs, so the stamp is checkout-dependent'
-      );
-    } else {
-      t.skip('LF checkout: the stamp already equals the LF value here');
-    }
   });
 });

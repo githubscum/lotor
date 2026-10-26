@@ -126,6 +126,17 @@ function verifyChain(entries, publicKey) {
       };
     }
 
+    // Verify seq continuity. verifyChain already requires a full chain from
+    // genesis, so entry i must carry seq i. The hash covers seq, so a wrong seq
+    // can only be signed in at write time; this is where it is caught.
+    if (!Number.isSafeInteger(entry.seq) || entry.seq !== i) {
+      return {
+        ok: false,
+        brokenAt: i,
+        reason: `seq discontinuity at entry ${i}: expected ${i}, got ${JSON.stringify(entry.seq)}`
+      };
+    }
+
     // Verify prevHash linkage
     if (i === 0) {
       // Genesis entry: prevHash must be genesis constant

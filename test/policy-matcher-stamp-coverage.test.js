@@ -55,7 +55,7 @@ import {
  * CLOSED 2026-09-07 at the signing sitting. `parts` now names the self-mod
  * deciders (selfModFragmentsForBase, isSelfModEdit, selfModCommandHit,
  * normalizePath, pathContainsFragment, expandBraces, stripHeredocBodies,
- * stripMessageArgs) and MATCHER_SCHEMA is `matcher/2`, because the hashing
+ * stripMessageArgs) and MATCHER_SCHEMA is `matcher/3` (matcher/3 since 2026-10-25: CRLF folded to LF, KNOWN-LIMITS 77), because the hashing
  * METHOD changed. The joined text is exported as `matcherHashInputs()` so this
  * file asserts PRESENCE against the exact bytes that are hashed, not against
  * a subset reconstructed from exports. Every "NOT in the hashed text" below
@@ -79,7 +79,7 @@ describe('matcher version stamp coverage (KNOWN-LIMITS 63, closed 2026-09-07)', 
   });
 
   it('CONTROL: the stamp is a stable 16-hex digest under the declared schema', () => {
-    assert.equal(MATCHER_SCHEMA, 'matcher/2');
+    assert.equal(MATCHER_SCHEMA, 'matcher/3');
     const a = matcherVersionHash();
     const b = matcherVersionHash();
     assert.match(a, /^[0-9a-f]{16}$/);

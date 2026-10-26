@@ -105,7 +105,24 @@ function parsePayload(raw) {
     }
     toolInputObj = toolInput;
   }
-  return { ok: true, toolName, toolInput: toolInputObj, toolResponse: payload.tool_response };
+  // session_id is a common field on every Claude Code hook event. The
+  // egress-event receipt carries none today, so a recorded egress cannot be
+  // attributed to its session (KNOWN-LIMITS 35). Absence yields null.
+  const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
+    ? payload.session_id
+    : null;
+  // agent_id/agent_type name the subagent a call was made inside (KNOWN-LIMITS
+  // 66/70 amendment): the harness fires this same hook for a tool call made
+  // INSIDE a subagent, carrying the parent's session_id plus these two
+  // fields. Absence (a parent call) yields null, and the egress receipt adds
+  // an agentId key only when one is present.
+  const agentId = typeof payload.agent_id === 'string' && payload.agent_id.trim() !== ''
+    ? payload.agent_id
+    : null;
+  const agentType = typeof payload.agent_type === 'string' && payload.agent_type.trim() !== ''
+    ? payload.agent_type
+    : null;
+  return { ok: true, toolName, toolInput: toolInputObj, toolResponse: payload.tool_response, sessionId, agentId, agentType };
 }
 
 /**
@@ -235,7 +252,14 @@ async function main() {
     note(`${parsed.reason}; no chain write`);
     return;
   }
-  const { toolName, toolInput, toolResponse } = parsed;
+  const { toolName, toolInput, toolResponse, sessionId, agentId, agentType } = parsed;
+
+  // agentFields is empty for a parent call, so the egress receipt keeps
+  // exactly today's keys there and gains agentId/agentType only for a call
+  // made from inside a subagent.
+  const agentFields = typeof agentId === 'string' && agentId !== ''
+    ? { agentId, agentType: agentType || null }
+    : {};
 
   // V3-04 (rung R3): bind the reasoning emitted since the previous action to
   // this action, as one reasoning-step receipt. Runs before the egress fast
@@ -274,6 +298,12 @@ async function main() {
     type: 'egress-event',
     ruleId,
     tool: toolName,
+    // sessionId (KNOWN-LIMITS 35): the receipt carries none today, so a
+    // recorded egress cannot be attributed to its session. agentId/agentType
+    // (KNOWN-LIMITS 66/70 amendment) name the subagent the call was made
+    // inside, and are only present when the payload carries agent_id.
+    sessionId: sessionId || null,
+    ...agentFields,
     paramsDigest: digestParams(toolInput),
     responseDigest: digestResponse(toolResponse),
     responseOk: responseOk(toolResponse),

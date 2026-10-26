@@ -116,7 +116,18 @@ function parsePayload(raw) {
   const permissionMode = typeof payload.permission_mode === 'string' && payload.permission_mode.trim() !== ''
     ? payload.permission_mode
     : null;
-  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode };
+  // agent_id/agent_type name the subagent a call was made inside (KNOWN-LIMITS
+  // 66/70 amendment): the harness fires this same hook for a tool call made
+  // INSIDE a subagent, carrying the parent's session_id plus these two
+  // fields. Absence (a parent call) yields null, and nothing downstream adds
+  // an agentId key unless agentId is present.
+  const agentId = typeof payload.agent_id === 'string' && payload.agent_id.trim() !== ''
+    ? payload.agent_id
+    : null;
+  const agentType = typeof payload.agent_type === 'string' && payload.agent_type.trim() !== ''
+    ? payload.agent_type
+    : null;
+  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode, agentId, agentType };
 }
 
 function digestParams(toolInput) {
@@ -663,6 +674,13 @@ async function main() {
     process.exit(0);
   }
   const { toolName, toolInput } = parsed;
+  // agentFields is empty for a parent call, so the receipts this hook appends
+  // (both-layers-permissive, grant-use, warn) keep exactly today's keys
+  // there, and gain the two fields only when the call came from inside a
+  // subagent.
+  const agentFields = parsed.agentId
+    ? { agentId: parsed.agentId, agentType: parsed.agentType || null }
+    : {};
 
   // Probe for a known-bad policy file BEFORE loading. If the user has a
   // policy.json that the engine cannot honor (directory, symlink loop,
@@ -771,6 +789,7 @@ async function main() {
           type: 'policy-warn',
           ruleId: 'both-layers-permissive',
           sessionId: parsed.sessionId,
+          ...agentFields,
           tool: toolName,
           lotorMode: policy.mode,
           harnessMode: parsed.permissionMode,
@@ -829,6 +848,7 @@ async function main() {
       type: 'policy-warn',
       ruleId,
       tool: toolName,
+      ...agentFields,
       paramsDigest,
       matcherHash: matcherVersionHash(),
       timestamp: Date.now()
@@ -903,6 +923,7 @@ async function main() {
             useIndex: grantDecision.useIndex,
             ruleId,
             tool: toolName,
+            ...agentFields,
             paramsDigest,
             matcherHash: matcherVersionHash(),
             timestamp: Date.now()
@@ -929,7 +950,7 @@ async function main() {
       };
       const stagedAt = readStagedAt(home, requestId);
       const heldMs = stagedAt ? Date.now() - stagedAt : null;
-      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
+      const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
       try {
         gatedAction(actionRequest, null, chain, home, meta);
       } catch (e) {
@@ -955,7 +976,7 @@ async function main() {
       const reason = tokenResult.rejected.reason || 'token invalid';
       const stagedAt = readStagedAt(home, requestId);
       const heldMs = stagedAt ? Date.now() - stagedAt : null;
-      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
+      const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
 
       const store = createStore(home);
       const chain = {
@@ -992,7 +1013,7 @@ async function main() {
     };
     const stagedAt = readStagedAt(home, requestId);
     const heldMs = stagedAt ? Date.now() - stagedAt : null;
-    const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
+    const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
     let result;
     try {
       result = gatedAction(actionRequest, tokenResult.token, chain, home, meta);

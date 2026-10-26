@@ -101,7 +101,7 @@ const APPROVED_WITH_AGENT_KEYS = [
   'matcherHash', 'paramsDigestCanonical', 'ruleId', 'sessionId', 'timestamp', 'type'
 ];
 
-describe('agent-id attribution on the gate receipts (WO-AGENT-ID)', { todo: true }, () => {
+describe('agent-id attribution on the gate receipts (WO-AGENT-ID)', () => {
   it('a denied self-mod row from a subagent call carries agentId and agentType', () => {
     const res = runHook(preHook, {
       session_id: 'sess-agent-a',

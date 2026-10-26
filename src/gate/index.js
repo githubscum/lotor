@@ -225,8 +225,17 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
   // appears in verifyApproval. Fields read from meta today: ruleId, heldMs,
   // sessionId (added 2026-09-07, KNOWN-LIMITS 35: a gate decision with no
   // session id could not be attributed once sessions overlapped; the hook
-  // already had the id in hand and now passes it). Anything the receipt needs
-  // that is NOT part of the signed action lives here.
+  // already had the id in hand and now passes it), and agentId/agentType
+  // (added 2026-10-22, KNOWN-LIMITS 66/70 amendment: a tool call made
+  // INSIDE a subagent fires these same hooks, carrying the parent's
+  // session_id plus agent_id/agent_type; without them a child's gate row is
+  // indistinguishable from the parent's own call). agentFields is empty when
+  // meta.agentId is absent, so a parent's receipts keep exactly today's
+  // keys. Anything the receipt needs that is NOT part of the signed action
+  // lives here.
+  const agentFields = typeof meta.agentId === 'string' && meta.agentId !== ''
+    ? { agentId: meta.agentId, agentType: meta.agentType || null }
+    : {};
   const action = actionRequest?.action || 'unknown';
   const timestamp = Date.now();
 
@@ -238,6 +247,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       action,
       ruleId: meta.ruleId || null,
       sessionId: meta.sessionId || null,
+      ...agentFields,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
       matcherHash: matcherVersionHash(),
@@ -275,6 +285,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       action,
       ruleId: meta.ruleId || null,
       sessionId: meta.sessionId || null,
+      ...agentFields,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
       matcherHash: matcherVersionHash(),
@@ -316,6 +327,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
       action,
       ruleId: meta.ruleId || null,
       sessionId: meta.sessionId || null,
+      ...agentFields,
       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
       matcherHash: matcherVersionHash(),
@@ -338,6 +350,7 @@ function gatedAction(actionRequest, approvalToken, chain, baseDir = DEFAULT_BASE
     action,
     ruleId: meta.ruleId || null,
     sessionId: meta.sessionId || null,
+    ...agentFields,
     paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
     heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
     matcherHash: matcherVersionHash(),

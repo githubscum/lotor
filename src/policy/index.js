@@ -176,8 +176,13 @@ const DEFAULT_POLICY = {
  * matcher/2 (2026-09-07, KNOWN-LIMITS 63): the self-mod deciders joined the
  * hashed inputs. Receipts stamped matcher/1 were hashed over the rule entry
  * points only, and stay honest about what they meant.
+ *
+ * matcher/3 (2026-10-25, KNOWN-LIMITS 77): the hashed inputs are folded
+ * CRLF to LF before hashing. LF-checkout stamps are unchanged; CRLF-checkout
+ * stamps move onto the LF value. A matcher/2 stamp from a CRLF checkout has
+ * no matcher/3 equal for the same commit.
  */
-export const MATCHER_SCHEMA = 'matcher/2';
+export const MATCHER_SCHEMA = 'matcher/3';
 
 function sortKeysDeep(value) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
@@ -234,7 +239,14 @@ export function matcherHashInputs() {
     JSON.stringify(sortKeysDeep(RULE_TABLE)),
     JSON.stringify(sortKeysDeep(RULE_INFO))
   ];
-  cachedMatcherInputs = parts.join(' ');
+  // A CRLF checkout (core.autocrlf=true) hands toString() CR bytes an LF
+  // checkout of the same commit does not have, so the stamp moved with the
+  // checkout and not the rules (KNOWN-LIMITS 77). Fold CRLF to LF here, in the
+  // one function that is not itself hashed, so an LF checkout's stamp is
+  // byte-identical before and after this change and only CRLF stamps move.
+  const CRLF = String.fromCharCode(13, 10);
+  const LF = String.fromCharCode(10);
+  cachedMatcherInputs = parts.join(' ').split(CRLF).join(LF);
   return cachedMatcherInputs;
 }
 
