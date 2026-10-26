@@ -4,3 +4,8 @@
 # as "corrupt patch" before reading a hunk; --ignore-whitespace does not help,
 # because the failure is a parse error, not a whitespace mismatch.
 proposals/*.patch text eol=lf
+
+# The KNOWN-LIMITS pin's body-sha256 is taken over the file's bytes with no
+# line-ending fold, so a CRLF checkout digests differently from the LF bytes
+# git stores and the committed-pin tripwire fails on Windows (limit 81).
+KNOWN-LIMITS.md text eol=lf
