@@ -65,8 +65,9 @@ const payloadsOfType = (type, homeDir = home) => fs.readFileSync(path.join(homeD
   .filter(e => e.payload?.type === type)
   .map(e => e.payload);
 
-const lastGatedFor = (sessionId, action) => {
-  const rows = payloadsOfType('gated-action')
+/** Last gated-action payload for sessionId/action on the chain of the given home. */
+const lastGatedFor = (sessionId, action, homeDir = home) => {
+  const rows = payloadsOfType('gated-action', homeDir)
     .filter(p => p.sessionId === sessionId && p.action === action);
   assert.ok(rows.length > 0, `no gated-action receipt for ${sessionId}/${action}`);
   return rows[rows.length - 1];
@@ -289,7 +290,9 @@ describe('agent-id attribution on the gate receipts (WO-AGENT-ID)', { todo: true
     assert.strictEqual(res.status, 0, 'a valid token must allow the call');
     assert.strictEqual(fs.existsSync(tokenPath), false, 'the token file is consumed');
 
-    const row = lastGatedFor('sess-agent-g', 'Edit');
+    // The hook ran with LOTOR_HOME=aHome, so the approved receipt is on
+    // aHome's chain, not the shared `home` the other cases write to.
+    const row = lastGatedFor('sess-agent-g', 'Edit', aHome);
     assert.strictEqual(row.decision, 'approved');
     assert.strictEqual(row.agentId, 'aApproved');
     assert.strictEqual(row.agentType, 'Explore');

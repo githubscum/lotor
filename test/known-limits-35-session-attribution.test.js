@@ -157,10 +157,20 @@ describe('KNOWN-LIMITS 35 — gate receipts carry the session id (closed 2026-09
     // No bare meta site may remain, and all three must carry the id. A count
     // between 1 and 2 on either side is a PARTIAL fix: some gate decisions
     // attributable and others silently not, which is worse than a uniform gap.
-    const bareMetaSites = (src.match(/const meta = \{ ruleId, heldMs \};/g) || []).length;
-    const fullMetaSites = (src.match(/const meta = \{ ruleId, heldMs, sessionId: parsed\.sessionId \};/g) || []).length;
-    assert.strictEqual(bareMetaSites, 0,
-      `found ${bareMetaSites} site(s) still building meta without sessionId`);
+    //
+    // Matched by shape, not by exact text: the meta object may grow further
+    // fields after sessionId (proposals/agent-id-attribution.patch appends
+    // agentId/agentType), and that must not read as the id going missing.
+    // Every `const meta = { ... };` literal is collected, and each one must
+    // carry `sessionId: parsed.sessionId` as a field of its own.
+    const metaSites = src.match(/const meta = \{[^{}\n]*\};/g) || [];
+    const carriesSessionId = (site) => /[{,]\s*sessionId: parsed\.sessionId\s*[,}]/.test(site);
+    const bareMetaSites = metaSites.filter((site) => !carriesSessionId(site));
+    const fullMetaSites = metaSites.filter(carriesSessionId).length;
+    assert.strictEqual(metaSites.length, 3,
+      `control: expected 3 meta object literals in the hook, found ${metaSites.length}`);
+    assert.strictEqual(bareMetaSites.length, 0,
+      `found ${bareMetaSites.length} site(s) still building meta without sessionId: ${bareMetaSites.join(' | ')}`);
     assert.strictEqual(fullMetaSites, 3,
       `expected 3 meta sites carrying sessionId, found ${fullMetaSites}`);
   });
