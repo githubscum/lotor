@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 4a1228acc462385d815dbd61c602f93f970f614d
+ This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
  stamped 2026-10-26
- subject: reach: make a 2xx with an empty or non-object body loud in the ollama-chat adapter
- body-sha256: 6a42642c436786898ce68e75f8d733bd1d25a3a801c34df428e80b722225354c
+ subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
+ body-sha256: 6813c8dbe4980f55c2f1e7606ef0eaadbc817cd85d6fbfbabf372f015d5941a5
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
