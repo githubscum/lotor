@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pap-export — encode a spine into a signed QR bundle.
+ * pap-export: encode a spine into a signed QR bundle.
  *
  * Usage:
  *   node bin/pap-export.js --spine <path.txt> [options] --public
@@ -27,7 +27,7 @@
  * By default this tool reads the operator's live chain state: the head
  * hash, seq, and signing key come from the Lotor home (LOTOR_HOME or
  * ~/.lotor). The override flags exist so tests can run against synthetic
- * keys without touching a real chain — same seam the prototype proved.
+ * keys without touching a real chain, the same seam the prototype proved.
  *
  * The --public flag is required and unlocks nothing except the operator's
  * acknowledgment that everything about to be encoded is going onto a

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pap-boot — decode a signed bundle back into a spine.
+ * pap-boot: decode a signed bundle back into a spine.
  *
  * Usage:
  *   node bin/pap-boot.js --bundle <path.bin> [--verify-key <path.pem>]
