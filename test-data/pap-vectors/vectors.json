@@ -1,0 +1,76 @@
+{
+  "note": "Throwaway test keys. Shared by test/pap-sealed.test.js and the reader tests.",
+  "signer": {
+    "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIM8bScLvpaAlwdER1X44k/BvLOY573A7OCP+ZYvsQTz7\n-----END PRIVATE KEY-----\n",
+    "publicKeyHex": "129f703d500122c8178f2538e0b1a9382effb0c5d37d6dee95cb5db656425aa7"
+  },
+  "spine": "cartridge: test vector, not a real workflow\nstep 1: read the board\nstep 2: predict the next outcome before it happens\nstep 3: sign the prediction, seal it, print the QR\nno em dashes, no secrets, nothing here is private",
+  "chainHeadHex": "0b7a70d8e7eda08f69b48a66d0b302712f51f8e61b3effeec7792f150ce79a9a",
+  "seq": 4242,
+  "timestamp": 1793000000000,
+  "vectors": {
+    "v1-plain": {
+      "file": "v1-plain.bin",
+      "version": 1,
+      "memoirUrl": "https://example.invalid/memoir",
+      "bytes": 297,
+      "sha256": "6f96c791c87c0955310211b26c5a5883603fe33fbc61e1a3b68fa14081122f78"
+    },
+    "v2-sealed-two-recipients": {
+      "file": "v2-sealed-two-recipients.bin",
+      "version": 2,
+      "recipients": [
+        "r1",
+        "r2"
+      ],
+      "memoirUrl": "https://example.invalid/memoir",
+      "bytes": 539,
+      "sha256": "5e14d0e15e465ea1c8b862662acd5d863f2048f083522c6be5cad1c656a59026"
+    },
+    "v2-sealed-passphrase": {
+      "file": "v2-sealed-passphrase.bin",
+      "version": 2,
+      "passphrase": true,
+      "memoirUrl": "",
+      "bytes": 449,
+      "sha256": "0ffb33248967037998f89f1094719b7f191eddd4480b6494cab6bcfa72d1c1c2"
+    },
+    "v2-neg-readdressed": {
+      "file": "v2-neg-readdressed.bin",
+      "version": 2,
+      "negative": true,
+      "expect": {
+        "r2": "PAP_INNER_BINDING_INVALID"
+      },
+      "bytes": 491,
+      "sha256": "941490a6d43ec1cccd6aba030e472b6bf54febdb9d1c62c79a8f9fde93293f57"
+    },
+    "v2-neg-key-commit": {
+      "file": "v2-neg-key-commit.bin",
+      "version": 2,
+      "negative": true,
+      "expect": {
+        "r1": "opens",
+        "r2": "PAP_KEY_COMMIT_MISMATCH"
+      },
+      "bytes": 509,
+      "sha256": "6a5348732dd317bd3b016c295e08e8ca6d10143ac60aebd9269862734cdba50e"
+    }
+  },
+  "recipients": {
+    "r1": {
+      "privateKeyHex": "6839f49b459da9ff0743b26b1e827ad9183dec9177e8cbcdca815a1c7e548056",
+      "publicKeyHex": "0b49218e2afeacd1932fc550f786c0cd1b60cbe1cb61601445f0a79b71fcb77b"
+    },
+    "r2": {
+      "privateKeyHex": "20b09b79d9dccb1e304f0d4313ace9b7e5bcde02d184aac2fdc451a1cc265f44",
+      "publicKeyHex": "9e04a9d01b62af8e1d3e07055815c23259f3fc5defd938cdff83451e6dad2a54"
+    },
+    "outsider": {
+      "privateKeyHex": "4027fb1f3cdd2596ccc05dab9af1ad55586de1e7dcdacd0b28823c05d5fac24e",
+      "publicKeyHex": "c1e070785480150aeb554e8f761f49df3146eda9f9c7db80271134be995dae24"
+    }
+  },
+  "passphrase": "correct horse battery staple, test only",
+  "passphraseIterations": 1000
+}

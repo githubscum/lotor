@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network, enforced by the browser: connect-src 'none' blocks every
+     connection a script can open; every script and style is inline. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; media-src blob: mediastream:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>PAP reader</title>
+<style>
+:root { --bg: #fafaf8; --fg: #1c1c1a; --muted: #6b6b66; --line: #d9d9d4; --ok: #1f6f3a; --bad: #a3271c; --panel: #ffffff; }
+@media (prefers-color-scheme: dark) { :root { --bg: #151514; --fg: #ececea; --muted: #a0a09a; --line: #34342f; --ok: #6fcf8f; --bad: #ff8a7a; --panel: #1d1d1b; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+p.lede { color: var(--muted); margin: 0 0 20px; }
+.inputs { display: grid; gap: 12px; margin-bottom: 20px; }
+button, input[type=file] { font: inherit; }
+button { padding: 8px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 6px; cursor: pointer; }
+textarea, input[type=text], input[type=password] { width: 100%; font: 13px/1.4 ui-monospace, monospace; padding: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 6px; }
+video { width: 100%; max-height: 50vh; background: #000; border-radius: 6px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.status { font-weight: 600; margin: 0 0 12px; }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--bad); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; font: 13px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, monospace; margin: 0; }
+footer { color: var(--muted); font-size: 0.9rem; }
+label { display: block; margin: 10px 0 4px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<h1>PAP reader</h1>
+<p class="lede">Checks a Lotor PAP bundle inside this page. Nothing is uploaded: the page's own security policy blocks every network request.</p>
+
+<div class="inputs">
+  <div><button id="camera" type="button">Scan with camera</button></div>
+  <video id="video" hidden muted></video>
+  <div><label for="file">Or load a bundle (.bin) or a photo of the QR</label><input id="file" type="file" accept=".bin,application/octet-stream,image/*"></div>
+  <div><label for="paste">Or paste the bundle as hex or base64</label><textarea id="paste" rows="3"></textarea><p><button id="paste-go" type="button">Check</button></p></div>
+</div>
+
+<section id="result" hidden aria-live="polite">
+  <p id="status" class="status"></p>
+  <dl>
+    <dt>Signer fingerprint</dt><dd id="f-signer"></dd>
+    <dt>Chain head</dt><dd id="f-head"></dd>
+    <dt>Seq</dt><dd id="f-seq"></dd>
+    <dt>Time</dt><dd id="f-time"></dd>
+    <dt>Size</dt><dd id="f-size"></dd>
+    <dt>Sealed</dt><dd id="f-sealed"></dd>
+    <dt>Checked with</dt><dd id="f-via"></dd>
+  </dl>
+</section>
+
+<section id="open-form" hidden>
+  <strong>Open a sealed bundle</strong>
+  <label for="k-recipient">Your recipient key (64 hex characters or a PEM)</label><textarea id="k-recipient" rows="2" autocomplete="off" spellcheck="false"></textarea>
+  <label for="k-pass">Or the passphrase</label><input id="k-pass" type="password" autocomplete="off">
+  <label for="k-content">Or a revealed content key</label><input id="k-content" type="text" autocomplete="off" spellcheck="false">
+  <p><button id="open-go" type="button">Open</button></p>
+  <p id="open-msg"></p>
+</section>
+
+<section id="spine-box" hidden>
+  <pre id="spine"></pre>
+  <p id="memoir"></p>
+</section>
+
+<footer>
+  <p>Verified means the bundle is unaltered and was signed by the key with this fingerprint. It does not mean the contents are correct. The signer's chain key sits unencrypted on their machine, so anyone holding that file can sign as them. The time is the signer's claim; the chain head only shows the bundle was signed after that entry existed.</p>
+  <p>This page is only as trustworthy as the copy of it you are running. Save it, check its hash, and run it offline.</p>
+</footer>
+</main>
+<!--VENDOR-->
+<!--APP-->
+</body>
+</html>

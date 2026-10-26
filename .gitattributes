@@ -1,3 +1,8 @@
+# The offline reader page is compared by SHA-256 against a fresh build, and
+# its pinned vendor files by hash: keep their bytes identical in every checkout.
+web/reader/index.html text eol=lf
+web/reader/vendor/*.js text eol=lf
+
 # Staged patches must keep LF line endings in every checkout. With
 # core.autocrlf=true (the Windows default) a .patch is otherwise written as
 # CRLF, its blank context lines become "\r", and `git apply` rejects the file

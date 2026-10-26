@@ -3299,3 +3299,20 @@ does see, so each landing carries one signature. That is a convention, not a
 control: nothing forces it. The fix is core: when a command applies a patch,
 read the patch's `+++`/`---` targets and classify those paths too, failing
 closed when the patch file cannot be read. Not staged.
+
+## 83. The offline reader is only as trustworthy as the copy of it you run
+
+`web/reader/index.html` verifies PAP bundles in the browser, and "anyone can
+verify" holds only for someone running an honest copy of that page. A page
+served by whoever wants a bundle believed can print "Verified" for anything; the
+signature math being right in this repository does nothing for a visitor to a
+different page. The defence is the one any offline verifier has: save the file,
+compare its SHA-256 with the one built from this repository
+(`node web/reader/build.mjs` prints it), run it offline, or verify with
+`pap-boot` instead. Also unproven: decoding a version-40 QR from a phone camera.
+The byte path is tested from a rendered image (`test/pap-reader.test.js`), not
+from a real camera, and a 177-module code is hard to capture; loading a photo
+or pasting the bytes are the dependable routes. The camera needs the page served
+over https or from localhost, and opening a sealed bundle needs WebCrypto X25519
+(no fallback is shipped for it). (Number may collide with an open PR that also
+appends a limit; renumber at merge.)
