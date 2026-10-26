@@ -355,6 +355,23 @@ describe('PAP sealed mode (v2)', () => {
     const pass = fs.readFileSync(path.join(dir, v.vectors['v2-sealed-passphrase'].file));
     assert.equal(pack.unpack({ bundle: pass, passphrase: v.passphrase }).spine, v.spine);
   });
+
+  it('shared negative vectors: valid outer signature, refused on the inner binding and the key commitment', (t) => {
+    if (gate(t)) return;
+    const dir = path.join(repoRoot, 'test-data', 'pap-vectors');
+    const v = JSON.parse(fs.readFileSync(path.join(dir, 'vectors.json'), 'utf8'));
+    for (const name of ['v2-neg-readdressed', 'v2-neg-key-commit']) {
+      const vec = v.vectors[name];
+      const bundle = fs.readFileSync(path.join(dir, vec.file));
+      assert.equal(crypto.createHash('sha256').update(bundle).digest('hex'), vec.sha256, name + ' file changed');
+      assert.equal(pack.inspect({ bundle }).info.sealed, true, name + ': the outer signature must verify');
+      for (const [who, want] of Object.entries(vec.expect)) {
+        const key = v.recipients[who].privateKeyHex;
+        if (want === 'opens') assert.equal(pack.unpack({ bundle, recipientKey: key }).spine, v.spine);
+        else assert.equal(codeOf(() => pack.unpack({ bundle, recipientKey: key })), want, `${name} as ${who}`);
+      }
+    }
+  });
 });
 
 describe('PAP sealed mode: the CLIs', () => {

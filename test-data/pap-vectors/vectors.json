@@ -34,6 +34,27 @@
       "memoirUrl": "",
       "bytes": 449,
       "sha256": "0ffb33248967037998f89f1094719b7f191eddd4480b6494cab6bcfa72d1c1c2"
+    },
+    "v2-neg-readdressed": {
+      "file": "v2-neg-readdressed.bin",
+      "version": 2,
+      "negative": true,
+      "expect": {
+        "r2": "PAP_INNER_BINDING_INVALID"
+      },
+      "bytes": 491,
+      "sha256": "941490a6d43ec1cccd6aba030e472b6bf54febdb9d1c62c79a8f9fde93293f57"
+    },
+    "v2-neg-key-commit": {
+      "file": "v2-neg-key-commit.bin",
+      "version": 2,
+      "negative": true,
+      "expect": {
+        "r1": "opens",
+        "r2": "PAP_KEY_COMMIT_MISMATCH"
+      },
+      "bytes": 509,
+      "sha256": "6a5348732dd317bd3b016c295e08e8ca6d10143ac60aebd9269862734cdba50e"
     }
   },
   "recipients": {
