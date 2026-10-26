@@ -2,6 +2,8 @@
 # PR intake guard. Usage: pr-guard.sh <base-sha> <head-sha> <is-fork: true|false>
 # Fails (exit 1) on anything that needs the owner's eyes before review starts.
 # It reads the diff only. It never runs code from the PR.
+# The one piece of code it does run is the BASE commit's core-paths.js, which
+# is already trusted (it is what the gate itself loads), never the PR's copy.
 set -euo pipefail
 
 base="$1"; head="$2"; fork="$3"
@@ -10,12 +12,79 @@ files=$(git diff --name-only "$base"..."$head")
 
 note() { echo "::error::$1"; fail=1; }
 
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Node on Windows (local dry-runs under Git Bash) needs a native path.
+npath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+
 # 1. Core lands at a signing sitting, never through a PR. Propose it as
 #    proposals/<name>.patch plus a rehearsal test instead.
-core=$(printf '%s\n' "$files" | grep -E '^(src/(gate|policy|chain|store|grant)/|bin/hook-)' || true)
+#
+#    The core list is CORE_DIRS / CORE_FILES from src/grant/core-paths.js as it
+#    exists on the BASE commit. The PR's own copy is never read: a PR could
+#    edit that file to exempt itself. The module imports only node builtins,
+#    so it can be loaded as-is, which keeps the guard exact instead of a
+#    second hand-copied list that drifts. Anything that goes wrong here fails
+#    closed. There is no fallback list and no empty list.
+if ! git show "$base:src/grant/core-paths.js" > "$work/core-paths.mjs" 2>"$work/show.err"; then
+  echo "::error::guard cannot read src/grant/core-paths.js at base $base; refusing to guess the core list. $(cat "$work/show.err")"
+  exit 1
+fi
+
+cat > "$work/classify.mjs" <<'EOF'
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const die = m => { console.error(`core-list: ${m}`); process.exit(2); };
+
+let mod;
+try {
+  mod = await import(pathToFileURL(path.resolve(process.argv[2])).href);
+} catch (e) {
+  die(`could not load base core-paths.js: ${e.message}`);
+}
+
+const okList = a =>
+  Array.isArray(a) && a.length > 0 &&
+  a.every(s => typeof s === 'string' && s.length > 0);
+if (!okList(mod.CORE_DIRS)) die('CORE_DIRS missing, empty or malformed');
+if (!okList(mod.CORE_FILES)) die('CORE_FILES missing, empty or malformed');
+
+// Same matching as classifyPath(): unconditional lowercase, exact match for
+// files, whole-segment ancestry for directories (src/gateway is not src/gate).
+// Backslashes are treated as separators too: more matches is the safe side.
+const fold = s => s.toLowerCase();
+const files = mod.CORE_FILES.map(fold);
+const dirs = mod.CORE_DIRS.map(d => fold(d).split('/'));
+
+const input = fs.readFileSync(0, 'utf8').split('\0').filter(Boolean);
+const hits = [];
+for (const raw of input) {
+  const rel = fold(raw.replace(/\\/g, '/'));
+  const segs = rel.split('/');
+  let core = files.includes(rel);
+  if (!core) {
+    for (const d of dirs) {
+      if (segs.length > d.length && d.every((s, i) => segs[i] === s)) { core = true; break; }
+    }
+  }
+  if (core) hits.push(raw);
+}
+process.stdout.write(hits.join('\n') + (hits.length ? '\n' : ''));
+EOF
+
+# --no-renames so a file moved OUT of a core directory still shows its old path.
+if ! git diff --name-only -z --no-renames "$base"..."$head" \
+    | node "$(npath "$work/classify.mjs")" "$(npath "$work/core-paths.mjs")" > "$work/core.out" 2>"$work/core.err"; then
+  echo "::error::guard could not derive the core list from base core-paths.js; refusing to guess. $(cat "$work/core.err")"
+  exit 1
+fi
+core=$(cat "$work/core.out")
 if [ -n "$core" ]; then
   note "PR edits non-delegable core directly. Submit a patch under proposals/ with a rehearsal test. Files:"
-  printf '  %s\n' $core
+  printf '%s\n' "$core" | sed 's/^/  /'
 fi
 
 # 2. Outside PRs that change what runs on install, test or CI.
@@ -28,11 +97,31 @@ if [ "$fork" = "true" ]; then
 fi
 
 # 3. No em dashes added anywhere (existing ones are not this PR's problem).
+#    A committed .patch or .diff is the exception in how lines are read: the
+#    PR diff shows every line of the patch as added, including the patch's own
+#    removed (-) and context ( ) lines. For those files only the lines the
+#    patch itself adds count: content starting with "+", minus "+++ " headers.
 emdash=$(printf '\xe2\x80\x94')
-added=$(git diff --unified=0 "$base"..."$head" | grep '^+' | grep -v '^+++' | grep -c "$emdash" || true)
+git diff --unified=0 "$base"..."$head" | LC_ALL=C awk -v e="$emdash" '
+  /^diff --git / { file = ""; inhdr = 1; next }
+  inhdr && /^\+\+\+ / {
+    f = substr($0, 5); sub(/^b\//, "", f); sub(/"$/, "", f); file = f; inhdr = 0; next
+  }
+  /^@@/ { inhdr = 0; next }
+  inhdr { next }
+  /^\+/ {
+    line = $0
+    if (file ~ /\.(patch|diff)$/) {
+      body = substr(line, 2)
+      if (substr(body, 1, 1) != "+" || substr(body, 1, 4) == "+++ ") next
+    }
+    if (index(line, e) > 0) printf "%s\t%s\n", file, line
+  }
+' > "$work/emdash.out"
+added=$(wc -l < "$work/emdash.out" | tr -d ' ')
 if [ "$added" -gt 0 ]; then
   note "PR adds $added line(s) containing an em dash. Use a period, comma, colon or parentheses."
-  git diff --unified=0 "$base"..."$head" | grep -E "^(\+\+\+ |\+.*$emdash)" | grep -B1 "$emdash" | grep -v '^--$' | head -40
+  head -40 "$work/emdash.out" | sed 's/^/  /'
 fi
 
 # 4. A PR that touches src/ must re-stamp the KNOWN-LIMITS pin in the same PR.
