@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 0474bd3c0ab1fc60179f36ab4754be57c7795122
- stamped 2026-10-18
- subject: limit 74 closed: query_receipts session filter keeps gate rows
- body-sha256: 01c23ffc8631526b3a325dd28f35fb4fb2ef340616a3d2ee968a1d6878a0aa0f
+ This file describes commit a1a3bbabbd652fae1a2a8671ec953a5c0d0b060a
+ stamped 2026-10-26
+ subject: Merge remote-tracking branch 'origin/main' into fix81
+ body-sha256: e8e2cd7988d663d2a2fcb700b456ebe5205a6ed268e6f9b0eb69ddac99d590c6
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
