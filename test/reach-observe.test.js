@@ -266,3 +266,69 @@ test('G. a null inside top_logprobs is recorded, not thrown', () => {
   const clean = observeRungs({ model: 'm', message: { content: 'x' }, logprobs: [lpEntry('a', -0.1)] });
   assert.deepEqual(clean.logprobs.malformedTopLogprobs, []);
 });
+
+// WO-REACH-TOPLP: a top_logprobs that is present but not an array is
+// malformed at the entry level and must move the digest away from the
+// absent case, instead of vanishing into the same canonical [].
+test('H. string top_logprobs: entry-level malformed with index null, R4 still true', () => {
+  const stringBody = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [{ token: 'a', logprob: -0.1, top_logprobs: 'garbage' }]
+  };
+  const obs = observeRungs(stringBody);
+  assert.equal(obs.rungs.R4, true);
+  assert.deepEqual(obs.logprobs.malformedTopLogprobs, [{ entry: 0, index: null }]);
+  assert.match(obs.logprobs.digest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test('I. string top_logprobs vs the same body with the field removed: different digests', () => {
+  const stringBody = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [{ token: 'a', logprob: -0.1, top_logprobs: 'garbage' }]
+  };
+  const absentBody = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [{ token: 'a', logprob: -0.1 }]
+  };
+  const withString = observeRungs(stringBody);
+  const absent = observeRungs(absentBody);
+  assert.notEqual(withString.logprobs.digest, absent.logprobs.digest);
+  assert.deepEqual(absent.logprobs.malformedTopLogprobs, []);
+});
+
+test('J. top_logprobs null counts as absent: no malformed report, digest equal to absent case', () => {
+  const nullBody = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [{ token: 'a', logprob: -0.1, top_logprobs: null }]
+  };
+  const absentBody = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [{ token: 'a', logprob: -0.1 }]
+  };
+  const withNull = observeRungs(nullBody);
+  const absent = observeRungs(absentBody);
+  assert.deepEqual(withNull.logprobs.malformedTopLogprobs, []);
+  assert.equal(withNull.logprobs.digest, absent.logprobs.digest);
+});
+
+test('K. mixed: entry 0 non-array object, entry 1 array with a non-object element', () => {
+  const body = {
+    model: 'm',
+    message: { content: 'x' },
+    logprobs: [
+      { token: 'a', logprob: -0.1, top_logprobs: { t: 'a', l: -0.1 } },
+      lpEntry('b', -0.2, [null])
+    ]
+  };
+  const obs = observeRungs(body);
+  assert.equal(obs.rungs.R4, true);
+  assert.deepEqual(
+    obs.logprobs.malformedTopLogprobs,
+    [{ entry: 0, index: null }, { entry: 1, index: 0 }]
+  );
+});
