@@ -1,0 +1,248 @@
+// ---------- sealed (v2) ----------
+//
+// Encrypt-then-sign (WO-CARTRIDGE-SEAL, spec docs/PAP-SEALED.md). The outer
+// Ed25519 signature covers the ciphertext manifest, so anyone can check
+// authorship and integrity without a key. Inside the ciphertext, a second
+// signature by the same key binds the plaintext to the exact header it was
+// sealed under, so a key holder cannot be handed a re-encrypted or
+// re-addressed swap. A public key commitment makes every recipient read the
+// same plaintext.
+
+/**
+ * pack() with inputs.seal set:
+ * @param {Object} inputs.seal
+ * @param {Array<Buffer|string>} [inputs.seal.to] - X25519 recipient public
+ *   keys (32-byte Buffer, 64 hex chars, or SPKI PEM)
+ * @param {string} [inputs.seal.passphrase] - optional passphrase recipient
+ * @param {number} [inputs.seal.iterations] - PBKDF2 iterations (default 600000)
+ */
+function packSealed(inputs) {
+  if (typeof inputs.spine !== 'string' || inputs.spine.length === 0) {
+    throw new Error('spine must be a non-empty string');
+  }
+  const seal = inputs.seal;
+  const to = (seal.to || []).map(parseRecipientPublicKey);
+  const hasPassphrase = seal.passphrase !== undefined && seal.passphrase !== null;
+  if (to.length === 0 && !hasPassphrase) {
+    throw new Error('seal needs at least one recipient (seal.to) or a passphrase');
+  }
+  if (new Set(to.map((k) => k.toString('hex'))).size !== to.length) {
+    throw new Error('seal.to lists the same recipient twice');
+  }
+
+  const spineRaw = Buffer.from(inputs.spine, 'utf8');
+  const spineCompressed = brotliCompressMax(spineRaw);
+  const memoirUrlBytes = Buffer.from(inputs.memoirUrl || '', 'utf8');
+  if (memoirUrlBytes.length > 0xFFFF) {
+    throw new Error(`memoirUrl too long: ${memoirUrlBytes.length} bytes, max 65535`);
+  }
+
+  const cek = generateContentKey();
+  let ephemeralPub = null;
+  let x25519Wrapped = [];
+  if (to.length > 0) {
+    const eph = crypto.generateKeyPairSync('x25519');
+    ephemeralPub = x25519RawPublic(eph.publicKey);
+    x25519Wrapped = to.map((r) => x25519Wrap(cek, eph.privateKey, ephemeralPub, r));
+  }
+  let passphrase = null;
+  if (hasPassphrase) {
+    const salt = crypto.randomBytes(PASSPHRASE_SALT_LEN);
+    const iterations = seal.iterations === undefined ? DEFAULT_PBKDF2_ITERATIONS : seal.iterations;
+    const kek = passphraseKek(seal.passphrase, salt, iterations);
+    passphrase = { salt, iterations, wrapped: aeadSeal(kek, cek, null) };
+  }
+
+  const headerBytes = encodeSealedHeader({
+    chainHeadHash: inputs.chainHeadHash,
+    chainPubkeyFp: inputs.chainPubkeyFp,
+    seq: inputs.seq,
+    timestamp: inputs.timestamp,
+    keyCommit: keyCommitment(cek),
+    ephemeralPub,
+    x25519Wrapped,
+    passphrase,
+  });
+
+  const innerSig = crypto.sign(null, innerMessage(headerBytes, spineRaw, memoirUrlBytes), inputs.signingKey);
+  if (innerSig.length !== SIG_LEN) {
+    throw new Error(`unexpected Ed25519 signature length: ${innerSig.length}, expected ${SIG_LEN}`);
+  }
+  const memoirLen = Buffer.alloc(2);
+  memoirLen.writeUInt16BE(memoirUrlBytes.length, 0);
+  const inner = Buffer.concat([innerSig, memoirLen, memoirUrlBytes, spineCompressed]);
+  const ciphertext = aeadSeal(bodyKey(cek), inner, headerBytes);
+  const manifestBytes = encodeSealedManifest(headerBytes, ciphertext);
+
+  const signature = crypto.sign(null, manifestBytes, inputs.signingKey);
+  if (signature.length !== SIG_LEN) {
+    throw new Error(`unexpected Ed25519 signature length: ${signature.length}, expected ${SIG_LEN}`);
+  }
+  const bundle = Buffer.concat([manifestBytes, signature]);
+  const totalLen = bundle.length;
+  const budget = QR_V40_BINARY_ECL_CAPACITY;
+  const headroom = budget - totalLen;
+  // What the same spine and memoir cost as a plaintext v1 bundle, so the
+  // price of sealing is a measured number, not an estimate.
+  const plainEquivalentLen = HEADER_FIXED_LEN + memoirUrlBytes.length + SPINE_LEN_TAG_BYTES + spineCompressed.length + SIG_LEN;
+  const sealOverhead = totalLen - plainEquivalentLen;
+
+  if (totalLen > budget) {
+    const err = new Error(
+      budgetMessage(spineRaw.length, spineCompressed.length, manifestBytes.length, totalLen, budget) +
+      `\n  of which sealing costs ${sealOverhead} bytes (${to.length} recipient key(s)${hasPassphrase ? ' plus a passphrase' : ''}).`,
+    );
+    err.code = 'PAP_BUDGET_EXCEEDED';
+    err.spineRawLen = spineRaw.length;
+    err.spineCompressedLen = spineCompressed.length;
+    err.totalLen = totalLen;
+    err.budget = budget;
+    err.sealOverhead = sealOverhead;
+    throw err;
+  }
+
+  return {
+    bundle,
+    manifestLen: manifestBytes.length,
+    sigLen: signature.length,
+    spineRawLen: spineRaw.length,
+    spineCompressedLen: spineCompressed.length,
+    totalLen,
+    budget,
+    headroom,
+    compressionRatio: spineRaw.length / spineCompressed.length,
+    sealed: true,
+    recipients: { x25519: to.length, passphrase: hasPassphrase },
+    sealOverhead,
+  };
+}
+
+/**
+ * Verify the outer signature and report the public fields of a v1 or v2
+ * bundle. Never decrypts and needs no key: this is what a stranger can check.
+ *
+ * @param {Object} inputs
+ * @param {Buffer} inputs.bundle
+ * @param {crypto.KeyObject} [inputs.verifyKey] - as in unpack()
+ */
+function inspect(inputs) {
+  if (!Buffer.isBuffer(inputs.bundle)) throw new TypeError('bundle must be a Buffer');
+  if (inputs.bundle.length < SIG_LEN + 1) {
+    throw new Error(`bundle too short: ${inputs.bundle.length} bytes`);
+  }
+  const manifestBytes = inputs.bundle.subarray(0, inputs.bundle.length - SIG_LEN);
+  const signature = inputs.bundle.subarray(inputs.bundle.length - SIG_LEN);
+  const sealed = inputs.bundle[0] === VERSION_SEALED;
+  const m = sealed ? decodeSealedManifest(Buffer.from(manifestBytes)) : decodeManifest(Buffer.from(manifestBytes));
+  const verifyKey = inputs.verifyKey || rawEd25519PublicKeyToKeyObject(m.chainPubkeyFp);
+  if (!crypto.verify(null, manifestBytes, verifyKey, signature)) {
+    const err = new Error('signature verification failed: bundle has been altered or was signed by a different key');
+    err.code = 'PAP_SIGNATURE_INVALID';
+    throw err;
+  }
+  const info = {
+    version: m.version,
+    sealed,
+    chainHeadHash: m.chainHeadHash,
+    chainPubkeyFp: m.chainPubkeyFp,
+    seq: m.seq,
+    timestamp: m.timestamp,
+    bytes: inputs.bundle.length,
+  };
+  if (sealed) {
+    info.recipients = { x25519: m.x25519Wrapped.length, passphrase: m.passphrase !== null };
+    info.keyCommit = m.keyCommit;
+    info.ciphertextLen = m.ciphertext.length;
+  } else {
+    info.memoirUrl = m.memoirUrl;
+  }
+  return { info, manifest: m, verifyKey };
+}
+
+/**
+ * unpack() for a v2 bundle. One of recipientKey, passphrase or contentKey
+ * opens it; with none, throws PAP_SEALED_NEEDS_KEY carrying err.info (the
+ * outer signature has already verified by then).
+ */
+function unpackSealed(inputs) {
+  const { info, manifest: m, verifyKey } = inspect(inputs);
+
+  let cek = null;
+  if (inputs.contentKey) {
+    cek = Buffer.isBuffer(inputs.contentKey) ? inputs.contentKey : Buffer.from(String(inputs.contentKey), 'hex');
+  } else if (inputs.recipientKey === undefined && inputs.passphrase === undefined) {
+    const err = new Error(
+      `verified, sealed to ${describeRecipients(info.recipients)}; no key given, so the spine stays closed`,
+    );
+    err.code = 'PAP_SEALED_NEEDS_KEY';
+    err.info = info;
+    throw err;
+  } else {
+    if (inputs.passphrase !== undefined && m.passphrase) {
+      const kek = passphraseKek(inputs.passphrase, m.passphrase.salt, m.passphrase.iterations);
+      cek = aeadOpen(kek, m.passphrase.wrapped, null);
+    }
+    if (!cek && inputs.recipientKey !== undefined && m.ephemeralPub) {
+      const priv = parseRecipientPrivateKey(inputs.recipientKey);
+      for (const w of m.x25519Wrapped) {
+        cek = x25519Unwrap(w, priv, m.ephemeralPub);
+        if (cek) break;
+      }
+    }
+    if (!cek) {
+      const err = new Error('this key does not open the bundle: it is not one of the recipients (the outer signature did verify)');
+      err.code = 'PAP_NOT_A_RECIPIENT';
+      err.info = info;
+      throw err;
+    }
+  }
+
+  if (cek.length !== 32 || !commitmentMatches(cek, m.keyCommit)) {
+    const err = new Error('content key does not match the bundle\'s key commitment: refusing to decrypt');
+    err.code = 'PAP_KEY_COMMIT_MISMATCH';
+    throw err;
+  }
+  const inner = aeadOpen(bodyKey(cek), m.ciphertext, m.headerBytes);
+  if (!inner || inner.length < SIG_LEN + 2) {
+    const err = new Error('sealed body failed authentication');
+    err.code = 'PAP_DECRYPT_FAILED';
+    throw err;
+  }
+  const innerSig = inner.subarray(0, SIG_LEN);
+  const memoirUrlLen = inner.readUInt16BE(SIG_LEN);
+  if (SIG_LEN + 2 + memoirUrlLen > inner.length) {
+    const err = new Error('sealed body is malformed: memoir URL runs past the end');
+    err.code = 'PAP_DECRYPT_FAILED';
+    throw err;
+  }
+  const memoirUrlBytes = inner.subarray(SIG_LEN + 2, SIG_LEN + 2 + memoirUrlLen);
+  const spineCompressed = Buffer.from(inner.subarray(SIG_LEN + 2 + memoirUrlLen));
+  const spineRaw = zlib.brotliDecompressSync(spineCompressed);
+
+  if (!crypto.verify(null, innerMessage(m.headerBytes, spineRaw, memoirUrlBytes), verifyKey, innerSig)) {
+    const err = new Error(
+      'inner binding failed: the plaintext was not signed under this header by this key ' +
+      '(re-encrypted, re-addressed, or re-signed by someone else)',
+    );
+    err.code = 'PAP_INNER_BINDING_INVALID';
+    throw err;
+  }
+
+  return {
+    manifest: { ...info, memoirUrl: memoirUrlBytes.toString('utf8') },
+    spine: spineRaw.toString('utf8'),
+    spineRawLen: spineRaw.length,
+    spineCompressedLen: spineCompressed.length,
+    // Anyone holding this opens the bundle, and the public commitment proves
+    // it is the right key. Publishing it is how a sealed bundle is revealed.
+    contentKey: cek,
+  };
+}
+
+function describeRecipients(r) {
+  const parts = [];
+  if (r.x25519 > 0) parts.push(`${r.x25519} recipient key${r.x25519 === 1 ? '' : 's'}`);
+  if (r.passphrase) parts.push('a passphrase');
+  return parts.join(' and ');
+}
+

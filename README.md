@@ -172,7 +172,15 @@ npm run grant -- --session <id> --all-pending --max-actions 20 --expires-in-ms 3
 
 **Honest limit.** A grant is reviewed once and spendable up to its ceiling, so a command you approved can run repeatedly without further review. That is the trade, made deliberately. See KNOWN-LIMITS 17.
 
+## Signed QR bundles (PAP)
+
+`npm run pap:export -- --spine <file> --public` packs a text spine into one QR (2,953 bytes at most), signed with your chain key and stamped with your chain head and seq. `npm run pap:boot -- --bundle <file.bin>` verifies the signature and prints the spine.
+
+**What the signature proves, and only that.** Anyone can check that the bundle is untouched and was signed by the key whose fingerprint it carries. "Cannot be forged" means "cannot be forged without the chain key file", and that file sits unencrypted on your disk (KNOWN-LIMITS 8, 48): anyone who can read it can sign bundles in your name. A signature proves custody, never that the spine is correct (KNOWN-LIMITS 46). A QR is a broadcast medium; `--public` is required because anyone who scans it reads it (KNOWN-LIMITS 45).
+
 ## Not built yet
+
+- **Sealed bundles.** Encrypt-then-sign, so anyone can verify a bundle and only the recipients you choose can read it. Specified in [docs/PAP-SEALED.md](./docs/PAP-SEALED.md), queued for a signing sitting as `proposals/pap-sealed.patch` because the signing path is core. Not usable until that lands.
 
 - **Scoped custodial integrations.** The sanctioned path for a redacted slice of your record to reach an auditor, a client or your own IT. `npm run export` packages the whole chain with its public key so it verifies off the machine that wrote it, but whole-chain-or-nothing is the only granularity there is. Selective disclosure is the piece that does not exist. Reach out for details.
 - **External anchoring.** Without a timestamp authority the chain proves alteration but not erasure: truncating the tail leaves a shorter chain that still verifies. See KNOWN-LIMITS 3.

@@ -1,0 +1,1082 @@
+diff --git a/bin/pap-boot.js b/bin/pap-boot.js
+--- a/bin/pap-boot.js
++++ b/bin/pap-boot.js
+@@ -4,17 +4,30 @@
+  *
+  * Usage:
+  *   node bin/pap-boot.js --bundle <path.bin> [--verify-key <path.pem>]
++ *   node bin/pap-boot.js --bundle <path.bin> --recipient-key <path|hex>
++ *   node bin/pap-boot.js --bundle <path.bin> --passphrase-env <VAR>
++ *   node bin/pap-boot.js --bundle <path.bin> --content-key <hex64>
+  *
+  * Reads bundle bytes from --bundle (or stdin if the path is `-`),
+  * verifies the signature (against --verify-key if supplied, otherwise
+  * against the pubkey embedded in the manifest), decompresses the spine,
+  * and writes it to stdout.
+  *
++ * A sealed (v2) bundle verifies without a key: with no key flag, pap-boot
++ * prints "verified, sealed to N" and exits 5 with nothing on stdout. A
++ * recipient key, the passphrase, or the revealed content key opens it.
++ * --print-content-key writes the content key to stderr after opening, so a
++ * recipient can reveal the bundle to everyone later; the bundle's public key
++ * commitment lets anyone check that a revealed key is the right one.
++ *
+  * Exit codes:
+  *   0 on success
+  *   1 on I/O error or unexpected failure
+  *   2 on bad arguments
+  *   4 on signature verification failure (limit of the record itself)
++ *   5 sealed bundle verified, but no key given to open it
++ *   6 sealed bundle verified, but the key does not open it
++ *   7 sealed bundle failed its key commitment, decrypt or inner binding check
+  *
+  * A separate decoder-from-image tool is out of scope for v1 (see
+  * src/publish/qr.js). The boot spec (BOOT-SPEC.md in the WO-PAP-01
+@@ -34,6 +47,14 @@ import fs from 'node:fs';
+ import crypto from 'node:crypto';
+ import { unpack } from '../src/publish/pack.js';
+ 
++const SEALED_EXIT = {
++  PAP_SEALED_NEEDS_KEY: 5,
++  PAP_NOT_A_RECIPIENT: 6,
++  PAP_KEY_COMMIT_MISMATCH: 7,
++  PAP_DECRYPT_FAILED: 7,
++  PAP_INNER_BINDING_INVALID: 7,
++};
++
+ function main() {
+   const args = parseArgs(process.argv.slice(2));
+   if (!args.bundle) die('missing --bundle <path> (or --bundle - for stdin)');
+@@ -49,18 +70,36 @@ function main() {
+       })
+     : undefined;
+ 
++  const opener = {};
++  if (args.recipientKey) {
++    opener.recipientKey = /^[0-9a-f]{64}$/i.test(args.recipientKey)
++      ? args.recipientKey
++      : fs.readFileSync(args.recipientKey, 'utf8').trim();
++  }
++  if (args.passphraseEnv) {
++    const p = process.env[args.passphraseEnv];
++    if (!p) die(`--passphrase-env ${args.passphraseEnv}: that environment variable is empty or unset`);
++    opener.passphrase = p;
++  }
++  if (args.contentKey) {
++    if (!/^[0-9a-f]{64}$/i.test(args.contentKey)) die('--content-key must be 64 hex characters');
++    opener.contentKey = args.contentKey;
++  }
++
+   try {
+-    const { manifest, spine, spineRawLen, spineCompressedLen } = unpack({ bundle, verifyKey });
++    const { manifest, spine, spineRawLen, spineCompressedLen, contentKey } = unpack({ bundle, verifyKey, ...opener });
+     process.stdout.write(spine);
+     process.stderr.write(
+       `pap-boot ok\n` +
+       `  version ${manifest.version}\n` +
++      (manifest.sealed ? `  sealed to ${describe(manifest.recipients)}, opened\n` : '') +
+       `  seq ${manifest.seq}\n` +
+       `  timestamp ${manifest.timestamp} (${new Date(manifest.timestamp).toISOString()})\n` +
+       `  chain head ${manifest.chainHeadHash.toString('hex')}\n` +
+       `  chain pubkey fp ${manifest.chainPubkeyFp.toString('hex')}\n` +
+       (manifest.memoirUrl ? `  memoir ${manifest.memoirUrl}\n` : '') +
+-      `  raw ${spineRawLen} B, compressed ${spineCompressedLen} B\n`,
++      `  raw ${spineRawLen} B, compressed ${spineCompressedLen} B\n` +
++      (args.printContentKey && contentKey ? `  content key ${contentKey.toString('hex')}\n` : ''),
+     );
+     process.exit(0);
+   } catch (err) {
+@@ -68,11 +107,31 @@ function main() {
+       process.stderr.write('pap-boot: ' + err.message + '\n');
+       process.exit(4);
+     }
++    if (err.code in SEALED_EXIT) {
++      const i = err.info;
++      process.stderr.write(
++        'pap-boot: ' + err.message + '\n' +
++        (i
++          ? `  seq ${i.seq}\n` +
++            `  timestamp ${i.timestamp} (${new Date(i.timestamp).toISOString()})\n` +
++            `  chain head ${i.chainHeadHash.toString('hex')}\n` +
++            `  chain pubkey fp ${i.chainPubkeyFp.toString('hex')}\n`
++          : ''),
++      );
++      process.exit(SEALED_EXIT[err.code]);
++    }
+     process.stderr.write('pap-boot: ' + (err && err.stack || err) + '\n');
+     process.exit(1);
+   }
+ }
+ 
++function describe(r) {
++  const parts = [];
++  if (r.x25519 > 0) parts.push(`${r.x25519} recipient key(s)`);
++  if (r.passphrase) parts.push('a passphrase');
++  return parts.join(' and ');
++}
++
+ function parseArgs(argv) {
+   const out = {};
+   for (let i = 0; i < argv.length; i++) {
+@@ -80,6 +139,10 @@ function parseArgs(argv) {
+     switch (a) {
+       case '--bundle': out.bundle = argv[++i]; break;
+       case '--verify-key': out.verifyKey = argv[++i]; break;
++      case '--recipient-key': out.recipientKey = argv[++i]; break;
++      case '--passphrase-env': out.passphraseEnv = argv[++i]; break;
++      case '--content-key': out.contentKey = argv[++i]; break;
++      case '--print-content-key': out.printContentKey = true; break;
+       case '-h': case '--help': out.help = true; break;
+       default:
+         if (!a.startsWith('-')) break;
+diff --git a/bin/pap-export.js b/bin/pap-export.js
+--- a/bin/pap-export.js
++++ b/bin/pap-export.js
+@@ -11,6 +11,12 @@
+  *   --out <basepath>          output basepath (default <spine-file>.pap)
+  *   --public                  REQUIRED acknowledgment (see below)
+  *
++ * Sealed mode (manifest v2, docs/PAP-SEALED.md):
++ *   --seal                    encrypt the spine; only the recipients can read it
++ *   --to <key>                X25519 recipient public key: 64 hex chars or a
++ *                             path to a .pub / SPKI PEM file. Repeat per recipient.
++ *   --passphrase-env <VAR>    also seal to the passphrase held in env var VAR
++ *
+  * Chain-state overrides (default: read live from the Lotor home):
+  *   --key <path.pem>          Ed25519 private key (default: the chain key)
+  *   --chain-head <hex64>      chain head hash (default: current head)
+@@ -26,11 +32,15 @@
+  * The --public flag is required and unlocks nothing except the operator's
+  * acknowledgment that everything about to be encoded is going onto a
+  * medium anyone can scan. See KNOWN-LIMITS 45. The signature proves who
+- * authored the bundle, not that the bundle is safe to distribute.
++ * authored the bundle, not that the bundle is safe to distribute. Sealed
++ * mode still needs --public: the ciphertext, the recipient count, the
++ * signer, the chain head, the seq and the timestamp stay readable by anyone.
+  *
+  * Signing uses the CHAIN key, not the approval key (KNOWN-LIMITS 48):
+  * bundle authenticity is chain-key strength, and the chain key is stored
+- * plaintext at rest (limit 8).
++ * plaintext at rest (limit 8). "Cannot be forged" means "cannot be forged
++ * without the chain key file", and anyone who can read that file can sign
++ * bundles in your name.
+  *
+  * Emits <basepath>.png, <basepath>.svg, and <basepath>.bin.
+  *
+@@ -46,18 +56,70 @@ import { bundleToPng, bundleToSvg } from '../src/publish/qr.js';
+ import { resolveHome } from '../src/home.js';
+ import { loadChain, loadOrCreateKeyPair } from '../src/store/index.js';
+ 
++const USAGE = [
++  'usage: node bin/pap-export.js --spine <path.txt> --public [options]',
++  '',
++  '  --spine <path>            spine text file to encode (required)',
++  '  --public                  acknowledge a QR is a broadcast medium (required)',
++  '  --memoir-url <url>        optional memoir pointer',
++  '  --out <basepath>          output basepath (default <spine-file>.pap)',
++  '',
++  'sealed mode (only the recipients can read the spine):',
++  '  --seal                    encrypt, then sign',
++  '  --to <hex64|file>         X25519 recipient public key; repeat per recipient',
++  '                            (make one with: node bin/pap-keygen.js --out <base>)',
++  '  --passphrase-env <VAR>    also seal to the passphrase in env var VAR',
++  '',
++  'chain-state overrides: --key <pem> --chain-head <hex64> --chain-pubkey-fp <hex64>',
++  '                       --seq <n> --timestamp <ms>',
++  '',
++  'What a bundle proves, and what it does not:',
++  '  Anyone can check that the bundle is untouched and was signed by the chain key',
++  '  whose fingerprint it carries. That holds only while the chain key is secret,',
++  '  and the chain key is stored unencrypted on this machine (KNOWN-LIMITS 8, 48):',
++  '  anyone who can read the key file can sign bundles in your name.',
++  '  A signature proves custody, never that the spine is correct (KNOWN-LIMITS 46).',
++  '  Sealed mode hides the spine, not the fact of the bundle: the ciphertext,',
++  '  recipient count, signer, chain head, seq and time are public (KNOWN-LIMITS 45).',
++].join('\n');
++
+ async function main() {
+   const args = parseArgs(process.argv.slice(2));
+ 
++  if (args.help) {
++    process.stdout.write(USAGE + '\n');
++    process.exit(0);
++  }
++
+   if (!args.public) {
+     die(
+       'refusing to encode without --public.\n' +
+       'A QR is a broadcast medium. Anyone who scans this will read the spine.\n' +
++      (args.seal
++        ? 'Sealed, they cannot read the spine, but they can read the ciphertext, the\n' +
++          'recipient count, the signer, the chain head, the seq and the timestamp.\n'
++        : '') +
+       'Add --public to acknowledge and proceed.',
+     );
+   }
+   if (!args.spine) die('missing --spine <path>');
+ 
++  let seal;
++  if (args.seal) {
++    const to = args.to.map(readRecipientKey);
++    let passphrase;
++    if (args.passphraseEnv) {
++      passphrase = process.env[args.passphraseEnv];
++      if (!passphrase) die(`--passphrase-env ${args.passphraseEnv}: that environment variable is empty or unset`);
++    }
++    if (to.length === 0 && passphrase === undefined) {
++      die('--seal needs at least one --to <recipient key> or --passphrase-env <VAR>');
++    }
++    seal = { to, passphrase };
++  } else if (args.to.length > 0 || args.passphraseEnv) {
++    die('--to and --passphrase-env only make sense with --seal');
++  }
++
+   const spine = fs.readFileSync(args.spine, 'utf8');
+ 
+   // Chain-state defaults: read the live Lotor home unless every field is
+@@ -102,6 +164,7 @@ async function main() {
+     timestamp,
+     memoirUrl: args.memoirUrl || '',
+     signingKey,
++    seal,
+   });
+ 
+   const basepath = args.out || path.resolve(args.spine + '.pap');
+@@ -113,10 +176,15 @@ async function main() {
+   fs.writeFileSync(basepath + '.svg', svg);
+   fs.writeFileSync(basepath + '.bin', result.bundle);
+ 
++  const sealedLines = result.sealed
++    ? `  sealed to ${result.recipients.x25519} recipient key(s)${result.recipients.passphrase ? ' + a passphrase' : ''}` +
++      ` (sealing cost ${result.sealOverhead} B)\n`
++    : '';
+   console.log(
+     `pap-export ok\n` +
+     `  spine raw ${result.spineRawLen} B\n` +
+     `  compressed ${result.spineCompressedLen} B (${result.compressionRatio.toFixed(2)}x)\n` +
++    sealedLines +
+     `  bundle ${result.totalLen} B / budget ${result.budget} B (headroom ${result.headroom} B)\n` +
+     `  chain seq ${seq}\n` +
+     `  wrote ${basepath}.png\n` +
+@@ -126,7 +194,7 @@ async function main() {
+ }
+ 
+ function parseArgs(argv) {
+-  const out = { public: false };
++  const out = { public: false, seal: false, to: [] };
+   for (let i = 0; i < argv.length; i++) {
+     const a = argv[i];
+     switch (a) {
+@@ -139,6 +207,9 @@ function parseArgs(argv) {
+       case '--memoir-url': out.memoirUrl = argv[++i]; break;
+       case '--timestamp': out.timestamp = argv[++i]; break;
+       case '--out': out.out = argv[++i]; break;
++      case '--seal': out.seal = true; break;
++      case '--to': out.to.push(argv[++i]); break;
++      case '--passphrase-env': out.passphraseEnv = argv[++i]; break;
+       case '-h': case '--help': out.help = true; break;
+       default:
+         if (!a.startsWith('-')) break;
+@@ -148,6 +219,15 @@ function parseArgs(argv) {
+   return out;
+ }
+ 
++// A recipient key on the command line is either 64 hex chars or a file
++// holding hex (a .pub from pap-keygen) or an SPKI PEM. pack() validates it.
++function readRecipientKey(s) {
++  if (typeof s !== 'string' || s.length === 0) die('--to needs a key or a key file');
++  if (/^[0-9a-f]{64}$/i.test(s)) return s;
++  if (!fs.existsSync(s)) die(`--to ${s}: not 64 hex characters and not a readable file`);
++  return fs.readFileSync(s, 'utf8').trim();
++}
++
+ function hex32(s, name) {
+   if (typeof s !== 'string' || !/^[0-9a-f]{64}$/i.test(s)) {
+     die(`${name} must be 64 hex characters (32 bytes); got ${s}`);
+diff --git a/bin/pap-keygen.js b/bin/pap-keygen.js
+new file mode 100644
+--- /dev/null
++++ b/bin/pap-keygen.js
+@@ -0,0 +1,47 @@
++#!/usr/bin/env node
++/**
++ * pap-keygen: make an X25519 recipient keypair for sealed PAP bundles.
++ *
++ * Usage:
++ *   node bin/pap-keygen.js --out <basepath>
++ *
++ * Writes <basepath>.key (PKCS8 PEM, the secret; keep it) and <basepath>.pub
++ * (64 hex chars; hand it to whoever seals bundles for you). Refuses to
++ * overwrite either file.
++ *
++ * A recipient key is not the chain key and signs nothing. It only opens
++ * bundles sealed to it. Anyone who later obtains the .key file opens every
++ * bundle ever sealed to it, and those bundles are QR codes that may have
++ * been photographed anywhere (KNOWN-LIMITS, sealed-mode entry). Treat it
++ * like the chain key: it is stored unencrypted, here too.
++ */
++
++import fs from 'node:fs';
++import { generateRecipientKeypair } from '../src/publish/pack.js';
++
++function main() {
++  const argv = process.argv.slice(2);
++  let out;
++  for (let i = 0; i < argv.length; i++) {
++    if (argv[i] === '--out') out = argv[++i];
++    else if (argv[i] === '-h' || argv[i] === '--help') {
++      process.stdout.write('usage: node bin/pap-keygen.js --out <basepath>\n');
++      process.exit(0);
++    } else die(`unknown argument: ${argv[i]}`);
++  }
++  if (!out) die('missing --out <basepath>');
++  for (const p of [out + '.key', out + '.pub']) {
++    if (fs.existsSync(p)) die(`${p} exists; refusing to overwrite a key`);
++  }
++  const kp = generateRecipientKeypair();
++  fs.writeFileSync(out + '.key', kp.privateKey.export({ format: 'pem', type: 'pkcs8' }), { mode: 0o600 });
++  fs.writeFileSync(out + '.pub', kp.publicKeyRaw.toString('hex') + '\n');
++  process.stdout.write(`pap-keygen ok\n  secret ${out}.key\n  public ${out}.pub ${kp.publicKeyRaw.toString('hex')}\n`);
++}
++
++function die(msg) {
++  process.stderr.write('pap-keygen: ' + msg + '\n');
++  process.exit(2);
++}
++
++main();
+diff --git a/src/publish/manifest.js b/src/publish/manifest.js
+--- a/src/publish/manifest.js
++++ b/src/publish/manifest.js
+@@ -30,6 +30,10 @@
+  * built 2026-08-07, 13/13 tests green) with a CJS-to-ESM conversion only.
+  * The byte layout is spec-frozen in BOOT-SPEC.md; layout changes bump the
+  * version byte, never reinterpret v1.
++ *
++ * v2 (sealed, WO-CARTRIDGE-SEAL 2026-10-26) is a separate layout under its
++ * own version byte; see docs/PAP-SEALED.md and the v2 section at the end of
++ * this file. decodeManifest() still accepts v1 only, exactly as before.
+  */
+ 
+ const VERSION = 0x01;
+@@ -177,13 +181,178 @@ function readUInt64BE(buf, offset) {
+   return (hi << 32n) | lo;
+ }
+ 
++// ---------- v2: sealed ----------
++//
++// v2 layout, in order (all integers big-endian; spec docs/PAP-SEALED.md):
++//   version           u8   = 0x02
++//   chainHeadHash     32B
++//   chainPubkeyFp     32B
++//   seq               u32
++//   timestamp         u64
++//   keyCommit         32B  SHA-256 commitment to the content key
++//   x25519Count       u8   number of X25519 recipient stanzas
++//   passphraseCount   u8   0 or 1
++//   ephemeralPub      32B  present only when x25519Count > 0
++//   x25519Wrapped     x25519Count * 48B (wrapped content key + GCM tag)
++//   passphrase stanza present only when passphraseCount = 1:
++//     salt 16B, iterations u32, wrapped 48B
++//   ---- everything above is the header, and is the AEAD's associated data ----
++//   ciphertextLen     u16
++//   ciphertext        AES-256-GCM output with the 16-byte tag appended
++//
++// The outer Ed25519 signature (64B, appended by pack.js) covers all of it.
++
++const VERSION_SEALED = 0x02;
++const KEY_COMMIT_LEN = 32;
++const EPHEMERAL_PUB_LEN = 32;
++const WRAPPED_KEY_LEN = 48;
++const PASSPHRASE_SALT_LEN = 16;
++const SEALED_FIXED_LEN = 1 + CHAIN_HEAD_HASH_LEN + CHAIN_PUBKEY_FP_LEN + 4 + 8 + KEY_COMMIT_LEN + 1 + 1;
++
++/**
++ * Encode the v2 header (the AEAD associated data). Does NOT sign or encrypt.
++ */
++function encodeSealedHeader(h) {
++  requireBufferOfLength(h.chainHeadHash, CHAIN_HEAD_HASH_LEN, 'chainHeadHash');
++  requireBufferOfLength(h.chainPubkeyFp, CHAIN_PUBKEY_FP_LEN, 'chainPubkeyFp');
++  requireU32(h.seq, 'seq');
++  requireSafeInteger(h.timestamp, 'timestamp');
++  requireBufferOfLength(h.keyCommit, KEY_COMMIT_LEN, 'keyCommit');
++  const wrapped = h.x25519Wrapped || [];
++  if (wrapped.length > 0xFF) throw new Error(`too many recipients: ${wrapped.length}, max 255`);
++  if (wrapped.length > 0) requireBufferOfLength(h.ephemeralPub, EPHEMERAL_PUB_LEN, 'ephemeralPub');
++  for (const w of wrapped) requireBufferOfLength(w, WRAPPED_KEY_LEN, 'x25519 wrapped key');
++  const p = h.passphrase || null;
++  if (p) {
++    requireBufferOfLength(p.salt, PASSPHRASE_SALT_LEN, 'passphrase salt');
++    requireU32(p.iterations, 'passphrase iterations');
++    requireBufferOfLength(p.wrapped, WRAPPED_KEY_LEN, 'passphrase wrapped key');
++  }
++  if (wrapped.length === 0 && !p) throw new Error('a sealed bundle needs at least one recipient or a passphrase');
++
++  const fixed = Buffer.alloc(SEALED_FIXED_LEN);
++  let off = 0;
++  fixed.writeUInt8(VERSION_SEALED, off); off += 1;
++  h.chainHeadHash.copy(fixed, off); off += CHAIN_HEAD_HASH_LEN;
++  h.chainPubkeyFp.copy(fixed, off); off += CHAIN_PUBKEY_FP_LEN;
++  fixed.writeUInt32BE(h.seq, off); off += 4;
++  writeUInt64BE(fixed, BigInt(h.timestamp), off); off += 8;
++  h.keyCommit.copy(fixed, off); off += KEY_COMMIT_LEN;
++  fixed.writeUInt8(wrapped.length, off); off += 1;
++  fixed.writeUInt8(p ? 1 : 0, off); off += 1;
++  const parts = [fixed];
++  if (wrapped.length > 0) parts.push(h.ephemeralPub, ...wrapped);
++  if (p) {
++    const iter = Buffer.alloc(4);
++    iter.writeUInt32BE(p.iterations, 0);
++    parts.push(p.salt, iter, p.wrapped);
++  }
++  return Buffer.concat(parts);
++}
++
++/**
++ * Header || u16 ciphertextLen || ciphertext. Does NOT sign.
++ */
++function encodeSealedManifest(headerBytes, ciphertext) {
++  requireBuffer(headerBytes, 'headerBytes');
++  requireBuffer(ciphertext, 'ciphertext');
++  if (ciphertext.length > 0xFFFF) {
++    throw new Error(`ciphertext too long: ${ciphertext.length} bytes, max 65535`);
++  }
++  const len = Buffer.alloc(2);
++  len.writeUInt16BE(ciphertext.length, 0);
++  return Buffer.concat([headerBytes, len, ciphertext]);
++}
++
++/**
++ * Decode a v2 manifest. Returns the public fields plus headerBytes (the AEAD
++ * associated data) and the ciphertext. Nothing here needs a key.
++ */
++function decodeSealedManifest(bytes) {
++  requireBuffer(bytes, 'manifest bytes');
++  if (bytes.length < SEALED_FIXED_LEN + 2) {
++    throw new Error(`sealed manifest too short: ${bytes.length} bytes, need at least ${SEALED_FIXED_LEN + 2}`);
++  }
++  let off = 0;
++  const version = bytes.readUInt8(off); off += 1;
++  if (version !== VERSION_SEALED) {
++    throw new Error(`unknown sealed manifest version: 0x${version.toString(16)}, expected 0x${VERSION_SEALED.toString(16)}`);
++  }
++  const chainHeadHash = Buffer.from(bytes.subarray(off, off + CHAIN_HEAD_HASH_LEN)); off += CHAIN_HEAD_HASH_LEN;
++  const chainPubkeyFp = Buffer.from(bytes.subarray(off, off + CHAIN_PUBKEY_FP_LEN)); off += CHAIN_PUBKEY_FP_LEN;
++  const seq = bytes.readUInt32BE(off); off += 4;
++  const timestampBig = readUInt64BE(bytes, off); off += 8;
++  const timestamp = Number(timestampBig);
++  if (!Number.isSafeInteger(timestamp)) {
++    throw new Error(`timestamp ${timestampBig} exceeds safe integer range`);
++  }
++  const keyCommit = Buffer.from(bytes.subarray(off, off + KEY_COMMIT_LEN)); off += KEY_COMMIT_LEN;
++  const x25519Count = bytes.readUInt8(off); off += 1;
++  const passphraseCount = bytes.readUInt8(off); off += 1;
++  if (passphraseCount > 1) throw new Error(`passphraseCount must be 0 or 1, got ${passphraseCount}`);
++  if (x25519Count === 0 && passphraseCount === 0) throw new Error('sealed manifest has no recipients');
++
++  const need = (n, what) => {
++    if (off + n > bytes.length) throw new Error(`sealed manifest ends early inside ${what}`);
++  };
++  let ephemeralPub = null;
++  const x25519Wrapped = [];
++  if (x25519Count > 0) {
++    need(EPHEMERAL_PUB_LEN, 'ephemeralPub');
++    ephemeralPub = Buffer.from(bytes.subarray(off, off + EPHEMERAL_PUB_LEN)); off += EPHEMERAL_PUB_LEN;
++    for (let i = 0; i < x25519Count; i++) {
++      need(WRAPPED_KEY_LEN, `x25519 stanza ${i}`);
++      x25519Wrapped.push(Buffer.from(bytes.subarray(off, off + WRAPPED_KEY_LEN))); off += WRAPPED_KEY_LEN;
++    }
++  }
++  let passphrase = null;
++  if (passphraseCount === 1) {
++    need(PASSPHRASE_SALT_LEN + 4 + WRAPPED_KEY_LEN, 'passphrase stanza');
++    const salt = Buffer.from(bytes.subarray(off, off + PASSPHRASE_SALT_LEN)); off += PASSPHRASE_SALT_LEN;
++    const iterations = bytes.readUInt32BE(off); off += 4;
++    const wrapped = Buffer.from(bytes.subarray(off, off + WRAPPED_KEY_LEN)); off += WRAPPED_KEY_LEN;
++    passphrase = { salt, iterations, wrapped };
++  }
++  const headerBytes = Buffer.from(bytes.subarray(0, off));
++  need(2, 'ciphertextLen');
++  const ciphertextLen = bytes.readUInt16BE(off); off += 2;
++  if (off + ciphertextLen !== bytes.length) {
++    throw new Error(`ciphertextLen ${ciphertextLen} does not match trailing bytes ${bytes.length - off}`);
++  }
++  const ciphertext = Buffer.from(bytes.subarray(off, off + ciphertextLen));
++
++  return {
++    version,
++    chainHeadHash,
++    chainPubkeyFp,
++    seq,
++    timestamp,
++    keyCommit,
++    ephemeralPub,
++    x25519Wrapped,
++    passphrase,
++    headerBytes,
++    ciphertext,
++    manifestLen: bytes.length,
++  };
++}
++
+ export {
+   VERSION,
++  VERSION_SEALED,
+   HEADER_FIXED_LEN,
+   SPINE_LEN_TAG_BYTES,
+   SIG_LEN,
+   QR_V40_BINARY_ECL_CAPACITY,
+   USEFUL_PAYLOAD_BUDGET,
++  KEY_COMMIT_LEN,
++  EPHEMERAL_PUB_LEN,
++  WRAPPED_KEY_LEN,
++  PASSPHRASE_SALT_LEN,
++  SEALED_FIXED_LEN,
+   encodeManifest,
+   decodeManifest,
++  encodeSealedHeader,
++  encodeSealedManifest,
++  decodeSealedManifest,
+ };
+diff --git a/src/publish/pack.js b/src/publish/pack.js
+--- a/src/publish/pack.js
++++ b/src/publish/pack.js
+@@ -19,6 +19,10 @@
+  * seq, and timestamp. bin/pap-export.js does the chain-state wiring; this
+  * module stays testable with synthetic keys.
+  *
++ * Sealed mode (v2, WO-CARTRIDGE-SEAL 2026-10-26): pack() with inputs.seal
++ * encrypts, then signs. See the sealed section below and docs/PAP-SEALED.md.
++ * Without inputs.seal, pack() and unpack() are the v1 code, byte for byte.
++ *
+  * Ported from projects/spinoff/pap-prototype/src/pack.js (WO-PAP-01,
+  * built 2026-08-07, 13/13 tests green) with a CJS-to-ESM conversion only.
+  */
+@@ -28,9 +32,33 @@ import zlib from 'node:zlib';
+ import {
+   encodeManifest,
+   decodeManifest,
++  encodeSealedHeader,
++  encodeSealedManifest,
++  decodeSealedManifest,
+   SIG_LEN,
+   QR_V40_BINARY_ECL_CAPACITY,
++  HEADER_FIXED_LEN,
++  SPINE_LEN_TAG_BYTES,
++  VERSION_SEALED,
++  PASSPHRASE_SALT_LEN,
+ } from './manifest.js';
++import {
++  DEFAULT_PBKDF2_ITERATIONS,
++  generateContentKey,
++  keyCommitment,
++  commitmentMatches,
++  bodyKey,
++  aeadSeal,
++  aeadOpen,
++  x25519RawPublic,
++  generateRecipientKeypair,
++  parseRecipientPublicKey,
++  parseRecipientPrivateKey,
++  x25519Wrap,
++  x25519Unwrap,
++  passphraseKek,
++  innerMessage,
++} from './seal.js';
+ 
+ const BROTLI_QUALITY_MAX = 11;
+ 
+@@ -49,6 +77,7 @@ const BROTLI_QUALITY_MAX = 11;
+  *             compressionRatio: number }}
+  */
+ function pack(inputs) {
++  if (inputs.seal) return packSealed(inputs);
+   if (typeof inputs.spine !== 'string' || inputs.spine.length === 0) {
+     throw new Error('spine must be a non-empty string');
+   }
+@@ -116,6 +145,7 @@ function unpack(inputs) {
+   if (inputs.bundle.length < SIG_LEN + 1) {
+     throw new Error(`bundle too short: ${inputs.bundle.length} bytes`);
+   }
++  if (inputs.bundle[0] === VERSION_SEALED) return unpackSealed(inputs);
+   const manifestBytes = inputs.bundle.subarray(0, inputs.bundle.length - SIG_LEN);
+   const signature = inputs.bundle.subarray(inputs.bundle.length - SIG_LEN);
+   const manifest = decodeManifest(Buffer.from(manifestBytes));
+@@ -149,6 +179,254 @@ function generateKeypair() {
+   return { publicKey, privateKey, publicKeyRaw };
+ }
+ 
++// ---------- sealed (v2) ----------
++//
++// Encrypt-then-sign (WO-CARTRIDGE-SEAL, spec docs/PAP-SEALED.md). The outer
++// Ed25519 signature covers the ciphertext manifest, so anyone can check
++// authorship and integrity without a key. Inside the ciphertext, a second
++// signature by the same key binds the plaintext to the exact header it was
++// sealed under, so a key holder cannot be handed a re-encrypted or
++// re-addressed swap. A public key commitment makes every recipient read the
++// same plaintext.
++
++/**
++ * pack() with inputs.seal set:
++ * @param {Object} inputs.seal
++ * @param {Array<Buffer|string>} [inputs.seal.to] - X25519 recipient public
++ *   keys (32-byte Buffer, 64 hex chars, or SPKI PEM)
++ * @param {string} [inputs.seal.passphrase] - optional passphrase recipient
++ * @param {number} [inputs.seal.iterations] - PBKDF2 iterations (default 600000)
++ */
++function packSealed(inputs) {
++  if (typeof inputs.spine !== 'string' || inputs.spine.length === 0) {
++    throw new Error('spine must be a non-empty string');
++  }
++  const seal = inputs.seal;
++  const to = (seal.to || []).map(parseRecipientPublicKey);
++  const hasPassphrase = seal.passphrase !== undefined && seal.passphrase !== null;
++  if (to.length === 0 && !hasPassphrase) {
++    throw new Error('seal needs at least one recipient (seal.to) or a passphrase');
++  }
++  if (new Set(to.map((k) => k.toString('hex'))).size !== to.length) {
++    throw new Error('seal.to lists the same recipient twice');
++  }
++
++  const spineRaw = Buffer.from(inputs.spine, 'utf8');
++  const spineCompressed = brotliCompressMax(spineRaw);
++  const memoirUrlBytes = Buffer.from(inputs.memoirUrl || '', 'utf8');
++  if (memoirUrlBytes.length > 0xFFFF) {
++    throw new Error(`memoirUrl too long: ${memoirUrlBytes.length} bytes, max 65535`);
++  }
++
++  const cek = generateContentKey();
++  let ephemeralPub = null;
++  let x25519Wrapped = [];
++  if (to.length > 0) {
++    const eph = crypto.generateKeyPairSync('x25519');
++    ephemeralPub = x25519RawPublic(eph.publicKey);
++    x25519Wrapped = to.map((r) => x25519Wrap(cek, eph.privateKey, ephemeralPub, r));
++  }
++  let passphrase = null;
++  if (hasPassphrase) {
++    const salt = crypto.randomBytes(PASSPHRASE_SALT_LEN);
++    const iterations = seal.iterations === undefined ? DEFAULT_PBKDF2_ITERATIONS : seal.iterations;
++    const kek = passphraseKek(seal.passphrase, salt, iterations);
++    passphrase = { salt, iterations, wrapped: aeadSeal(kek, cek, null) };
++  }
++
++  const headerBytes = encodeSealedHeader({
++    chainHeadHash: inputs.chainHeadHash,
++    chainPubkeyFp: inputs.chainPubkeyFp,
++    seq: inputs.seq,
++    timestamp: inputs.timestamp,
++    keyCommit: keyCommitment(cek),
++    ephemeralPub,
++    x25519Wrapped,
++    passphrase,
++  });
++
++  const innerSig = crypto.sign(null, innerMessage(headerBytes, spineRaw, memoirUrlBytes), inputs.signingKey);
++  if (innerSig.length !== SIG_LEN) {
++    throw new Error(`unexpected Ed25519 signature length: ${innerSig.length}, expected ${SIG_LEN}`);
++  }
++  const memoirLen = Buffer.alloc(2);
++  memoirLen.writeUInt16BE(memoirUrlBytes.length, 0);
++  const inner = Buffer.concat([innerSig, memoirLen, memoirUrlBytes, spineCompressed]);
++  const ciphertext = aeadSeal(bodyKey(cek), inner, headerBytes);
++  const manifestBytes = encodeSealedManifest(headerBytes, ciphertext);
++
++  const signature = crypto.sign(null, manifestBytes, inputs.signingKey);
++  if (signature.length !== SIG_LEN) {
++    throw new Error(`unexpected Ed25519 signature length: ${signature.length}, expected ${SIG_LEN}`);
++  }
++  const bundle = Buffer.concat([manifestBytes, signature]);
++  const totalLen = bundle.length;
++  const budget = QR_V40_BINARY_ECL_CAPACITY;
++  const headroom = budget - totalLen;
++  // What the same spine and memoir cost as a plaintext v1 bundle, so the
++  // price of sealing is a measured number, not an estimate.
++  const plainEquivalentLen = HEADER_FIXED_LEN + memoirUrlBytes.length + SPINE_LEN_TAG_BYTES + spineCompressed.length + SIG_LEN;
++  const sealOverhead = totalLen - plainEquivalentLen;
++
++  if (totalLen > budget) {
++    const err = new Error(
++      budgetMessage(spineRaw.length, spineCompressed.length, manifestBytes.length, totalLen, budget) +
++      `\n  of which sealing costs ${sealOverhead} bytes (${to.length} recipient key(s)${hasPassphrase ? ' plus a passphrase' : ''}).`,
++    );
++    err.code = 'PAP_BUDGET_EXCEEDED';
++    err.spineRawLen = spineRaw.length;
++    err.spineCompressedLen = spineCompressed.length;
++    err.totalLen = totalLen;
++    err.budget = budget;
++    err.sealOverhead = sealOverhead;
++    throw err;
++  }
++
++  return {
++    bundle,
++    manifestLen: manifestBytes.length,
++    sigLen: signature.length,
++    spineRawLen: spineRaw.length,
++    spineCompressedLen: spineCompressed.length,
++    totalLen,
++    budget,
++    headroom,
++    compressionRatio: spineRaw.length / spineCompressed.length,
++    sealed: true,
++    recipients: { x25519: to.length, passphrase: hasPassphrase },
++    sealOverhead,
++  };
++}
++
++/**
++ * Verify the outer signature and report the public fields of a v1 or v2
++ * bundle. Never decrypts and needs no key: this is what a stranger can check.
++ *
++ * @param {Object} inputs
++ * @param {Buffer} inputs.bundle
++ * @param {crypto.KeyObject} [inputs.verifyKey] - as in unpack()
++ */
++function inspect(inputs) {
++  if (!Buffer.isBuffer(inputs.bundle)) throw new TypeError('bundle must be a Buffer');
++  if (inputs.bundle.length < SIG_LEN + 1) {
++    throw new Error(`bundle too short: ${inputs.bundle.length} bytes`);
++  }
++  const manifestBytes = inputs.bundle.subarray(0, inputs.bundle.length - SIG_LEN);
++  const signature = inputs.bundle.subarray(inputs.bundle.length - SIG_LEN);
++  const sealed = inputs.bundle[0] === VERSION_SEALED;
++  const m = sealed ? decodeSealedManifest(Buffer.from(manifestBytes)) : decodeManifest(Buffer.from(manifestBytes));
++  const verifyKey = inputs.verifyKey || rawEd25519PublicKeyToKeyObject(m.chainPubkeyFp);
++  if (!crypto.verify(null, manifestBytes, verifyKey, signature)) {
++    const err = new Error('signature verification failed: bundle has been altered or was signed by a different key');
++    err.code = 'PAP_SIGNATURE_INVALID';
++    throw err;
++  }
++  const info = {
++    version: m.version,
++    sealed,
++    chainHeadHash: m.chainHeadHash,
++    chainPubkeyFp: m.chainPubkeyFp,
++    seq: m.seq,
++    timestamp: m.timestamp,
++    bytes: inputs.bundle.length,
++  };
++  if (sealed) {
++    info.recipients = { x25519: m.x25519Wrapped.length, passphrase: m.passphrase !== null };
++    info.keyCommit = m.keyCommit;
++    info.ciphertextLen = m.ciphertext.length;
++  } else {
++    info.memoirUrl = m.memoirUrl;
++  }
++  return { info, manifest: m, verifyKey };
++}
++
++/**
++ * unpack() for a v2 bundle. One of recipientKey, passphrase or contentKey
++ * opens it; with none, throws PAP_SEALED_NEEDS_KEY carrying err.info (the
++ * outer signature has already verified by then).
++ */
++function unpackSealed(inputs) {
++  const { info, manifest: m, verifyKey } = inspect(inputs);
++
++  let cek = null;
++  if (inputs.contentKey) {
++    cek = Buffer.isBuffer(inputs.contentKey) ? inputs.contentKey : Buffer.from(String(inputs.contentKey), 'hex');
++  } else if (inputs.recipientKey === undefined && inputs.passphrase === undefined) {
++    const err = new Error(
++      `verified, sealed to ${describeRecipients(info.recipients)}; no key given, so the spine stays closed`,
++    );
++    err.code = 'PAP_SEALED_NEEDS_KEY';
++    err.info = info;
++    throw err;
++  } else {
++    if (inputs.passphrase !== undefined && m.passphrase) {
++      const kek = passphraseKek(inputs.passphrase, m.passphrase.salt, m.passphrase.iterations);
++      cek = aeadOpen(kek, m.passphrase.wrapped, null);
++    }
++    if (!cek && inputs.recipientKey !== undefined && m.ephemeralPub) {
++      const priv = parseRecipientPrivateKey(inputs.recipientKey);
++      for (const w of m.x25519Wrapped) {
++        cek = x25519Unwrap(w, priv, m.ephemeralPub);
++        if (cek) break;
++      }
++    }
++    if (!cek) {
++      const err = new Error('this key does not open the bundle: it is not one of the recipients (the outer signature did verify)');
++      err.code = 'PAP_NOT_A_RECIPIENT';
++      err.info = info;
++      throw err;
++    }
++  }
++
++  if (cek.length !== 32 || !commitmentMatches(cek, m.keyCommit)) {
++    const err = new Error('content key does not match the bundle\'s key commitment: refusing to decrypt');
++    err.code = 'PAP_KEY_COMMIT_MISMATCH';
++    throw err;
++  }
++  const inner = aeadOpen(bodyKey(cek), m.ciphertext, m.headerBytes);
++  if (!inner || inner.length < SIG_LEN + 2) {
++    const err = new Error('sealed body failed authentication');
++    err.code = 'PAP_DECRYPT_FAILED';
++    throw err;
++  }
++  const innerSig = inner.subarray(0, SIG_LEN);
++  const memoirUrlLen = inner.readUInt16BE(SIG_LEN);
++  if (SIG_LEN + 2 + memoirUrlLen > inner.length) {
++    const err = new Error('sealed body is malformed: memoir URL runs past the end');
++    err.code = 'PAP_DECRYPT_FAILED';
++    throw err;
++  }
++  const memoirUrlBytes = inner.subarray(SIG_LEN + 2, SIG_LEN + 2 + memoirUrlLen);
++  const spineCompressed = Buffer.from(inner.subarray(SIG_LEN + 2 + memoirUrlLen));
++  const spineRaw = zlib.brotliDecompressSync(spineCompressed);
++
++  if (!crypto.verify(null, innerMessage(m.headerBytes, spineRaw, memoirUrlBytes), verifyKey, innerSig)) {
++    const err = new Error(
++      'inner binding failed: the plaintext was not signed under this header by this key ' +
++      '(re-encrypted, re-addressed, or re-signed by someone else)',
++    );
++    err.code = 'PAP_INNER_BINDING_INVALID';
++    throw err;
++  }
++
++  return {
++    manifest: { ...info, memoirUrl: memoirUrlBytes.toString('utf8') },
++    spine: spineRaw.toString('utf8'),
++    spineRawLen: spineRaw.length,
++    spineCompressedLen: spineCompressed.length,
++    // Anyone holding this opens the bundle, and the public commitment proves
++    // it is the right key. Publishing it is how a sealed bundle is revealed.
++    contentKey: cek,
++  };
++}
++
++function describeRecipients(r) {
++  const parts = [];
++  if (r.x25519 > 0) parts.push(`${r.x25519} recipient key${r.x25519 === 1 ? '' : 's'}`);
++  if (r.passphrase) parts.push('a passphrase');
++  return parts.join(' and ');
++}
++
+ // ---------- internal ----------
+ 
+ function brotliCompressMax(buf) {
+@@ -187,5 +465,7 @@ function budgetMessage(spineRaw, spineCompressed, manifestLen, totalLen, budget)
+ export {
+   pack,
+   unpack,
++  inspect,
+   generateKeypair,
++  generateRecipientKeypair,
+ };
+diff --git a/src/publish/seal.js b/src/publish/seal.js
+new file mode 100644
+--- /dev/null
++++ b/src/publish/seal.js
+@@ -0,0 +1,210 @@
++/**
++ * PAP seal: the crypto under a sealed (v2) bundle. No layout here; that is
++ * manifest.js. No signing of the outer bundle here; that is pack.js.
++ *
++ * Construction (spec: docs/PAP-SEALED.md), published primitives only:
++ *   - content key (CEK): 32 random bytes, fresh per bundle
++ *   - key commitment: SHA-256("lotor/pap/v2/key-commit" 0x00 || CEK), public.
++ *     AES-GCM is not key-committing, so without this an author could wrap a
++ *     different CEK to each recipient and show each one a different plaintext
++ *     under one valid signature (the multi-key or "invisible salamanders"
++ *     attack). Every recipient checks the CEK it unwrapped against the one
++ *     public commitment, so everyone who opens the bundle reads the same bytes.
++ *   - body: AES-256-GCM under HKDF-SHA256(CEK, info "lotor/pap/v2/body"),
++ *     12-byte zero nonce, header bytes as associated data
++ *   - X25519 recipient: one ephemeral X25519 key per bundle; per recipient
++ *     KEK = HKDF-SHA256(X25519(eph, recipient), salt eph || recipient,
++ *     info "lotor/pap/v2/x25519-wrap"); wrapped = AES-256-GCM(KEK, CEK), 48 B
++ *   - passphrase: KEK = PBKDF2-HMAC-SHA256(passphrase, salt16, iterations);
++ *     wrapped = AES-256-GCM(KEK, CEK), 48 B
++ *
++ * Why a zero nonce is safe: every key it is used with is used exactly once.
++ * The body key comes from a fresh CEK, each X25519 KEK from a fresh ephemeral
++ * key, each passphrase KEK from a fresh salt. Same reasoning, same shape as
++ * age's file-key wrapping. AES-256-GCM (not XChaCha20-Poly1305) because it is
++ * in both node:crypto and WebCrypto, so the offline reader needs no AEAD
++ * library.
++ *
++ * WO-CARTRIDGE-SEAL, 2026-10-26. Queued for a signing sitting: src/publish is
++ * core (src/grant/core-paths.js CORE_DIRS).
++ */
++
++import crypto from 'node:crypto';
++
++const CEK_LEN = 32;
++const GCM_TAG_LEN = 16;
++const ZERO_NONCE = Buffer.alloc(12);
++const NUL = Buffer.from([0]);
++
++const DOMAIN_KEY_COMMIT = Buffer.from('lotor/pap/v2/key-commit', 'utf8');
++const DOMAIN_BODY = 'lotor/pap/v2/body';
++const DOMAIN_X25519_WRAP = 'lotor/pap/v2/x25519-wrap';
++const DOMAIN_INNER = Buffer.from('lotor/pap/v2/inner', 'utf8');
++
++const DEFAULT_PBKDF2_ITERATIONS = 600000;
++const MAX_PBKDF2_ITERATIONS = 10000000;
++
++// SPKI / PKCS8 DER prefixes for X25519, per RFC 8410 (OID 1.3.101.110).
++const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
++const X25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
++
++function sha256(...parts) {
++  const h = crypto.createHash('sha256');
++  for (const p of parts) h.update(p);
++  return h.digest();
++}
++
++function generateContentKey() {
++  return crypto.randomBytes(CEK_LEN);
++}
++
++function keyCommitment(cek) {
++  return sha256(DOMAIN_KEY_COMMIT, NUL, cek);
++}
++
++function commitmentMatches(cek, commit) {
++  const mine = keyCommitment(cek);
++  return commit.length === mine.length && crypto.timingSafeEqual(mine, commit);
++}
++
++function bodyKey(cek) {
++  return Buffer.from(crypto.hkdfSync('sha256', cek, Buffer.alloc(0), DOMAIN_BODY, 32));
++}
++
++function aeadSeal(key, plaintext, aad) {
++  const c = crypto.createCipheriv('aes-256-gcm', key, ZERO_NONCE);
++  if (aad) c.setAAD(aad);
++  const body = Buffer.concat([c.update(plaintext), c.final()]);
++  return Buffer.concat([body, c.getAuthTag()]);
++}
++
++/** Returns the plaintext, or null when authentication fails. */
++function aeadOpen(key, sealed, aad) {
++  if (sealed.length < GCM_TAG_LEN) return null;
++  const d = crypto.createDecipheriv('aes-256-gcm', key, ZERO_NONCE);
++  if (aad) d.setAAD(aad);
++  d.setAuthTag(sealed.subarray(sealed.length - GCM_TAG_LEN));
++  try {
++    return Buffer.concat([d.update(sealed.subarray(0, sealed.length - GCM_TAG_LEN)), d.final()]);
++  } catch {
++    return null;
++  }
++}
++
++// ---------- X25519 ----------
++
++function x25519PublicFromRaw(raw32) {
++  if (!Buffer.isBuffer(raw32) || raw32.length !== 32) throw new Error('X25519 public key must be 32 bytes');
++  return crypto.createPublicKey({ key: Buffer.concat([X25519_SPKI_PREFIX, raw32]), format: 'der', type: 'spki' });
++}
++
++function x25519PrivateFromRaw(raw32) {
++  if (!Buffer.isBuffer(raw32) || raw32.length !== 32) throw new Error('X25519 private key must be 32 bytes');
++  return crypto.createPrivateKey({ key: Buffer.concat([X25519_PKCS8_PREFIX, raw32]), format: 'der', type: 'pkcs8' });
++}
++
++function x25519RawPublic(keyObj) {
++  const pub = keyObj.type === 'private' ? crypto.createPublicKey(keyObj) : keyObj;
++  return pub.export({ format: 'der', type: 'spki' }).subarray(-32);
++}
++
++function generateRecipientKeypair() {
++  const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
++  return {
++    publicKey,
++    privateKey,
++    publicKeyRaw: x25519RawPublic(publicKey),
++    privateKeyRaw: privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(-32),
++  };
++}
++
++/** Accepts a 32-byte Buffer, 64 hex chars, or an SPKI PEM string. */
++function parseRecipientPublicKey(input) {
++  if (Buffer.isBuffer(input)) return x25519RawPublic(x25519PublicFromRaw(input));
++  const s = String(input).trim();
++  if (/^[0-9a-f]{64}$/i.test(s)) return x25519RawPublic(x25519PublicFromRaw(Buffer.from(s, 'hex')));
++  const k = crypto.createPublicKey(s);
++  if (k.asymmetricKeyType !== 'x25519') throw new Error(`recipient key is ${k.asymmetricKeyType}, expected x25519`);
++  return x25519RawPublic(k);
++}
++
++/** Accepts a KeyObject, a 32-byte Buffer, 64 hex chars, or a PKCS8 PEM string. */
++function parseRecipientPrivateKey(input) {
++  let k;
++  if (input && typeof input === 'object' && input.type === 'private') k = input;
++  else if (Buffer.isBuffer(input)) k = x25519PrivateFromRaw(input);
++  else {
++    const s = String(input).trim();
++    k = /^[0-9a-f]{64}$/i.test(s) ? x25519PrivateFromRaw(Buffer.from(s, 'hex')) : crypto.createPrivateKey(s);
++  }
++  if (k.asymmetricKeyType !== 'x25519') throw new Error(`recipient key is ${k.asymmetricKeyType}, expected x25519`);
++  return k;
++}
++
++function x25519Kek(privateKey, peerRaw, ephPubRaw, recipientPubRaw) {
++  const shared = crypto.diffieHellman({ privateKey, publicKey: x25519PublicFromRaw(peerRaw) });
++  // An all-zero shared secret means a low-order peer key. Refuse it rather
++  // than derive a key an attacker can predict.
++  if (shared.every((b) => b === 0)) throw new Error('X25519 produced an all-zero shared secret');
++  return Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.concat([ephPubRaw, recipientPubRaw]), DOMAIN_X25519_WRAP, 32));
++}
++
++function x25519Wrap(cek, ephPrivateKey, ephPubRaw, recipientPubRaw) {
++  return aeadSeal(x25519Kek(ephPrivateKey, recipientPubRaw, ephPubRaw, recipientPubRaw), cek, null);
++}
++
++/** Returns the CEK, or null when this stanza is not for this key. */
++function x25519Unwrap(wrapped, recipientPrivateKey, ephPubRaw) {
++  const recipientPubRaw = x25519RawPublic(recipientPrivateKey);
++  let kek;
++  try {
++    kek = x25519Kek(recipientPrivateKey, ephPubRaw, ephPubRaw, recipientPubRaw);
++  } catch {
++    return null;
++  }
++  return aeadOpen(kek, wrapped, null);
++}
++
++// ---------- passphrase ----------
++
++function passphraseKek(passphrase, salt, iterations) {
++  if (typeof passphrase !== 'string' || passphrase.length === 0) throw new Error('passphrase must be a non-empty string');
++  if (!Number.isInteger(iterations) || iterations < 1 || iterations > MAX_PBKDF2_ITERATIONS) {
++    throw new Error(`PBKDF2 iterations must be 1..${MAX_PBKDF2_ITERATIONS}, got ${iterations}`);
++  }
++  return crypto.pbkdf2Sync(Buffer.from(passphrase, 'utf8'), salt, iterations, 32, 'sha256');
++}
++
++// ---------- inner binding ----------
++
++/**
++ * The bytes the inner signature covers. Signing these with the chain key
++ * binds the plaintext spine and memoir URL to the exact header they were
++ * sealed under: signer, chain head, seq, timestamp, key commitment, and every
++ * recipient stanza. Re-encrypting or re-addressing the same plaintext changes
++ * the header, so the inner signature no longer verifies.
++ */
++function innerMessage(headerBytes, spineRaw, memoirUrlBytes) {
++  return Buffer.concat([DOMAIN_INNER, NUL, sha256(headerBytes), sha256(spineRaw), sha256(memoirUrlBytes)]);
++}
++
++export {
++  CEK_LEN,
++  GCM_TAG_LEN,
++  DEFAULT_PBKDF2_ITERATIONS,
++  MAX_PBKDF2_ITERATIONS,
++  generateContentKey,
++  keyCommitment,
++  commitmentMatches,
++  bodyKey,
++  aeadSeal,
++  aeadOpen,
++  x25519RawPublic,
++  generateRecipientKeypair,
++  parseRecipientPublicKey,
++  parseRecipientPrivateKey,
++  x25519Wrap,
++  x25519Unwrap,
++  passphraseKek,
++  innerMessage,
++};
