@@ -159,12 +159,40 @@ packNew = replaceOnce(packNew, 'pack exports',
   ['export {', '  pack,', '  unpack,', '  inspect,', '  generateKeypair,', '  generateRecipientKeypair,', '};'].join(LF));
 
 // ---- whole-file proposals (base-hash guarded above, or new)
+//
+// Three lines of the bin files on main carry an em dash. The proposed copies
+// cannot (the PR guard rejects any added em dash), and a patch that removed
+// them would itself contain them on its minus lines. So the proposed copies
+// hold dash-free versions and the original lines are put back here: the
+// patch leaves those three lines exactly as they are on main.
+const EM = String.fromCharCode(0x2014);
+const RESTORE = {
+  'bin/pap-boot.js': [
+    [' * pap-boot: decode a signed bundle back into a spine.', ' * pap-boot ' + EM + ' decode a signed bundle back into a spine.'],
+  ],
+  'bin/pap-export.js': [
+    [' * pap-export: encode a spine into a signed QR bundle.', ' * pap-export ' + EM + ' encode a spine into a signed QR bundle.'],
+    [' * keys without touching a real chain, the same seam the prototype proved.', ' * keys without touching a real chain ' + EM + ' same seam the prototype proved.'],
+  ],
+};
+function withRestored(rel, text) {
+  let out = text;
+  for (const [dashless, original] of RESTORE[rel] || []) {
+    if (!read(rel).includes(original)) {
+      console.log('assert failed: ' + rel + ' no longer has the line to restore: ' + original);
+      process.exit(2);
+    }
+    out = replaceOnce(out, rel + ' restore', dashless, original);
+  }
+  return out;
+}
+
 const files = {
   'src/publish/manifest.js': [manifestOld, manifestNew],
   'src/publish/pack.js': [packOld, packNew],
   'src/publish/seal.js': [null, readProp('src.publish.seal.js')],
-  'bin/pap-export.js': [read('bin/pap-export.js'), readProp('bin.pap-export.js')],
-  'bin/pap-boot.js': [read('bin/pap-boot.js'), readProp('bin.pap-boot.js')],
+  'bin/pap-export.js': [read('bin/pap-export.js'), withRestored('bin/pap-export.js', readProp('bin.pap-export.js'))],
+  'bin/pap-boot.js': [read('bin/pap-boot.js'), withRestored('bin/pap-boot.js', readProp('bin.pap-boot.js'))],
   'bin/pap-keygen.js': [null, readProp('bin.pap-keygen.js')],
 };
 
