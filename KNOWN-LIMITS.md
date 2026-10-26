@@ -1,7 +1,7 @@
 <!-- known-limits:pin v1
- This file describes commit a1a3bbabbd652fae1a2a8671ec953a5c0d0b060a
+ This file describes commit 4a1228acc462385d815dbd61c602f93f970f614d
  stamped 2026-10-26
- subject: Merge remote-tracking branch 'origin/main' into fix81
+ subject: reach: make a 2xx with an empty or non-object body loud in the ollama-chat adapter
  body-sha256: 6a42642c436786898ce68e75f8d733bd1d25a3a801c34df428e80b722225354c
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check

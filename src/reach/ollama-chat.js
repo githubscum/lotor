@@ -88,6 +88,13 @@ export async function chatWithReach(
     if (status < 200 || status >= 300) {
       const hasError = isPlainObject(body) && typeof body.error === 'string';
       if (!hasError) body = { error: 'http ' + status };
+    } else if (!isPlainObject(body)) {
+      // A 2xx whose body is empty, not JSON, or JSON that is not an
+      // object (for example a broken proxy answering 200 with nothing)
+      // must be loud. A null body would reach observeRungs with no error
+      // and be reported as every requested rung silently dropped, which
+      // is the exact record the cloud-drop measurement reads.
+      body = { error: text.trim() === '' ? 'empty body' : 'malformed body' };
     }
   } catch (err) {
     // Network down: the call failed loudly, not the model's fault, so
