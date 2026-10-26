@@ -1,0 +1,194 @@
+--- a/bin/hook-pre-tool-use.js
++++ b/bin/hook-pre-tool-use.js
+@@ -116,5 +116,16 @@
+   const permissionMode = typeof payload.permission_mode === 'string' && payload.permission_mode.trim() !== ''
+     ? payload.permission_mode
+     : null;
++  // agent_id/agent_type name the subagent a call was made inside (KNOWN-LIMITS
++  // 66/70 amendment): the harness fires this same hook for a tool call made
++  // INSIDE a subagent, carrying the parent's session_id plus these two
++  // fields. Absence (a parent call) yields null, and nothing downstream adds
++  // an agentId key unless agentId is present.
++  const agentId = typeof payload.agent_id === 'string' && payload.agent_id.trim() !== ''
++    ? payload.agent_id
++    : null;
++  const agentType = typeof payload.agent_type === 'string' && payload.agent_type.trim() !== ''
++    ? payload.agent_type
++    : null;
+-  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode };
++  return { ok: true, toolName, toolInput: toolInput || {}, sessionId, permissionMode, agentId, agentType };
+ }
+@@ -663,6 +674,13 @@
+     process.exit(0);
+   }
+   const { toolName, toolInput } = parsed;
++  // agentFields is empty for a parent call, so the receipts this hook appends
++  // (both-layers-permissive, grant-use, warn) keep exactly today's keys
++  // there, and gain the two fields only when the call came from inside a
++  // subagent.
++  const agentFields = parsed.agentId
++    ? { agentId: parsed.agentId, agentType: parsed.agentType || null }
++    : {};
+ 
+   // Probe for a known-bad policy file BEFORE loading. If the user has a
+   // policy.json that the engine cannot honor (directory, symlink loop,
+@@ -771,6 +789,7 @@
+           type: 'policy-warn',
+           ruleId: 'both-layers-permissive',
+           sessionId: parsed.sessionId,
++          ...agentFields,
+           tool: toolName,
+           lotorMode: policy.mode,
+           harnessMode: parsed.permissionMode,
+@@ -829,6 +848,7 @@
+       type: 'policy-warn',
+       ruleId,
+       tool: toolName,
++      ...agentFields,
+       paramsDigest,
+       matcherHash: matcherVersionHash(),
+       timestamp: Date.now()
+@@ -903,6 +923,7 @@
+             useIndex: grantDecision.useIndex,
+             ruleId,
+             tool: toolName,
++            ...agentFields,
+             paramsDigest,
+             matcherHash: matcherVersionHash(),
+             timestamp: Date.now()
+@@ -929,7 +950,7 @@
+       };
+       const stagedAt = readStagedAt(home, requestId);
+       const heldMs = stagedAt ? Date.now() - stagedAt : null;
+-      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
++      const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
+       try {
+         gatedAction(actionRequest, null, chain, home, meta);
+       } catch (e) {
+@@ -955,7 +976,7 @@
+       const reason = tokenResult.rejected.reason || 'token invalid';
+       const stagedAt = readStagedAt(home, requestId);
+       const heldMs = stagedAt ? Date.now() - stagedAt : null;
+-      const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
++      const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
+ 
+       const store = createStore(home);
+       const chain = {
+@@ -992,7 +1013,7 @@
+     };
+     const stagedAt = readStagedAt(home, requestId);
+     const heldMs = stagedAt ? Date.now() - stagedAt : null;
+-    const meta = { ruleId, heldMs, sessionId: parsed.sessionId };
++    const meta = { ruleId, heldMs, sessionId: parsed.sessionId, agentId: parsed.agentId, agentType: parsed.agentType };
+     let result;
+     try {
+       result = gatedAction(actionRequest, tokenResult.token, chain, home, meta);
+--- a/src/gate/index.js
++++ b/src/gate/index.js
+@@ -225,8 +225,17 @@
+   // appears in verifyApproval. Fields read from meta today: ruleId, heldMs,
+   // sessionId (added 2026-09-07, KNOWN-LIMITS 35: a gate decision with no
+   // session id could not be attributed once sessions overlapped; the hook
+-  // already had the id in hand and now passes it). Anything the receipt needs
+-  // that is NOT part of the signed action lives here.
++  // already had the id in hand and now passes it), and agentId/agentType
++  // (added 2026-10-22, KNOWN-LIMITS 66/70 amendment: a tool call made
++  // INSIDE a subagent fires these same hooks, carrying the parent's
++  // session_id plus agent_id/agent_type; without them a child's gate row is
++  // indistinguishable from the parent's own call). agentFields is empty when
++  // meta.agentId is absent, so a parent's receipts keep exactly today's
++  // keys. Anything the receipt needs that is NOT part of the signed action
++  // lives here.
++  const agentFields = typeof meta.agentId === 'string' && meta.agentId !== ''
++    ? { agentId: meta.agentId, agentType: meta.agentType || null }
++    : {};
+   const action = actionRequest?.action || 'unknown';
+   const timestamp = Date.now();
+ 
+@@ -238,6 +247,7 @@
+       action,
+       ruleId: meta.ruleId || null,
+       sessionId: meta.sessionId || null,
++      ...agentFields,
+       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+       matcherHash: matcherVersionHash(),
+@@ -275,6 +285,7 @@
+       action,
+       ruleId: meta.ruleId || null,
+       sessionId: meta.sessionId || null,
++      ...agentFields,
+       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+       matcherHash: matcherVersionHash(),
+@@ -316,6 +327,7 @@
+       action,
+       ruleId: meta.ruleId || null,
+       sessionId: meta.sessionId || null,
++      ...agentFields,
+       paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+       heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+       matcherHash: matcherVersionHash(),
+@@ -338,6 +350,7 @@
+     action,
+     ruleId: meta.ruleId || null,
+     sessionId: meta.sessionId || null,
++    ...agentFields,
+     paramsDigestCanonical: digestParamsCanonical(actionRequest?.params),
+     heldMs: Number.isFinite(meta.heldMs) ? meta.heldMs : null,
+     matcherHash: matcherVersionHash(),
+--- a/bin/hook-post-tool-use.js
++++ b/bin/hook-post-tool-use.js
+@@ -105,5 +105,22 @@
+     }
+     toolInputObj = toolInput;
+   }
++  // session_id is a common field on every Claude Code hook event. The
++  // egress-event receipt carries none today, so a recorded egress cannot be
++  // attributed to its session (KNOWN-LIMITS 35). Absence yields null.
++  const sessionId = typeof payload.session_id === 'string' && payload.session_id.trim() !== ''
++    ? payload.session_id
++    : null;
++  // agent_id/agent_type name the subagent a call was made inside (KNOWN-LIMITS
++  // 66/70 amendment): the harness fires this same hook for a tool call made
++  // INSIDE a subagent, carrying the parent's session_id plus these two
++  // fields. Absence (a parent call) yields null, and the egress receipt adds
++  // an agentId key only when one is present.
++  const agentId = typeof payload.agent_id === 'string' && payload.agent_id.trim() !== ''
++    ? payload.agent_id
++    : null;
++  const agentType = typeof payload.agent_type === 'string' && payload.agent_type.trim() !== ''
++    ? payload.agent_type
++    : null;
+-  return { ok: true, toolName, toolInput: toolInputObj, toolResponse: payload.tool_response };
++  return { ok: true, toolName, toolInput: toolInputObj, toolResponse: payload.tool_response, sessionId, agentId, agentType };
+ }
+@@ -235,7 +252,14 @@
+     note(`${parsed.reason}; no chain write`);
+     return;
+   }
+-  const { toolName, toolInput, toolResponse } = parsed;
++  const { toolName, toolInput, toolResponse, sessionId, agentId, agentType } = parsed;
+ 
++  // agentFields is empty for a parent call, so the egress receipt keeps
++  // exactly today's keys there and gains agentId/agentType only for a call
++  // made from inside a subagent.
++  const agentFields = typeof agentId === 'string' && agentId !== ''
++    ? { agentId, agentType: agentType || null }
++    : {};
++
+   // V3-04 (rung R3): bind the reasoning emitted since the previous action to
+   // this action, as one reasoning-step receipt. Runs before the egress fast
+@@ -274,6 +298,12 @@
+     type: 'egress-event',
+     ruleId,
+     tool: toolName,
++    // sessionId (KNOWN-LIMITS 35): the receipt carries none today, so a
++    // recorded egress cannot be attributed to its session. agentId/agentType
++    // (KNOWN-LIMITS 66/70 amendment) name the subagent the call was made
++    // inside, and are only present when the payload carries agent_id.
++    sessionId: sessionId || null,
++    ...agentFields,
+     paramsDigest: digestParams(toolInput),
+     responseDigest: digestResponse(toolResponse),
+     responseOk: responseOk(toolResponse),

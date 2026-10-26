@@ -120,6 +120,7 @@ function readPackageVersion() {
 }
 import { snapshotHookRegistration } from '../src/registration.js';
 import { resolveHarness } from '../src/harness.js';
+import { buildOpenCertificate } from '../src/reach/certificate.js';
 import { fingerprintTool, diffPins, summaryDiff } from '../src/toolpins/tool-pin.js';
 
 /**
@@ -378,6 +379,12 @@ async function main() {
           build: buildIdentityAtOpen()
         },
         harness,
+        // Reach certificate, open half (v3 V3-02): model and runtime as the
+        // harness states them, each with its basis, and the rung left
+        // "not-yet-measured". The measurement lands on the session receipt at
+        // SessionEnd (src/ingest), which links back here by seq and hash. A
+        // rung stated at open would be a guess. See src/reach/certificate.js.
+        reach: buildOpenCertificate(payload, harness),
         lotorVersion: 1,
         timestamp: Date.now()
       };

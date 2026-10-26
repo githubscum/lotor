@@ -1,0 +1,35 @@
+diff --git a/bin/hook-post-tool-use.js b/bin/hook-post-tool-use.js
+--- a/bin/hook-post-tool-use.js
++++ b/bin/hook-post-tool-use.js
+@@ -37,6 +37,7 @@
+ import path from 'node:path';
+ import { createStore } from '../src/store/index.js';
+ import { resolveHome } from '../src/home.js';
++import { describeToolResponse } from '../src/toolio/index.js';
+ import {
+   isEgressOther,
+   isPushForce,
+@@ -265,6 +266,11 @@
+     paramsDigest: digestParams(toolInput),
+     responseDigest: digestResponse(toolResponse),
+     responseOk: responseOk(toolResponse),
++    // R2 (v3 V3-03): the canonical full-length response digest, its byte
++    // length and the host's own error flag, or an explicit unrecorded marker
++    // when there was no response to see. Beside the legacy responseDigest,
++    // never replacing it. See src/toolio/index.js.
++    toolIo: describeToolResponse(toolResponse),
+     matcherHash: matcherVersionHash(),
+     timestamp: Date.now()
+   };
+diff --git a/test/hook-post-tool-use-toolio.test.js b/test/hook-post-tool-use-toolio.test.js
+--- a/test/hook-post-tool-use-toolio.test.js
++++ b/test/hook-post-tool-use-toolio.test.js
+@@ -34,7 +34,7 @@
+ const HOOK_PATH = path.join(__dirname, '..', 'bin', 'hook-post-tool-use.js');
+ 
+ // Flipped to true by the staged diff, in the same sitting as the hook edit.
+-const WIRED = false;
++const WIRED = true;
+ const opts = WIRED ? {} : { todo: 'V3-03 hook wiring staged for the signing sitting' };
+ 
+ function runHook({ stdin = '', home }) {

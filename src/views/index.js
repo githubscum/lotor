@@ -205,7 +205,11 @@ function renderSessionReceipt(receiptPayload) {
   lines.push('─'.repeat(60));
   if (touched?.length > 0) {
     for (const file of touched) {
-      lines.push(`  • ${file.path} (via: ${file.via})`);
+      // Limit 76: an attempt the harness answered with an error is marked
+      // where the reader is looking, so a refused write does not read as a
+      // change. Receipts without `outcome` render exactly as before.
+      const refused = file.outcome === 'error' ? ', refused' : '';
+      lines.push(`  • ${file.path} (via: ${file.via}${refused})`);
     }
   } else {
     lines.push('  (none)');
@@ -233,6 +237,28 @@ function renderSessionReceipt(receiptPayload) {
   lines.push(`  Cache creation:      ${cost?.cacheCreationTokens || 0}`);
   lines.push(`  Cache read:          ${cost?.cacheReadTokens || 0}`);
   lines.push(`  Note: ${cost?.note || 'tokens only; no USD in source'}`);
+  lines.push('');
+
+  // Thought channel (KNOWN-LIMITS 54). The parser writes thinkingBlocks only
+  // when at least one non-empty thinking block exists; when none exists the
+  // field is ABSENT (never an empty array). Absent means "unrecorded", never
+  // "no thoughts". Digests and full thinking text never enter the view.
+  lines.push('─'.repeat(60));
+  lines.push('THOUGHT CHANNEL');
+  lines.push('─'.repeat(60));
+  const thinkingBlocks = session?.thinkingBlocks;
+  if (Array.isArray(thinkingBlocks) && thinkingBlocks.length > 0) {
+    const totalLength = thinkingBlocks.reduce(
+      (sum, b) => sum + (typeof b?.length === 'number' ? b.length : 0),
+      0
+    );
+    lines.push(`  Stated-reasoning blocks: ${thinkingBlocks.length}`);
+    lines.push(`  Total length (chars):    ${totalLength}`);
+    lines.push('  Note: self-report; the record shows what was emitted, not what was computed');
+  } else {
+    lines.push('  (unrecorded)');
+    lines.push('  Note: no thinking blocks on this receipt; the channel was quiet or omitted, never read as "no thoughts"');
+  }
   lines.push('');
 
   // Failures are shown loudly

@@ -130,6 +130,12 @@ export function liveReport(baseDir, opts = {}) {
       failures: counts.failures ?? null,
       touchedCount: touched.length,
       touched: touched.map(t => (typeof t === 'string' ? t : t?.path)).filter(Boolean).slice(0, 12),
+      // Limit 76: attempts the harness answered with an error. Counted and
+      // listed beside `touched`, not removed from it, so the render can say
+      // "refused" where the reader is looking (same shape as sessions_since).
+      refusedPaths: touched
+        .filter(t => typeof t === 'object' && t?.outcome === 'error' && t.path)
+        .map(t => t.path),
       transcriptBytes: stat.size
     });
   }
@@ -168,10 +174,15 @@ export function renderLive(r) {
     L.push(`  ${s.sessionId}   ${tag}`);
     if (s.cwd) L.push(`    cwd         ${s.cwd}`);
     if (s.model) L.push(`    model       ${s.model}`);
-    L.push(`    work        ${s.toolCalls ?? 0} tool calls, ${s.touchedCount} files, last active ${clock(s.lastActivity)}`);
+    const refusedPaths = Array.isArray(s.refusedPaths) ? s.refusedPaths : [];
+    const files = refusedPaths.length > 0
+      ? `${s.touchedCount} files (${refusedPaths.length} refused)`
+      : `${s.touchedCount} files`;
+    L.push(`    work        ${s.toolCalls ?? 0} tool calls, ${files}, last active ${clock(s.lastActivity)}`);
     if (s.touched.length) {
-      L.push(`    touched     ${s.touched[0]}`);
-      for (const t of s.touched.slice(1, 5)) L.push(`                ${t}`);
+      const mark = t => (refusedPaths.includes(t) ? `${t} (refused)` : t);
+      L.push(`    touched     ${mark(s.touched[0])}`);
+      for (const t of s.touched.slice(1, 5)) L.push(`                ${mark(t)}`);
       if (s.touched.length > 5) L.push(`                ... and ${s.touchedCount - 5} more`);
     }
     L.push('');

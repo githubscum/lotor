@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../src/store/index.js';
 import { resolveHome } from '../src/home.js';
+import { describeToolResponse } from '../src/toolio/index.js';
 import {
   isEgressOther,
   isPushForce,
@@ -44,6 +45,7 @@ import {
   isPublish,
   matcherVersionHash
 } from '../src/policy/index.js';
+import { recordReasoningStep } from '../src/reasoning/index.js';
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -235,6 +237,16 @@ async function main() {
   }
   const { toolName, toolInput, toolResponse } = parsed;
 
+  // V3-04 (rung R3): bind the reasoning emitted since the previous action to
+  // this action, as one reasoning-step receipt. Runs before the egress fast
+  // path so every tool call gets a step. recordReasoningStep never throws and
+  // stores digests only; a failure is a note, never a changed outcome
+  // (PostToolUse cannot block).
+  const r3 = recordReasoningStep(raw, { home });
+  if (!r3.ok) {
+    note(`reasoning step not recorded (${r3.reason}); continuing`);
+  }
+
   const ruleId = matchEgress(toolName, toolInput);
   if (ruleId == null) {
     // Fast path: nothing egress-shaped, no chain I/O.
@@ -265,6 +277,11 @@ async function main() {
     paramsDigest: digestParams(toolInput),
     responseDigest: digestResponse(toolResponse),
     responseOk: responseOk(toolResponse),
+    // R2 (v3 V3-03): the canonical full-length response digest, its byte
+    // length and the host's own error flag, or an explicit unrecorded marker
+    // when there was no response to see. Beside the legacy responseDigest,
+    // never replacing it. See src/toolio/index.js.
+    toolIo: describeToolResponse(toolResponse),
     matcherHash: matcherVersionHash(),
     timestamp: Date.now()
   };

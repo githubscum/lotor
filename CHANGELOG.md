@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — v3 V3-03: tool I/O digest for the post-tool-use receipt (rung R2), hook wiring staged
+
+`src/toolio/index.js` describes what a tool returned without holding it: a
+full SHA-256 over a canonical serialization (CRLF folded to LF in every string,
+keys sorted recursively), the byte length, and the host's own error flag, under
+`schema: 'toolio/1'` with a `hash` code stamp. A missing, null or
+unserializable response is `recorded: false` with a reason and no digest key,
+never an empty digest. The module canonicalizes in its own strict walk
+(null-prototype objects; anything without an exact JSON form is
+unserializable), byte-identical to `params/1` for every value without an own
+`__proto__` key. `src/parser/` is unchanged.
+
+`test/toolio-digest.test.js` (30 tests, green): a pin derived out of band, key
+order, CRLF vs LF including the suite's own checkout, the error flag, absence,
+a canary leak test, chain fidelity on a real signed chain (the field verifies;
+tampering with digest, bytes, flag, stamp, or stripping the field breaks it),
+the code stamp across CRLF and LF source, and the review's collision cases.
+
+**Staged for the signing sitting:** the two-line wiring into
+`bin/hook-post-tool-use.js`, in `proposals/v3-03-tool-io-digest-2026-10-22.patch`.
+Its six tests in `test/hook-post-tool-use-toolio.test.js` run as TODO until
+the patch flips `WIRED`; three more in the same file run today against the real
+hook's receipt plus the staged field (leak scan of the signed chain file, the
+`responseOk` precedence table, no field on the engine-error receipt). Limit 78
+recorded: coverage is the egress-event receipt only, an unkeyed digest of a
+guessable response is reversible, CRLF and LF spellings collide by design, and
+the review's findings with where each landed.
+
 ## Unreleased — signing sitting 2026-09-07: the chapter binding lands; eight core fixes staged under request ids
 
 Isaac's go for the sitting covered every queued core fix. One landed without a

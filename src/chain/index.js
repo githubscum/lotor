@@ -75,7 +75,12 @@ function computeHash(entry) {
  */
 function sortKeysReplacer(key, value) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    const sorted = {};
+    // Null prototype. On a plain object, assigning the key "__proto__" sets
+    // the prototype instead of creating a property, so an own "__proto__"
+    // key in a payload (a model id from a transcript, say) was dropped from
+    // the canonical form and could be edited without breaking verification.
+    // Every other key canonicalises exactly as before.
+    const sorted = Object.create(null);
     for (const k of Object.keys(value).sort()) {
       sorted[k] = value[k];
     }

@@ -1990,6 +1990,18 @@ reading the git history of `src/policy/index.js` for that time range. A
 hash detects, it does not explain. Same for `observer.parser.hash` on
 session-open receipts.
 
+**NARROWED 2026-10-20 (reader half).** `src/views/matcher-history.js`
+re-derives the stamp at every commit that touched `src/policy/` by importing
+that commit's own code and calling its own `matcherVersionHash`, so a reader
+can go from a receipt's `matcherHash` to the commit(s) that produced it and
+from there to `git diff`. Against this clone's history: 28 policy commits, 15
+carry a stamp, 8 distinct stamps, about 2 s. What stays open: it resolves only
+hashes a commit in the reader's own clone produced (not-found is "unknown
+provenance", never "tampered"); it executes historical code, so it is a reader
+for your own clone and not a verifier of a stranger's; there is no CLI yet,
+because a new `bin/` file is a protected write; and `observer.parser.hash` has
+no equivalent reader. Building it found limit 77.
+
 ## 54. Captured thinking is self-report, and a quiet thought channel is unrecorded, not empty
 
 `thinkingBlocks` on a session-end receipt is a list of digests of text the
@@ -2002,6 +2014,14 @@ model that does not produce them) yields a receipt with no
 reader cannot tell from one receipt whether the model had zero thoughts or
 the channel was omitted. The honest reading of an absent thought layer is
 "unrecorded," never "no thoughts."
+
+**Text view, 2026-10-20.** Until this date the rendered session receipt said
+nothing about the thought channel at all, so the distinction above lived only
+in the parser's comments. `renderSessionReceipt` now prints a THOUGHT CHANNEL
+section: a block count and total length when blocks exist, and `(unrecorded)`
+with the never-"no thoughts" note when the field is absent or empty. It prints
+no digests and no text. The limit itself is unchanged: the view states the
+ambiguity, it does not resolve it.
 
 ## 55. `transcriptHash` binds the receipt to a file, not the file to the whole session
 
@@ -2178,6 +2198,22 @@ What it does not do, in three parts:
   counts, a model id and a timestamp. It says nothing about what the
   thought did or why it cost that much — the same silence-is-not-safety
   ceiling every other receipt field already discloses.
+
+**NARROWED 2026-10-20 (reader half; the write side is unchanged).** Until now
+nothing read a sidecar back, so a deleted or edited one was silent: the
+absence was detectable in principle and detected by nobody.
+`src/views/thoughts.js` exports `checkThoughtSidecars(entries, home)`, which
+checks every `thoughts/1` binding against `<home>/thoughts/` and reports each
+as `match`, `mismatch` (with the hash found), `missing`, `none-expected`
+(count 0, no file is written), `malformed` (the binding itself is bad), or,
+for a file no receipt expects, `orphan`. Tested in
+`test/views-thought-sidecars.test.js`. First run against a real store
+(36,433 entries, 2026-10-20): 3,292 match, 0 mismatch, 4 none-expected,
+0 orphan, and **1 missing**, a 15-thought sidecar for a session whose receipt
+is on the chain. Which of the two causes above produced it is exactly what
+the check cannot say. Still open: the sidecar remains deletable without a
+signature, `missing` still cannot separate a crash from a deletion, and the
+check is a function, not yet a CLI or a line in any view.
 
 ## 61. The permissive-posture warning overstates its own inertness
 
@@ -2659,6 +2695,23 @@ built rather than assumed.
 answered. Limit 53 is why a detector that cannot explain itself is still worth
 having, and why this one is not yet one.
 
+**Repo reader, 2026-10-19.** `src/ingest/subagents.js` now cross-checks the
+parent's own dispatch count before it concedes that no subagents ran. The
+function `countParentDispatches` reads the parent transcript and counts its
+`Task` and `Agent` tool calls that went through: only a call answered by a
+`tool_result` not marked `is_error` counts, so a dispatch a hook denied, the
+operator rejected, or an interrupt cut off (none of which ran a child) is not
+taken as evidence that a child transcript should exist. The count errs low,
+never high. A missing `<sessionId>/subagents/` directory whose parent did
+dispatch now returns `sidecarMissing: true` with
+`count: null` and `parentDispatches` recorded, instead of the silent null that
+read as "no subagents ran". When the directory exists, the summary lists
+`unmatchedEntries`: the sidecar entry names outside the expected
+`agent-*.jsonl` pattern, captured by name rather than dropped behind the
+count. This narrows the false zero to one remaining case: the dispatch tool
+itself renamed. If the harness stops calling the dispatch `Task` or `Agent`,
+the parent count reads zero and the absence is still unnoticed.
+
 ## 69. Subagent cost is derived rather than reported, and the derivation carries a price table's staleness
 
 **Found 2026-09-02**, by tracing which inputs produce the dollar figures.
@@ -2966,3 +3019,253 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 `docs/receipt-coverage.md`, under "Session attribution for gate decisions",
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
+
+## 75. One edited file was listed twice in `touched`, once absolute and once relative
+
+**Status: CLOSED 2026-10-19, branch `lotor-lane/touched-path-identity`.**
+(This lands before PR #61, which renumbers its entry to 76.) `parseSession`
+now resolves every touched path against the session working directory (the
+first transcript line carrying `cwd`; in real transcripts that is a user,
+assistant or attachment line, never a file-history line) and keys the map on
+that resolved identity. An absolute Edit/Write `file_path` is normalised
+lexically (`.\`, `..`, doubled separators) so it lands on the same key as its
+resolved file-history twin. Windows-flavoured keys compare case- and
+separator-insensitively; the stored `path` keeps a display form, preferring
+the Edit/Write absolute path. When an Edit/Write and a file-history record hit
+the same file, the entry keeps the edit/write `via` and gains
+`alsoVia: ['file-history']`. A transcript with no `cwd` is not guessed at: a
+relative file-history path stays relative and stays a separate entry.
+
+Found 2026-10-19 while closing PR #61. Claude Code writes an Edit/Write
+`file_path` absolute, and writes the same file into `file-history-snapshot`
+keys and `file-history-delta` `trackingPath` relative to the cwd. The parser
+keyed `touched` on the raw string, so each edited file appeared twice. Measured
+on two real sessions from this machine: 68 touched entries became 39, and 26
+became 15. Every count built on `touched` (receipts' touched lists, the
+since-view's "N files touched", the live view, reconcile's tail matching) was
+overstated by up to about 1.7x.
+
+**What to doubt.** The resolve is lexical, not filesystem: symlinks, junctions
+and 8.3 short names are not folded, so two spellings of one file through a
+link still count twice. Case folding applies only to Windows-flavoured paths;
+a case-insensitive macOS volume is not folded. Receipts already on the chain
+keep their doubled lists; this changes what new receipts say, and the parser
+version hash changes with it. The session cwd is the FIRST `cwd` seen; a
+transcript's `cwd` can change mid-session, and whether file-history paths stay
+relative to the original cwd after such a change is unconfirmed. A
+file-history line that precedes every `cwd`-carrying line stays relative and
+unmerged.
+
+## 76. A refused write was listed as touched, so an attempt read as a change
+
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
+Closed for the parser, the since-view, the text receipt and the live view.
+Still OPEN for retcon's charter reconciliation (core) and three smaller
+readers; see "Still open" below.** The parser
+now records an Edit/Write attempt and settles it against the tool_result that
+answers it. A touched entry from an attempt carries `outcome`: `ok` when the
+harness answered with a success, `error` when it answered with an error
+(`is_error: true`), `unknown` when no answer ever arrived (the session died
+mid-turn). `ok` is sticky: one landed write is a write, whatever later
+attempts to the same path did. Entries added by file-history carry no
+`outcome` key, and `via` is unchanged. The since-view keeps its path list but
+adds `touchedRefused`, marks a refused path with `(refused)` where the reader
+is looking, and ships a caveat saying what a refused marker does and does not
+mean. `touchedRefused` counts DISTINCT refused paths per session: every
+subsession receipt re-parses the whole transcript, so a per-receipt sum
+showed one refusal as "(3 refused)" after three SessionEnd firings. The text
+receipt (`renderSessionReceipt`) prints `(via: write, refused)`, and the live
+view counts `N files (M refused)` and marks the path. Receipts written before
+this change carry no `outcome` and render exactly as they did.
+
+**Still open.**
+- **retcon charter reconciliation (core).** `bin/retcon.js` `reconstruct()`
+  folds every receipt's `touched` into `touchedPaths`, a Set of bare path
+  strings, without reading `outcome`; `src/views/reconcile.js` matches
+  declared file items against that Set. So a refused Write still CONFIRMS a
+  charter item naming that file. The fix is a filter in `reconstruct()` (skip
+  items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
+  and `bin/` is wholesale core, so it waits for a signing sitting.
+  `reconcile.js` itself cannot fix it: it never sees the outcome.
+- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
+  report `touchedCount: p.touched.length`, refused attempts included.
+- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
+  straight from the transcript's tool_use and never joins the tool_result.
+- **`touchedCount` in the since-view** is still summed per receipt, so with
+  subsessions "N files touched" overcounts in the same way `touchedRefused`
+  did. That predates this limit and is left for its own change.
+
+Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
+own hook files was refused. Seq 36204 is that session's receipt, and it lists
+the hook file under `touched`. The file was unchanged on disk. The reader of
+the chain takes `touched` as a write; the transcript recorded only an attempt,
+and the attempt was refused by the gate.
+
+The mechanism is order. `parseSession` (src/parser/index.js) added a path to
+`touched` when it saw the tool_use, before and regardless of the tool_result
+that answers it. The refusal was on the chain the whole time: `failed` carried
+the error digest from the same tool_result. Nothing joined the two records, so
+a refused write and a landed write were indistinguishable in every view built
+on `touched`.
+
+**What to doubt.** `is_error` is the harness's word, self-attested, and an
+`ok` Edit can still be a no-op (the same bytes rewritten), which no parser can
+see; `ok` means the harness answered success, not that the file changed. A
+refused path is reported because the attempt happened, not because a change
+happened. Receipts written before this change carry no `outcome` and must be
+read as "attempted": absent means unrecorded, never "it landed". Non-core:
+src/parser/ and src/views/ are not on the protected list; the retcon half is
+core and is not touched here.
+
+## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
+
+`matcherVersionHash()` digests `Function.prototype.toString()` of the rule
+functions, and `toString()` returns the source text as loaded, line endings
+included. A Windows clone with `core.autocrlf=true` checks out CRLF, so the
+same commit stamps differently there than on an LF checkout (Linux, macOS,
+CI). Measured 2026-10-20 on this machine at `5198a07`: the live stamp is
+`c4165ee9ff7612bd`; the same commit recomputed from `git show` (LF) is
+`e0877fab0f459e0c`. Every receipt this machine has written carries the CRLF
+stamp, and no LF clone of the same code will ever reproduce it.
+
+Consequence for a reader: two receipts with different `matcherHash` values do
+not prove the matcher changed between them, only that the matcher source text
+differed, and a line-ending difference is enough. Limit 53's sentence "the
+matcher changed between them" is true only for receipts written from the same
+checkout configuration.
+
+Mitigation, reader side: `src/views/matcher-history.js` recomputes each commit
+in both LF and CRLF and reports which one matched (`eol`). Any other byte-level
+transform of the checkout (a BOM, a formatter run, a different `eol` attribute)
+still reads as not-found. The real fix normalizes line endings inside
+`matcherHashInputs()`; that is a change to `src/policy` (non-delegable core), so
+it waits for a signing sitting. It would not move every machine's stamp:
+`matcherHashInputs()` is not itself one of the functions it hashes, so on an LF
+checkout the hashed text is byte-identical before and after and the stamp stays
+put. Only CRLF checkouts move, onto the LF stamp. (That holds only if the
+normalization is written in `matcherHashInputs()` itself; put inside one of the
+hashed rule functions, it would move every stamp.) The receipts read across the
+change are therefore the CRLF-era ones, such as every receipt this machine has
+written, and how they are read afterwards still needs a decision.
+
+**Fix queued 2026-10-25 (signing sitting, not landed).** The patch is
+`proposals/l77-matcherhash-eol.patch`, generated by
+`proposals/make-l77-patch.mjs` rather than written by hand (see limit 79). It
+folds CRLF to LF in `matcherHashInputs()` itself, bumps the schema to
+`matcher/3`, and turns `test/policy-matcher-stamp-eol.test.js` around from
+tripwire to guard. `test/policy-matcher-stamp-eol-patch.test.js` rehearses it on
+temp copies: patched LF equals patched CRLF, the patched LF stamp equals the
+unpatched LF stamp, and the unpatched control still differs. Until it lands,
+the limit stands as written above.
+
+## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
+
+**Status: OPEN, recorded 2026-10-22 with v3 work order V3-03** (branch
+`lotor-lane/v3-03-tool-io-digest`). `src/toolio/index.js` builds a `toolio/1`
+object: a full SHA-256 over a canonical serialization of the tool's response,
+its byte length, and the host's own error flag, or `recorded: false` with a
+reason when there was no response to see. The wiring into
+`bin/hook-post-tool-use.js` is core and is staged in
+`proposals/v3-03-tool-io-digest-2026-10-22.patch` for a signing sitting. Three
+things it does not do, stated before anyone reads R2 as complete.
+
+**Coverage is the egress-event receipt and nothing else.** The post-tool-use
+hook writes a receipt only for egress-shaped Bash calls (push, publish,
+egress-other) and takes a no-chain-I/O fast path for everything else. A `Read`,
+an `Edit`, a non-egress `Bash` or an MCP call gets no receipt there, so it gets
+no R2 field. R2 stays partial on the ladder until a receipt exists per tool
+call. That is the per-step receipt V3-04 is building; the module is
+receipt-agnostic so the same one-line spread goes onto it. Writing a separate
+per-call receipt here was rejected for this change: every append re-reads the
+whole chain under the lock, so a receipt per tool call is a cost (eval E5) the
+owner should choose with a measurement in hand, not inherit from a builder.
+
+**An unkeyed digest of a guessable response is reversible.** A `yes`, an exit
+status, a six-digit code or a file the reader already has can be recovered by
+hashing candidates and comparing. Content never lands on the chain, but for a
+low-entropy response the digest is as good as content to someone willing to
+guess. `paramsDigest` has had the same property since v1; R2 widens the surface
+from what was asked to what came back. A keyed digest (HMAC under a local key)
+closes it and also stops two installs, or the meter's evals, comparing digests.
+That trade is the owner's.
+
+**CRLF and LF spellings of one response collide on purpose.** Every string leaf
+has `\r\n` folded to `\n` before hashing, so the same file read from a
+`core.autocrlf=true` checkout and an LF checkout digests the same. Two responses
+that differ only in line endings are therefore indistinguishable on the chain,
+and `bytes` is the size after folding, not what the tool emitted. A lone `\r` is
+kept as content. Tested in `test/toolio-digest.test.js`.
+
+**Added 2026-10-22, after the second-family review of PR 71 (minimax-m3).**
+Four things the review found, and where each landed.
+
+- *Fixed: the digest had no code stamp.* `toolIo` now carries `hash`, the first
+  16 hex of SHA-256 over the source of every function in `src/toolio/` that
+  shapes the record, beside `schema`, as `parser: { schema, hash }` does on the
+  session-start receipt. Source CRLF is folded before hashing, so a CRLF and an
+  LF checkout of one commit stamp the same (tested by importing both).
+  `matcherHash` and `parserVersionHash` do not fold, and still differ across
+  checkouts.
+- *Fixed: distinct responses could share a digest.* An own `__proto__` key
+  (which `JSON.parse` creates) was swallowed by the object-literal setter, and
+  `undefined`, functions, `toJSON`, Dates, NaN and array holes were dropped,
+  nulled or substituted by `JSON.stringify`. The module now walks the value once
+  into null-prototype objects and calls anything without an exact JSON form
+  `unserializable`. It no longer imports the `params/1` canonicalizer; for every
+  value without an own `__proto__` key its output is byte-identical (the pin is
+  unchanged). One fold is still accepted: `-0` serializes as `0`.
+- *Not fixed, pre-existing, out of this change:* `canonicalize` in
+  `src/parser/index.js` has the same `__proto__` hole, so `params/1`
+  (`paramsDigestCanonical` on gate receipts, matched by `src/views/autograph.js`)
+  gives `{"__proto__":{..},"b":2}` and `{"b":2}` one digest. And `canonicalize`
+  is not in `parserVersionHash`'s parts list, so an edit to it does not move the
+  parser stamp. Fixing the first moves `params/1` digests already on chains and
+  needs its own marker decision; it is left for its own change.
+- *Documented, not reconciled: two error readings on one receipt.* The legacy
+  `responseOk` in `bin/hook-post-tool-use.js` reads any non-null `error` key as
+  failure, so `error: false`, `error: ''` and `error: 0` give `responseOk: false`
+  where `toolIo.response.error` is `false`, `null`, `null`. When
+  `toolIo.response.recorded` is true, `toolIo` is authoritative. Tightening
+  `responseOk` is a one-token core edit and is not staged; the agreement table is
+  pinned against the real hook in `test/hook-post-tool-use-toolio.test.js`.
+
+**Added 2026-10-23: a `params/2` canonicalizer exists, unwired.**
+`digestParamsCanonicalV2` and `PARAMS_V2_SCHEMA = 'params/2'` in
+`src/parser/index.js` build null-prototype objects, so an own `__proto__` key
+survives into the digest. For every input with no own `__proto__` key at any
+depth the output is byte-identical to `params/1`. Nothing emits it yet:
+`params/1` digests on existing chains do not move, and which marker receipts
+carry is still the owner's decision. Probing found the `params/1` hole is wider
+than first written: two inputs whose `__proto__` payloads differ (`{"a":1}` vs
+`{"a":2}`) also share one digest, as do `__proto__` values that are scalars or
+null. Pinned in `test/params-v2-canonical.test.js`. The `parserVersionHash`
+parts-list gap is unchanged.
+
+## 79. Reach and reasoning disagreed on mixed-case think tags, and the lane's executors cannot type the tag
+
+Before this change, `observeRungs` found content markers with two case-sensitive
+`includes` checks while `classifyBlock` used the case-insensitive `THINK_TAG`
+regex, so content ending in an upper- or mixed-case closing think tag was inline
+reasoning to one witness and not R3 to the other. Reach now uses the same regex,
+and `test/reach-glm-leak-fixtures.test.js` pins agreement on eight probes plus six
+real glm-5.3-flash bodies where `think:false` still leaked a closing tag. What
+remains: the two regexes are two copies, not one import, so they can drift again;
+the probe table is the only tripwire. Separately, the `ollama launch claude`
+executor channel drops lowercase think tags (glm) and mangles backslash escapes
+(minimax), so test sources on this lane build the less-than sign with
+`String.fromCharCode(60)`. That is a property of the authoring channel, not of
+Lotor, but it means any fixture a delegated executor types containing a tag must
+be checked byte-for-byte before it is trusted. (Number may collide with an open
+PR that also appends a limit; renumber at merge.)
+
+## 80. The lane's cheap executor cannot hand-write a unified diff
+
+glm-5.3-flash, dispatched through `ollama launch claude`, was asked on
+2026-10-25 to hand-write a two-hunk unified diff against the policy module. The
+result had wrong `@@` counts, context lines missing their one-space prefix, and
+one context line transcribed with the comparison inverted (`===` where the
+source has `!==`); `git apply --check` refused it. The bytes drifted with no
+`<` or backslash in play, so this is separate from the channel's tag and escape
+mangling. Consequence: any queued core patch on this lane is generated by a
+script that edits a copy and runs `git diff --no-index`, never typed, and is
+proven with `git apply --check` plus a rehearsal test before it is queued.

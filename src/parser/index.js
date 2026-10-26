@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 /**
  * src/parser/index.js
@@ -38,7 +39,13 @@ function parseSession(jsonlText, opts = {}) {
   };
 
   const ran = [];        // { tool, id, paramsDigest }
-  const touched = new Map(); // path -> { via }
+  // Edit/Write attempts awaiting their tool_result (limit 76, closed
+  // 2026-10-19). tool_use_id -> CANONICAL touched-map key (limit 75), so a
+  // result settles the same entry a file-history twin merged into. The
+  // attempt is recorded at tool_use time with outcome 'pending'; the matching
+  // tool_result settles it. An attempt with no result stays unknown, never a
+  // plain write.
+  const touchToolIds = new Map();
   const failed = [];     // { tool, id, errorDigest }
   const cost = {
     inputTokens: 0,
@@ -66,15 +73,36 @@ function parseSession(jsonlText, opts = {}) {
   let failures = 0;
   let assistantMessages = 0;
 
+  // Touched-path identity. Claude Code writes Edit/Write tool_use file_path as
+  // an ABSOLUTE path, but file-history (snapshot keys, delta trackingPath) as a
+  // path RELATIVE to the session cwd — the same file twice unless the two
+  // shapes are resolved to one canonical key. Transcript lines carry that cwd
+  // field in a top-level `cwd` field; the first non-empty one is the session
+  // cwd. touchKey() resolves a recorded path to its absolute identity,
+  // toTouchMapKey() folds Windows-flavoured keys case- and
+  // separator-insensitively, and recordTouched() merges the two record
+  // sources onto one map entry.
+  let sessionCwd = null;
+
+  const touched = new Map(); // canonical key -> { path, via, alsoVia? }
+
   // Track tool_use to tool_result linkage
   const toolUseMap = new Map(); // tool_use_id -> { tool, paramsDigest }
   // Dedup usage across the lines Claude Code writes for one assistant message.
   // Each line carries a full, byte-identical copy of message.usage, so we
   // accumulate cost.* only the first time we see a given usage key.
   const seenUsageKeys = new Set();
+  // Lookup side of cost.byModel, keyed by the model string (see below).
+  const byModelBuckets = new Map();
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
+    // Session cwd: the first entry with a non-empty string `cwd`. Recorded per
+    // line in real transcripts; taken once, before any touched records in that
+    // same entry are processed.
+    if (sessionCwd === null && typeof entry.cwd === 'string' && entry.cwd !== '') {
+      sessionCwd = entry.cwd;
+    }
     // Count assistant turns
     if (entry.message?.role === 'assistant') {
       turns++;
@@ -97,17 +125,27 @@ function parseSession(jsonlText, opts = {}) {
           // Per-model breakdown. A message with no model field lands in the
           // "unknown" bucket rather than being dropped; a sum across buckets
           // is intentionally not produced (see KNOWN-LIMITS #13).
-          const modelKey = entry.message.model || 'unknown';
-          if (!cost.byModel[modelKey]) {
-            cost.byModel[modelKey] = {
+          //
+          // The key is whatever the runtime wrote, so it can be "__proto__"
+          // or "constructor": buckets are looked up in a Map and published
+          // as OWN properties, never read or assigned through the plain
+          // object, which would land on a shared builtin (PR #70 review F1).
+          // String() keeps the old coercion for a non-string model value.
+          const modelKey = String(entry.message.model || 'unknown');
+          let bucket = byModelBuckets.get(modelKey);
+          if (!bucket) {
+            bucket = {
               inputTokens: 0,
               outputTokens: 0,
               cacheCreationTokens: 0,
               cacheReadTokens: 0,
               messages: 0
             };
+            byModelBuckets.set(modelKey, bucket);
+            Object.defineProperty(cost.byModel, modelKey, {
+              value: bucket, enumerable: true, writable: true, configurable: true
+            });
           }
-          const bucket = cost.byModel[modelKey];
           bucket.inputTokens += input;
           bucket.outputTokens += output;
           bucket.cacheCreationTokens += cacheCreate;
@@ -199,12 +237,21 @@ function parseSession(jsonlText, opts = {}) {
               });
             }
 
-            // Track file mutations for 'touched'
+            // Track file mutations for 'touched'. An attempt is recorded
+            // here, before its tool_result, with outcome 'pending'. The
+            // tool_result below settles it: is_error makes it 'error', a
+            // non-erroring result makes it 'ok'. 'ok' is sticky: one landed
+            // write is a write, no matter what later attempts to the same
+            // path did. Entries that only ever came from file-history carry
+            // no outcome key.
             if (toolName === 'Edit' || toolName === 'Write') {
-              const path = item.input?.file_path;
-              if (path) {
-                touched.set(path, { via: toolName.toLowerCase() });
-              }
+              // Edit/Write carries the absolute display form and must
+              // overwrite `via` even when file-history has already claimed
+              // the same canonical key (see recordTouched), and it opens
+              // the attempt's outcome there too.
+              const key = recordTouched(touched, item.input?.file_path,
+                toolName.toLowerCase(), sessionCwd, true);
+              if (key !== null) touchToolIds.set(toolId, key);
             }
           }
         }
@@ -215,6 +262,16 @@ function parseSession(jsonlText, opts = {}) {
     if (entry.message?.role === 'user' && Array.isArray(entry.message.content)) {
       for (const item of entry.message.content) {
         if (item.type === 'tool_result') {
+          // Settle the touched outcome this result answers (limit 76).
+          // is_error is the harness's word for the attempt; a non-erroring
+          // result (absent is_error = success per spec) lands the write.
+          const touchedKey = touchToolIds.get(item.tool_use_id);
+          if (touchedKey !== undefined) {
+            const meta = touched.get(touchedKey);
+            if (meta && meta.outcome !== 'ok') {
+              meta.outcome = item.is_error === true ? 'error' : 'ok';
+            }
+          }
           // Must walk EVERY tool_result to check for is_error
           if (item.is_error === true) {
             failures++;
@@ -233,18 +290,22 @@ function parseSession(jsonlText, opts = {}) {
 
     // File history tracking (additional touch records)
     if (entry.type === 'file-history-snapshot' && entry.snapshot?.trackedFileBackups) {
-      for (const [path, backup] of Object.entries(entry.snapshot.trackedFileBackups)) {
-        if (!touched.has(path)) {
-          touched.set(path, { via: 'file-history' });
-        }
+      for (const [rawPath] of Object.entries(entry.snapshot.trackedFileBackups)) {
+        recordTouched(touched, rawPath, 'file-history', sessionCwd);
       }
     }
 
     if (entry.type === 'file-history-delta' && entry.trackingPath) {
-      if (!touched.has(entry.trackingPath)) {
-        touched.set(entry.trackingPath, { via: 'file-history' });
+      if (typeof entry.trackingPath === 'string' && entry.trackingPath !== '') {
+        recordTouched(touched, entry.trackingPath, 'file-history', sessionCwd);
       }
     }
+  }
+
+  // Attempts that never saw a tool_result (the session died mid-turn) read
+  // as 'unknown': not an error, not a plain write (limit 76).
+  for (const meta of touched.values()) {
+    if (meta.outcome === 'pending') meta.outcome = 'unknown';
   }
 
   // Session timing: first and last entries that actually carry a usable
@@ -278,6 +339,134 @@ function parseSession(jsonlText, opts = {}) {
     sent,
     counts: { turns, toolCalls, failures, transcriptEntries: entries.length, assistantMessages }
   };
+}
+
+/**
+ * Is a recorded path ALREADY absolute in a recognizable flavour: posix
+ * `/...`, a Windows drive (`X:\` / `X:/`), or UNC (`\\...`)?
+ */
+function isTouchPathAbsolute(p) {
+  if (typeof p !== 'string' || p === '') return false;
+  return p.startsWith('/') || p.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(p);
+}
+
+/**
+ * Does a cwd/path look Windows-flavoured: a drive letter, or any backslash?
+ */
+function windowsFlavoured(p) {
+  return /^[A-Za-z]:/.test(p) || p.includes('\\');
+}
+
+/**
+ * Resolve one recorded file path to its canonical identity for the
+ * `touched` map, so the same file written once absolutely (Edit/Write
+ * `file_path`) and once relatively (file-history snapshot keys,
+ * `trackingPath`) lands on ONE entry instead of two.
+ *
+ *   - Already absolute (posix `/...`, Windows drive, UNC `\\`):
+ *     normalised lexically in its own flavour (path.win32.normalize for a
+ *     drive or UNC path, path.posix.normalize otherwise), so `.\`, `..`
+ *     and doubled separators in an Edit/Write `file_path` land on the same
+ *     key as the resolved file-history twin.
+ *   - Relative with a known cwd: joined to cwd using cwd's flavour
+ *     (path.win32 vs path.posix).
+ *   - Relative with NO cwd: unchanged — no guess; the entry keeps its
+ *     relative path and stays distinct from any absolute twin.
+ *
+ * @param {string} p - path exactly as recorded in the transcript
+ * @param {string|null} cwd - session working directory, if known
+ * @returns {string|null} resolved identity, or null for empty input
+ */
+function touchKey(p, cwd) {
+  if (typeof p !== 'string' || p === '') return null;
+  if (isTouchPathAbsolute(p)) {
+    const win = /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+    return win ? path.win32.normalize(p) : path.posix.normalize(p);
+  }
+  if (cwd) {
+    return windowsFlavoured(cwd) ? path.win32.resolve(cwd, p) : path.posix.resolve(cwd, p);
+  }
+  return p;
+}
+
+/**
+ * Canonical MAP KEY for a resolved touched path. Windows-flavoured keys
+ * compare case- and separator-insensitively (NTFS semantics), so the map
+ * key is lowercased with `/` normalised to `\`; posix keys pass through
+ * untouched. The stored `path` value keeps its display form — the
+ * lowercasing happens here and nowhere else.
+ */
+function toTouchMapKey(key) {
+  if (!key) return key;
+  if (/^[A-Za-z]:/.test(key) || key.startsWith('\\\\')) {
+    return key.replace(/\//g, '\\').toLowerCase();
+  }
+  return key;
+}
+
+/**
+ * Fold one recorded touch (an Edit/Write `file_path`, a file-history
+ * snapshot key, or a `trackingPath`) into the `touched` map, merging the
+ * two record sources when their canonical keys collide.
+ *
+ * Merge rules:
+ *   - A fresh key inserts `{ path, via }`, keeping first-seen order.
+ *     `path` is the ABSOLUTE resolved form when one is available
+ *     (Edit/Write's `file_path`, or the resolved file-history path), else
+ *     the unchanged relative form (no cwd => nothing to resolve to).
+ *   - Edit/Write arriving on an existing entry overwrites `via` (a single
+ *     mutation is a mutation, whatever backup tracking later says) and
+ *     prefers its absolute `file_path` as the display `path` whenever
+ *     one is resolvable.
+ *   - A `via: 'file-history'` displaced this way moves into `alsoVia`
+ *     (array, no duplicates); a file-history record arriving after an
+ *     Edit/Write keeps the edit/write `via` and joins `alsoVia` itself.
+ *   - Outcome (limit 76): an Edit/Write record opens an attempt, so the
+ *     entry's `outcome` becomes 'pending' unless it is already 'ok' ('ok'
+ *     is sticky: one landed write is a write). The caller settles it from
+ *     the tool_result via the returned key. A file-history record never
+ *     sets or changes `outcome`; an entry only file-history ever touched
+ *     carries no outcome key.
+ *
+ * @param {Map} touched
+ * @param {string} rawPath - path as recorded in the transcript
+ * @param {string} via - 'edit' | 'write' | 'file-history'
+ * @param {string|null} cwd - session working directory, if known
+ * @param {boolean} fromEditWrite - caller is an Edit/Write tool_use record
+ * @returns {string|null} the canonical map key the record landed on, or
+ *   null when the path was empty and nothing was recorded
+ */
+function recordTouched(touched, rawPath, via, cwd, fromEditWrite = false) {
+  const resolved = touchKey(rawPath, cwd);
+  if (resolved === null) return null;
+  const key = toTouchMapKey(resolved);
+  const existing = touched.get(key);
+  if (!existing) {
+    touched.set(key, fromEditWrite
+      ? { path: resolved, via, outcome: 'pending' }
+      : { path: resolved, via });
+    return key;
+  }
+  const priorVia = existing.via;
+  if (fromEditWrite) {
+    existing.via = via;
+    existing.outcome = existing.outcome === 'ok' ? 'ok' : 'pending';
+    // Prefer the Edit/Write absolute form as the display path when it is
+    // one: an absolute `file_path` always wins, including over a relative
+    // form stored earlier when no cwd was known yet.
+    if (isTouchPathAbsolute(resolved)) existing.path = resolved;
+    if (priorVia === 'file-history' && !(existing.alsoVia || []).includes('file-history')) {
+      existing.alsoVia = [...(existing.alsoVia || []), 'file-history'];
+    }
+  } else if (priorVia !== 'file-history') {
+    // file-history after an Edit/Write: keep the edit/write `via`.
+    if (!(existing.alsoVia || []).includes(via)) {
+      existing.alsoVia = [...(existing.alsoVia || []), via];
+    }
+  }
+  // A file-history record over an existing file-history entry changes
+  // nothing: the first-seen display form of `path` stands.
+  return key;
 }
 
 /**
@@ -385,6 +574,72 @@ export function digestParamsCanonical(input) {
 }
 
 /**
+ * Canonicalize a value for hashing under the params/2 rules. Behavior is
+ * identical to `canonicalize` except that every object it builds is a
+ * null-prototype object and keys are set with plain assignment on that
+ * object.
+ *
+ * The reason this copy exists: `JSON.parse('{"__proto__":{"a":1}}')` defines
+ * an own `__proto__` data property, which `Object.keys` lists, but assigning
+ * `sorted['__proto__']` on a plain `{}` target hits the Object.prototype
+ * setter and ends up changing the prototype instead of storing a key. The
+ * params/1 canonicalizer therefore silently swallows such a key. On a
+ * null-prototype target there is no inherited setter, so plain assignment
+ * creates an own data property and the key survives, serializing through
+ * `JSON.stringify` as the literal string `"__proto__"`.
+ */
+function canonicalizeV2(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) out[i] = canonicalizeV2(value[i]);
+    return out;
+  }
+  const sorted = Object.create(null);
+  for (const k of Object.keys(value).sort()) {
+    sorted[k] = canonicalizeV2(value[k]);
+  }
+  return sorted;
+}
+
+/**
+ * Schema marker for digests produced by `digestParamsCanonicalV2`, extending
+ * the `<class>/N` convention `matcher/1` established in src/policy/index.js.
+ */
+export const PARAMS_V2_SCHEMA = 'params/2';
+
+/**
+ * Compute a canonical SHA-256 hex digest of a tool's parameters under the
+ * params/2 rules. Returns the full 64-character lowercase hex digest (no
+ * truncation) over `JSON.stringify(canonicalizeV2(input))`, or 'empty' for
+ * undefined or null input, exactly as `digestParamsCanonical` returns
+ * 'empty' for those cases.
+ *
+ * NOT WIRED INTO RECEIPT EMISSION. This function is exported only; no
+ * receipt path consumes its output today. params/1 is unchanged:
+ * `digestParamsCanonical` keeps its current behavior, and every digest
+ * already recorded on chains under the params/1 marker is untouched.
+ *
+ * Byte compatibility: for any input with no own `__proto__` key at any
+ * depth, this function's output is byte-identical to
+ * `digestParamsCanonical`. The two differ only for inputs carrying such a
+ * key somewhere: params/1 silently drops the key and can collide with a
+ * proto-free input, while params/2 keeps it as the literal key
+ * `"__proto__"` and separates them.
+ *
+ * Choosing which marker receipts carry (params/1 vs params/2) is the
+ * owner's decision, not this module's.
+ *
+ * @param {*} input - any JSON-compatible value (typically a tool input)
+ * @returns {string} 64 lowercase hex chars, or 'empty' for absent input
+ */
+export function digestParamsCanonicalV2(input) {
+  if (input === undefined || input === null) return 'empty';
+  const text = JSON.stringify(canonicalizeV2(input));
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/**
  * Create a short digest of content (for error reporting)
  */
 function digestContent(content) {
@@ -463,6 +718,11 @@ export function parserVersionHash() {
     extractTarget.toString(),
     entryTimestamp.toString(),
     usageIdentity.toString(),
+    isTouchPathAbsolute.toString(),
+    windowsFlavoured.toString(),
+    touchKey.toString(),
+    toTouchMapKey.toString(),
+    recordTouched.toString(),
     digestParams.toString(),
     digestContent.toString(),
     digestParamsCanonical.toString()

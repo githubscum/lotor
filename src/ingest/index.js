@@ -6,6 +6,8 @@ import { createStore } from '../store/index.js';
 import { resolveHome } from '../home.js';
 import { summarizeSubagents } from './subagents.js';
 import { chaptersFromClaudeTranscript, chaptersBinding } from '../views/chapters.js';
+import { reasoningBinding } from '../reasoning/index.js';
+import { measureCloseCertificate, failedCloseCertificate, attachOpenReference } from '../reach/certificate.js';
 
 /**
  * src/ingest/index.js
@@ -63,10 +65,13 @@ function ingestSession(jsonlText, opts = {}) {
   // receipt. summarizeSubagents returns null when no such directory exists,
   // in which case the field is omitted entirely — never a false zero —
   // mirroring the convention in subagents.js. opts.transcriptPath may be
-  // absent for existing callers; then we never call it.
+  // absent for existing callers; then we never call it. The parent text is
+  // already in hand, so the dispatch cross-check reads it rather than the
+  // file a second time.
   if (typeof opts.transcriptPath === 'string' && opts.transcriptPath) {
     const subagentsSummary = summarizeSubagents(opts.transcriptPath, {
-      priceTableDate: opts.priceTableDate
+      priceTableDate: opts.priceTableDate,
+      transcriptText: jsonlText
     });
     if (subagentsSummary !== null) {
       receiptSummary.subagents = subagentsSummary;
@@ -81,6 +86,45 @@ function ingestSession(jsonlText, opts = {}) {
   // written, because the transcript already is one.
   receiptSummary.chapters = chaptersBinding(chaptersFromClaudeTranscript(jsonlText));
 
+  // Reasoning trace reconciliation (V3-04, rung R3). The per-step receipts
+  // written at PostToolUse can miss a step (the hook fired before the
+  // tool_use line was flushed, or the call was denied and no PostToolUse
+  // fired). This pass recomputes every step's segment from the whole
+  // transcript and compares it with the reasoning-step receipts on the chain:
+  // matched, late (filled in here), or mismatched (surfaced, never smoothed).
+  // Rows go to a sidecar bound by digest, same pattern as thoughts/1. It
+  // must see the chain under the lock, so it runs inside buildPayload.
+  let reasoningSidecar = null;
+  const bindReasoning = (currentEntries) => {
+    try {
+      const b = reasoningBinding(jsonlText, currentEntries, sessionId);
+      receiptSummary.reasoning = b.field;
+      reasoningSidecar = b.sidecarText;
+    } catch (e) {
+      receiptSummary.reasoning = { schema: 'reasoning-trace/1', error: String(e && e.message || e).slice(0, 200) };
+      reasoningSidecar = null;
+    }
+  };
+
+  // Reach certificate, close half (v3 V3-02). Measured here, after every
+  // record above is in place, from what this receipt holds and what the
+  // transcript carried; never from anything requested or declared. The
+  // link to the session's open receipt is taken inside the lock below, from
+  // the chain itself. See src/reach/certificate.js.
+  //
+  // A measurement failure must never cost the session its receipt, and must
+  // not read as a measurement either: the certificate's rung fields say
+  // "measurement-failed" (never "unrecorded", which means measured and
+  // found nothing), it carries an error code and a digest but no exception
+  // text, and checkCertificate refuses it. No production reader runs
+  // checkCertificate yet; the rung fields carry the failure on their own.
+  let reachMeasured;
+  try {
+    reachMeasured = measureCloseCertificate(receiptSummary, jsonlText);
+  } catch (e) {
+    reachMeasured = failedCloseCertificate(e);
+  }
+
   // Atomic check-then-append under the chain lock. buildPayload runs
   // against the current chain tail, so two concurrent firings cannot
   // both decide to append subsession 0.
@@ -88,9 +132,15 @@ function ingestSession(jsonlText, opts = {}) {
     const existing = currentEntries.filter(
       e => e?.payload?.session?.id === sessionId
     );
+    try {
+      receiptSummary.reach = attachOpenReference(reachMeasured, currentEntries, sessionId);
+    } catch (e) {
+      receiptSummary.reach = reachMeasured;
+    }
 
     if (existing.length === 0) {
       receiptSummary.session.subsession = 0;
+      bindReasoning(currentEntries);
       return receiptSummary;
     }
 
@@ -105,6 +155,7 @@ function ingestSession(jsonlText, opts = {}) {
     }
 
     receiptSummary.session.subsession = existing.length;
+    bindReasoning(currentEntries);
     return receiptSummary;
   });
 
@@ -126,6 +177,18 @@ function ingestSession(jsonlText, opts = {}) {
       dir, `${safeId}-s${entry.payload.session.subsession}.jsonl`
     );
     fs.writeFileSync(file, sidecarText, 'utf-8');
+  }
+
+  // Reasoning trace sidecar: digests, kinds and reconcile verdicts per step,
+  // never reasoning text. Same crash seam as the thought sidecar above.
+  if (reasoningSidecar && entry.payload.reasoning && entry.payload.reasoning.steps > 0) {
+    const dir = path.join(home, 'reasoning');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeId = String(sessionId).replace(/[^A-Za-z0-9_-]/g, '_');
+    fs.writeFileSync(
+      path.join(dir, `${safeId}-s${entry.payload.session.subsession}.jsonl`),
+      reasoningSidecar, 'utf-8'
+    );
   }
 
   return {
