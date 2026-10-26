@@ -2,7 +2,7 @@
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
  stamped 2026-10-26
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: 6813c8dbe4980f55c2f1e7606ef0eaadbc817cd85d6fbfbabf372f015d5941a5
+ body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
