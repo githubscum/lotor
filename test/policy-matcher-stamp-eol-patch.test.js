@@ -18,6 +18,10 @@
  * Once the patch lands in the core tree, the LANDED probe below skips every
  * test here and test/policy-matcher-stamp-eol.test.js (turned around by the
  * queued patch) is the regression guard.
+ *
+ * Each skip is `return t.skip(...)`: t.skip() only marks the test, it does
+ * not stop the function, so without the return a landed tree went on to
+ * re-apply the patch and failed with "patch does not apply".
  */
 
 import { describe, it } from 'node:test';
@@ -105,14 +109,14 @@ async function stampOf(eol, patched) {
 
 describe('matcher/3 EOL patch rehearsal (staged; proves the queued patch)', () => {
   it("the patch applies to today's source", async (t) => {
-    if (LANDED) t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
+    if (LANDED) return t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
     const result = await stampOf('lf', true);
     assert.equal(result.schema, 'matcher/3');
     assert.equal(result.stamp.length, 16, 'not the expected 16-char digest shape');
   });
 
   it('patched: LF and CRLF copies stamp the same', async (t) => {
-    if (LANDED) t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
+    if (LANDED) return t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
     assert.notEqual(
       (await stampOf('lf', true)).stamp,
       '',
@@ -126,7 +130,7 @@ describe('matcher/3 EOL patch rehearsal (staged; proves the queued patch)', () =
   });
 
   it('patched: an LF checkout stamp does not move', async (t) => {
-    if (LANDED) t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
+    if (LANDED) return t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
     assert.equal(
       (await stampOf('lf', true)).stamp,
       (await stampOf('lf', false)).stamp,
@@ -135,7 +139,7 @@ describe('matcher/3 EOL patch rehearsal (staged; proves the queued patch)', () =
   });
 
   it('unpatched control: LF and CRLF differ today', async (t) => {
-    if (LANDED) t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
+    if (LANDED) return t.skip('patch landed; test/policy-matcher-stamp-eol.test.js is the guard now');
     assert.notEqual(
       (await stampOf('lf', false)).stamp,
       (await stampOf('crlf', false)).stamp,
