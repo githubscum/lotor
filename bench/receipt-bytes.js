@@ -40,8 +40,8 @@
  *         forbids that too). This bench therefore measures R0 at the real src
  *         builder rather than printing a hand-written look-alike.
  *
- *   R1    The same receipt. The v3 "actions/params" digest piece —
- *         `digestParamsCanonical` (src/parser) — is ALREADY a field of the
+ *   R1    The same receipt. The v3 "actions/params" digest piece,
+ *         `digestParamsCanonical` (src/parser), is ALREADY a field of the
  *         real baseline builder's receipt (the 2026-08-15 gate enrichment),
  *         so the R1 row is the same signed entry: the canonical params digest
  *         rides inside the baseline receipt at zero incremental bytes. That
@@ -56,7 +56,7 @@
  *         the deltas here undercount the live receipt by roughly 60 bytes.
  *         The ruleId on these rows comes from the real matchers
  *         (src/policy/index.js) dispatched the way bin/hook-post-tool-use.js
- *         dispatches them — four lines, the matchers themselves untouched.
+ *         dispatches them: four lines, the matchers themselves untouched.
  *
  *   R3    A real V3-04 reasoning-step receipt, end to end:
  *         `recordReasoningStep` (src/reasoning/index.js) with `{ home }` on a
@@ -75,7 +75,7 @@
  *
  * If any row's builder cannot be called (an import fails, a scratch home
  * cannot be made), that row prints `UNMEASURED: <reason>` and the rest keep
- * going — the work order's instruction. None should fire below: every builder
+ * going, per the work order's instruction. None should fire below: every builder
  * used here is importable and runs against scratch state only.
  *
  * Scratch homes and the scratch transcript go under os.tmpdir() and are
@@ -159,7 +159,7 @@ function sampleEntries(fn) {
 
 /**
  * One baseline receipt, built by the real src gate builder on the no-token
- * deny path, chained through a real store on a scratch home — the exact
+ * deny path, chained through a real store on a scratch home: the exact
  * adapter bin/hook-pre-tool-use.js passes to gatedAction. Returns the entry;
  * optionally copies the payload out for the R2 row.
  */
@@ -248,7 +248,7 @@ try {
     unmeasured('R0', 'gated-action denial', `real builder failed: ${e.message}`);
   }
 
-  // R1: the same receipt — the canonical params digest is already on it.
+  // R1: the same receipt, since the canonical params digest is already on it.
   // Asserted here so the zero can never become a silent lie: if a future
   // build drops the field from the baseline builder, this row goes UNMEASURED
   // rather than claiming a duplicate.
@@ -349,7 +349,7 @@ for (const r of rows) {
     console.log(`| ${r.rung} | ${r.what} | UNMEASURED: ${r.reason} | n/a |`);
     continue;
   }
-  const delta = r0Bytes === null ? 'n/a (no R0)' : (r.rung === 'R0' ? '—' : `+${r.bytes - r0Bytes}`);
+  const delta = r0Bytes === null ? 'n/a (no R0)' : (r.rung === 'R0' ? '0' : `${r.bytes - r0Bytes >= 0 ? '+' : ''}${r.bytes - r0Bytes}`);
   console.log(`| ${r.rung} | ${r.what} | ${r.bytes} | ${delta} |`);
 }
 console.log('');
