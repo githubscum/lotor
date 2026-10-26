@@ -36,6 +36,9 @@ function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+// Matches src/reasoning's THINK_TAG so the two witnesses agree.
+const THINK_TAG = /<\/?think>/i;
+
 // A top_logprobs element that is not an object (null, a number, a string)
 // is malformed. It hashes as null, so the digest still moves if it changes,
 // and its position is reported instead of throwing a TypeError.
@@ -127,8 +130,7 @@ export function observeRungs(body) {
   if (isNonWhitespaceString(message.thinking)) {
     r3Sources.push('thinking');
   }
-  if (typeof message.content === 'string' &&
-      (message.content.includes('<think>') || message.content.includes('</think>'))) {
+  if (typeof message.content === 'string' && THINK_TAG.test(message.content)) {
     r3Sources.push('content-markers');
   }
 

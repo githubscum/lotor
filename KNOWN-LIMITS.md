@@ -3232,3 +3232,20 @@ than first written: two inputs whose `__proto__` payloads differ (`{"a":1}` vs
 `{"a":2}`) also share one digest, as do `__proto__` values that are scalars or
 null. Pinned in `test/params-v2-canonical.test.js`. The `parserVersionHash`
 parts-list gap is unchanged.
+
+## 79. Reach and reasoning disagreed on mixed-case think tags, and the lane's executors cannot type the tag
+
+Before this change, `observeRungs` found content markers with two case-sensitive
+`includes` checks while `classifyBlock` used the case-insensitive `THINK_TAG`
+regex, so content ending in an upper- or mixed-case closing think tag was inline
+reasoning to one witness and not R3 to the other. Reach now uses the same regex,
+and `test/reach-glm-leak-fixtures.test.js` pins agreement on eight probes plus six
+real glm-5.3-flash bodies where `think:false` still leaked a closing tag. What
+remains: the two regexes are two copies, not one import, so they can drift again;
+the probe table is the only tripwire. Separately, the `ollama launch claude`
+executor channel drops lowercase think tags (glm) and mangles backslash escapes
+(minimax), so test sources on this lane build the less-than sign with
+`String.fromCharCode(60)`. That is a property of the authoring channel, not of
+Lotor, but it means any fixture a delegated executor types containing a tag must
+be checked byte-for-byte before it is trusted. (Number may collide with an open
+PR that also appends a limit; renumber at merge.)
