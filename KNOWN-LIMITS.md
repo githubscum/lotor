@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
- subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
+ This file describes commit 0a588da1fda7e7268e6c3e71568c8a29abf75c17
+ stamped 2026-10-27
+ subject: One THINK_TAG for reach and reasoning (KNOWN-LIMITS 79)
+ body-sha256: b0045c2c1ff01010083c914d14b58c4ee6b1b206d2c0048e7085f34ab3ab4af4
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3248,9 +3248,15 @@ Before this change, `observeRungs` found content markers with two case-sensitive
 regex, so content ending in an upper- or mixed-case closing think tag was inline
 reasoning to one witness and not R3 to the other. Reach now uses the same regex,
 and `test/reach-glm-leak-fixtures.test.js` pins agreement on eight probes plus six
-real glm-5.3-flash bodies where `think:false` still leaked a closing tag. What
-remains: the two regexes are two copies, not one import, so they can drift again;
-the probe table is the only tripwire. Separately, the `ollama launch claude`
+real glm-5.3-flash bodies where `think:false` still leaked a closing tag. The
+two copies are now one: `src/reasoning/think-tag.js` defines `THINK_TAG`, both
+witnesses import and re-export it, and `test/think-tag-one-source.test.js` pins
+object identity, the `i` flag, a match table, and a source scan that fails if
+either witness file defines its own `const THINK_TAG` again (closed 2026-10-27,
+branch `lotor-lane/l79-think-tag-one-source`). What remains: the scan keys on
+that one spelling, so a copy under another name would pass it; identity is the
+real check, and it only holds while both witnesses read the shared binding.
+Separately, the `ollama launch claude`
 executor channel drops lowercase think tags (glm) and mangles backslash escapes
 (minimax), so test sources on this lane build the less-than sign with
 `String.fromCharCode(60)`. That is a property of the authoring channel, not of
