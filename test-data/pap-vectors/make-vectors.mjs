@@ -11,7 +11,10 @@
 //           draws fresh randomness, so these are generated once and committed.
 //   negative  appends two v2 bundles with valid outer signatures that a
 //           correct reader must still refuse: a re-addressed swap (inner
-//           binding) and a split key (key commitment). Needs sealed mode.
+//           binding) and a split key (key commitment); and a third whose
+//           outer signature lacks the v2 domain string, refused at the outer
+//           signature. Needs sealed mode. The low-level sealing pieces come
+//           from seal-primitives.mjs (test only), not from seal.js.
 //
 // Every key in vectors.json is a throwaway test key. None signs anything real.
 
@@ -87,9 +90,10 @@ if (mode === 'v1') {
     outsider: { privateKeyHex: outsider.privateKeyRaw.toString('hex'), publicKeyHex: outsider.publicKeyRaw.toString('hex') },
   };
   v.passphrase = 'correct horse battery staple, test only';
-  // Low iteration count keeps the vector fast to open in tests; real exports
-  // use the default. The count is carried in the bundle, so readers honour it.
-  v.passphraseIterations = 1000;
+  // The seal-time floor (docs/PAP-SEALED.md): pack() refuses below it, and
+  // there is no override. Real exports use the default, 600000. The count is
+  // carried in the bundle, so readers honour it.
+  v.passphraseIterations = 100000;
 
   const sealedTwo = packMod.pack({
     ...base,
@@ -117,51 +121,60 @@ if (mode === 'v1') {
   // Bundles a correct reader must refuse even though the outer signature is
   // valid. Built from the committed sealed vector and keys, so every reader
   // (node and the page) is tested on the same bytes.
-  const seal = await import('../../src/publish/seal.js');
+  // The low-level sealing pieces come from the test-only primitives: seal.js
+  // exports nothing that encrypts under a caller-supplied key.
+  const prim = await import('./seal-primitives.mjs');
   const manifest = await import('../../src/publish/manifest.js');
   const two = fs.readFileSync(path.join(DIR, v.vectors['v2-sealed-two-recipients'].file));
   const r1Priv = v.recipients.r1.privateKeyHex;
   const { contentKey } = packMod.unpack({ bundle: two, recipientKey: r1Priv });
   const m = manifest.decodeSealedManifest(two.subarray(0, two.length - 64));
-  const innerBytes = seal.aeadOpen(seal.bodyKey(contentKey), m.ciphertext, m.headerBytes);
+  const innerBytes = prim.aeadOpen(prim.bodyKey(contentKey), m.ciphertext, m.headerBytes);
   const r2Pub = Buffer.from(v.recipients.r2.publicKeyHex, 'hex');
   const r1Pub = Buffer.from(v.recipients.r1.publicKeyHex, 'hex');
 
   function sealedBundle(wraps, commitKey, bodyKeyCek, inner) {
     const eph = crypto.generateKeyPairSync('x25519');
-    const ephRaw = seal.x25519RawPublic(eph.publicKey);
+    const ephRaw = prim.x25519RawPublic(eph.publicKey);
     const headerBytes = manifest.encodeSealedHeader({
       chainHeadHash: base.chainHeadHash, chainPubkeyFp: base.chainPubkeyFp, seq: base.seq, timestamp: base.timestamp,
-      keyCommit: seal.keyCommitment(commitKey),
+      keyCommit: prim.keyCommitment(commitKey),
       ephemeralPub: ephRaw,
-      x25519Wrapped: wraps.map(([cek, pub]) => seal.x25519Wrap(cek, eph.privateKey, ephRaw, pub)),
+      x25519Wrapped: wraps.map(([cek, pub]) => prim.x25519Wrap(cek, eph.privateKey, ephRaw, pub)),
       passphrase: null,
     });
     const body = typeof inner === 'function' ? inner(headerBytes) : inner;
-    const mb = manifest.encodeSealedManifest(headerBytes, seal.aeadSeal(seal.bodyKey(bodyKeyCek), body, headerBytes));
-    return Buffer.concat([mb, crypto.sign(null, mb, signingKey)]);
+    const mb = manifest.encodeSealedManifest(headerBytes, prim.aeadSeal(prim.bodyKey(bodyKeyCek), body, headerBytes));
+    return Buffer.concat([mb, prim.signOuter(mb, signingKey)]);
   }
 
   // 1. The same inner bytes (inner signature included) re-addressed to r2
   //    under a valid outer signature by the same key: inner binding fails.
-  const k1 = seal.generateContentKey();
+  const k1 = prim.generateContentKey();
   const readdressed = sealedBundle([[k1, r2Pub]], k1, k1, innerBytes);
   // 2. r1's stanza wraps the committed key, r2's stanza a different one:
   //    r1 opens, r2 fails the key commitment.
-  const good = seal.generateContentKey();
-  const other = seal.generateContentKey();
+  const good = prim.generateContentKey();
+  const other = prim.generateContentKey();
   const spineRaw = Buffer.from(v.spine, 'utf8');
   const equivocal = sealedBundle([[good, r1Pub], [other, r2Pub]], good, good, (headerBytes) => {
-    const sig = crypto.sign(null, seal.innerMessage(headerBytes, spineRaw, Buffer.alloc(0)), signingKey);
+    const sig = crypto.sign(null, prim.innerMessage(headerBytes, spineRaw, Buffer.alloc(0)), signingKey);
     return Buffer.concat([sig, Buffer.from([0, 0]), innerBytes.subarray(64 + 2 + innerBytes.readUInt16BE(64))]);
   });
-  for (const [name, bytes, expect] of [
-    ['v2-neg-readdressed', readdressed, { r2: 'PAP_INNER_BINDING_INVALID' }],
-    ['v2-neg-key-commit', equivocal, { r1: 'opens', r2: 'PAP_KEY_COMMIT_MISMATCH' }],
+  // 3. The committed two-recipient bundle with its outer signature made over
+  //    the bare manifest, the way the construction worked before the outer
+  //    domain string. Everything else is byte for byte the good vector. A
+  //    correct reader refuses it at the outer signature.
+  const manifestBytes = two.subarray(0, two.length - 64);
+  const noDomain = Buffer.concat([manifestBytes, crypto.sign(null, manifestBytes, signingKey)]);
+  for (const [name, bytes, extra] of [
+    ['v2-neg-readdressed', readdressed, { expect: { r2: 'PAP_INNER_BINDING_INVALID' } }],
+    ['v2-neg-key-commit', equivocal, { expect: { r1: 'opens', r2: 'PAP_KEY_COMMIT_MISMATCH' } }],
+    ['v2-neg-outer-no-domain', noDomain, { outerInvalid: true, expect: {} }],
   ]) {
     fs.writeFileSync(path.join(DIR, name + '.bin'), bytes);
     v.vectors[name] = {
-      file: name + '.bin', version: 2, negative: true, expect,
+      file: name + '.bin', version: 2, negative: true, ...extra,
       bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
     };
   }

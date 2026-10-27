@@ -47,7 +47,8 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); }
 <section id="result" hidden aria-live="polite">
   <p id="status" class="status"></p>
   <dl>
-    <dt>Signer fingerprint</dt><dd id="f-signer"></dd>
+    <dt>Key fingerprint it carries</dt><dd id="f-signer"></dd>
+    <dt>Trust basis</dt><dd id="f-trust"></dd>
     <dt>Chain head</dt><dd id="f-head"></dd>
     <dt>Seq</dt><dd id="f-seq"></dd>
     <dt>Time</dt><dd id="f-time"></dd>
@@ -72,7 +73,7 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); }
 </section>
 
 <footer>
-  <p>Verified means the bundle is unaltered and was signed by the key with this fingerprint. It does not mean the contents are correct. The signer's chain key sits unencrypted on their machine, so anyone holding that file can sign as them. The time is the signer's claim; the chain head only shows the bundle was signed after that entry existed.</p>
+  <p>Verified means the bundle is unaltered and its signature matches the key fingerprint the bundle itself carries. That fingerprint is inside the bundle, so it names a signer only if you compare it with one you already trust. It does not mean the contents are correct. The signer's chain key sits unencrypted on their machine, so anyone holding that file can sign as them. The time is the signer's claim; the chain head only shows the bundle was signed after that entry existed.</p>
   <p>This page is only as trustworthy as the copy of it you are running. Save it, check its hash, and run it offline.</p>
 </footer>
 </main>

@@ -47,7 +47,8 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); }
 <section id="result" hidden aria-live="polite">
   <p id="status" class="status"></p>
   <dl>
-    <dt>Signer fingerprint</dt><dd id="f-signer"></dd>
+    <dt>Key fingerprint it carries</dt><dd id="f-signer"></dd>
+    <dt>Trust basis</dt><dd id="f-trust"></dd>
     <dt>Chain head</dt><dd id="f-head"></dd>
     <dt>Seq</dt><dd id="f-seq"></dd>
     <dt>Time</dt><dd id="f-time"></dd>
@@ -72,7 +73,7 @@ label { display: block; margin: 10px 0 4px; color: var(--muted); }
 </section>
 
 <footer>
-  <p>Verified means the bundle is unaltered and was signed by the key with this fingerprint. It does not mean the contents are correct. The signer's chain key sits unencrypted on their machine, so anyone holding that file can sign as them. The time is the signer's claim; the chain head only shows the bundle was signed after that entry existed.</p>
+  <p>Verified means the bundle is unaltered and its signature matches the key fingerprint the bundle itself carries. That fingerprint is inside the bundle, so it names a signer only if you compare it with one you already trust. It does not mean the contents are correct. The signer's chain key sits unencrypted on their machine, so anyone holding that file can sign as them. The time is the signer's claim; the chain head only shows the bundle was signed after that entry existed.</p>
   <p>This page is only as trustworthy as the copy of it you are running. Save it, check its hash, and run it offline.</p>
 </footer>
 </main>
@@ -13039,6 +13040,10 @@ self.nobleEd25519 = { verifyAsync };
  */
 
 const QR_CAP = 2953;
+// Cap on a decoded spine, as in src/publish/pack.js (MAX_SPINE_RAW_BYTES). The
+// vendored decoder has no output limit, so this is checked after the decode;
+// what bounds the decode itself is refusing any bundle over QR_CAP up front.
+const MAX_SPINE_RAW_BYTES = 4 * 1024 * 1024;
 const SIG_LEN = 64;
 const V1 = 0x01;
 const V2 = 0x02;
@@ -13097,6 +13102,9 @@ function equal(a, b) {
 /** Parse without verifying. Throws PAP_MALFORMED on any layout error. */
 function parse(bundle) {
   const b = bundle instanceof Uint8Array ? bundle : new Uint8Array(bundle);
+  // A QR holds at most QR_CAP bytes, so a longer input is not a bundle from a
+  // QR. Refusing it here, before any decoding, bounds the brotli input.
+  if (b.length > QR_CAP) throw fail('PAP_BUNDLE_TOO_LARGE', `bundle is ${b.length} bytes; a QR holds at most ${QR_CAP}`);
   if (b.length < SIG_LEN + 1) throw fail('PAP_MALFORMED', `bundle too short: ${b.length} bytes`);
   const manifest = b.subarray(0, b.length - SIG_LEN);
   const signature = b.subarray(b.length - SIG_LEN);
@@ -13186,6 +13194,27 @@ async function verifyEd25519(deps, pub, sig, msg) {
   }
 }
 
+/** brotli with PAP error codes and the 4 MiB output cap (checked after the decode). */
+function inflate(deps, compressed) {
+  let out;
+  try {
+    out = deps.brotliDecode(compressed);
+  } catch (err) {
+    throw fail('PAP_DECOMPRESS_FAILED', 'spine is not valid brotli');
+  }
+  if (out.length > MAX_SPINE_RAW_BYTES) {
+    throw fail('PAP_SPINE_TOO_LARGE', `spine decompresses past the ${MAX_SPINE_RAW_BYTES}-byte cap`);
+  }
+  return out;
+}
+
+/** A content key is 32 bytes or 64 hex characters (surrounding whitespace is ignored). */
+function parseContentKey(input) {
+  if (input instanceof Uint8Array && input.length === 32) return input;
+  if (typeof input === 'string' && /^[0-9a-f]{64}$/i.test(input.trim())) return fromHex(input);
+  throw fail('PAP_BAD_CONTENT_KEY', 'a content key is 64 hex characters');
+}
+
 async function aesGcmOpen(subtle, keyBytes, sealed, aad) {
   const key = await subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
   const params = { name: 'AES-GCM', iv: ZERO_NONCE, tagLength: 128 };
@@ -13263,7 +13292,9 @@ async function verify(bundle, deps) {
   } catch (err) {
     return { ok: false, code: err.code || 'PAP_MALFORMED', reason: err.message, bytes: bundle.length, cap: QR_CAP };
   }
-  const v = await verifyEd25519(deps, p.chainPubkeyFp, p.signature, p.manifest);
+  // v2 signs a domain string and the manifest (docs/PAP-SEALED.md); v1 signs the bare manifest.
+  const signed = p.sealed ? concat(enc.encode('lotor/pap/v2/outer'), new Uint8Array([0]), p.manifest) : p.manifest;
+  const v = await verifyEd25519(deps, p.chainPubkeyFp, p.signature, signed);
   const facts = {
     bytes: bundle.length,
     cap: QR_CAP,
@@ -13277,9 +13308,12 @@ async function verify(bundle, deps) {
     verifiedVia: v.via,
   };
   if (!v.ok) {
-    return { ok: false, code: 'PAP_SIGNATURE_INVALID', reason: 'signature does not verify: altered, or signed by a different key', ...facts };
+    return { ok: false, code: 'PAP_SIGNATURE_INVALID', reason: 'signature does not verify under the key this bundle carries: altered after signing, or not signed by that key', ...facts };
   }
-  return { ok: true, ...facts };
+  // The page never has a key of its own to supply, so a pass is always
+  // self-consistency with the fingerprint the bundle carries. Comparing that
+  // fingerprint with one you trust is the reader's job, not a check made here.
+  return { ok: true, trust: 'self-consistent', ...facts };
 }
 
 /**
@@ -13291,13 +13325,13 @@ async function open(bundle, opener, deps) {
   if (!v.ok) throw fail(v.code, v.reason, { verification: v });
   const p = parse(bundle);
   if (!p.sealed) {
-    const spine = dec.decode(deps.brotliDecode(p.spineCompressed));
+    const spine = dec.decode(inflate(deps, p.spineCompressed));
     return { verification: v, spine, memoirUrl: p.memoirUrl };
   }
   const subtle = deps.subtle;
   let cek = null;
-  if (opener && opener.contentKey) {
-    cek = fromHex(opener.contentKey);
+  if (opener && opener.contentKey !== undefined && opener.contentKey !== null) {
+    cek = parseContentKey(opener.contentKey);
   } else if (!opener || (opener.recipientKey === undefined && opener.passphrase === undefined)) {
     throw fail('PAP_SEALED_NEEDS_KEY', 'verified and sealed; no key given', { verification: v });
   } else {
@@ -13322,7 +13356,7 @@ async function open(bundle, opener, deps) {
   const memoirLen = u16(inner, SIG_LEN);
   if (SIG_LEN + 2 + memoirLen > inner.length) throw fail('PAP_DECRYPT_FAILED', 'sealed body is malformed', { verification: v });
   const memoir = inner.subarray(SIG_LEN + 2, SIG_LEN + 2 + memoirLen);
-  const spineRaw = deps.brotliDecode(inner.subarray(SIG_LEN + 2 + memoirLen));
+  const spineRaw = inflate(deps, inner.subarray(SIG_LEN + 2 + memoirLen));
   const msg = concat(
     enc.encode('lotor/pap/v2/inner'), new Uint8Array([0]),
     await sha256(subtle, p.header), await sha256(subtle, spineRaw), await sha256(subtle, memoir),
@@ -13409,9 +13443,11 @@ function mount(doc, reader, deps, scanQr) {
     $('result').hidden = false;
     $('status').className = v.ok ? 'status ok' : 'status bad';
     setText('status', v.ok
-      ? (v.sealed ? 'Verified. Sealed: the signature checks out without reading the contents.' : 'Verified.')
+      ? (v.sealed ? 'Verified. Sealed: the signature matches the fingerprint this bundle carries, checked without reading the contents. Compare that fingerprint with one you trust; this does not say who signed it.'
+        : 'Verified. The signature matches the fingerprint this bundle carries. Compare that fingerprint with one you trust; this does not say who signed it.')
       : 'Not verified. ' + v.reason);
     setText('f-signer', v.signerFingerprint || 'n/a');
+    setText('f-trust', v.ok ? describeTrust(v.trust) : 'n/a');
     setText('f-head', v.chainHead || 'n/a');
     setText('f-seq', v.seq === undefined ? 'n/a' : String(v.seq));
     setText('f-time', v.timestamp === undefined ? 'n/a' : new Date(v.timestamp).toISOString() + " (the signer's claim)");
@@ -13422,6 +13458,12 @@ function mount(doc, reader, deps, scanQr) {
     setText('spine', '');
     $('spine-box').hidden = true;
     setText('open-msg', '');
+  }
+
+  function describeTrust(t) {
+    return t === 'self-consistent'
+      ? 'self-consistent: unaltered, and it matches the fingerprint above, which the bundle supplied itself'
+      : String(t || 'n/a');
   }
 
   function describe(r) {

@@ -18,9 +18,11 @@ export function mount(doc, reader, deps, scanQr) {
     $('result').hidden = false;
     $('status').className = v.ok ? 'status ok' : 'status bad';
     setText('status', v.ok
-      ? (v.sealed ? 'Verified. Sealed: the signature checks out without reading the contents.' : 'Verified.')
+      ? (v.sealed ? 'Verified. Sealed: the signature matches the fingerprint this bundle carries, checked without reading the contents. Compare that fingerprint with one you trust; this does not say who signed it.'
+        : 'Verified. The signature matches the fingerprint this bundle carries. Compare that fingerprint with one you trust; this does not say who signed it.')
       : 'Not verified. ' + v.reason);
     setText('f-signer', v.signerFingerprint || 'n/a');
+    setText('f-trust', v.ok ? describeTrust(v.trust) : 'n/a');
     setText('f-head', v.chainHead || 'n/a');
     setText('f-seq', v.seq === undefined ? 'n/a' : String(v.seq));
     setText('f-time', v.timestamp === undefined ? 'n/a' : new Date(v.timestamp).toISOString() + " (the signer's claim)");
@@ -31,6 +33,12 @@ export function mount(doc, reader, deps, scanQr) {
     setText('spine', '');
     $('spine-box').hidden = true;
     setText('open-msg', '');
+  }
+
+  function describeTrust(t) {
+    return t === 'self-consistent'
+      ? 'self-consistent: unaltered, and it matches the fingerprint above, which the bundle supplied itself'
+      : String(t || 'n/a');
   }
 
   function describe(r) {

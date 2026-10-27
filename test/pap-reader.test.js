@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
 
@@ -27,6 +28,7 @@ import { BrotliDecode } from '../web/reader/vendor/brotli-decode.js';
 import * as noble from '../web/reader/vendor/noble-ed25519.js';
 import { build, VENDOR } from '../web/reader/build.mjs';
 import { unpack } from '../src/publish/pack.js';
+import { encodeManifest } from '../src/publish/manifest.js';
 import { bundleToPng } from '../src/publish/qr.js';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -132,6 +134,22 @@ describe('PAP reader: shared vectors', () => {
     }
   });
 
+  it('negative vector: an outer signature made without the v2 domain string is refused at the outer signature', async () => {
+    const b = vec('v2-neg-outer-no-domain');
+    assert.equal(V.vectors['v2-neg-outer-no-domain'].outerInvalid, true);
+    for (const d of [deps, fallbackDeps]) {
+      const v = await reader.verify(b, d);
+      assert.equal(v.ok, false);
+      assert.equal(v.code, 'PAP_SIGNATURE_INVALID');
+      assert.equal(await codeOf(reader.open(b, { recipientKey: V.recipients.r1.privateKeyHex }, d)), 'PAP_SIGNATURE_INVALID');
+    }
+    // Control: the good vector has the same manifest bytes and a domain-separated signature.
+    const good = vec('v2-sealed-two-recipients');
+    assert.equal(Buffer.compare(Buffer.from(b.subarray(0, b.length - 64)), Buffer.from(good.subarray(0, good.length - 64))), 0,
+      'the negative differs from the good vector only in its signature');
+    assert.equal((await reader.verify(good, deps)).ok, true);
+  });
+
   it('every single-bit flip of every vector fails verification, and verify() never throws', async () => {
     for (const name of ['v1-plain', 'v2-sealed-two-recipients', 'v2-sealed-passphrase']) {
       const b = vec(name);
@@ -173,6 +191,95 @@ describe('PAP reader: shared vectors', () => {
       assert.equal(v.ok, false);
       assert.match(v.code, /^PAP_/);
     }
+  });
+});
+
+describe('PAP reader: wringer review amendments', () => {
+  const signerKey = crypto.createPrivateKey(V.signer.privateKeyPem);
+  function v1Bundle(spineCompressed) {
+    const m = encodeManifest({
+      chainHeadHash: Buffer.from(V.chainHeadHex, 'hex'), chainPubkeyFp: Buffer.from(V.signer.publicKeyHex, 'hex'),
+      seq: 1, timestamp: V.timestamp, memoirUrl: '', spineCompressed,
+    });
+    return new Uint8Array(Buffer.concat([m, crypto.sign(null, m, signerKey)]));
+  }
+
+  it('trust: a pass is reported as self-consistent, because the page never has a supplied key (v1, v2, WebCrypto and fallback)', async () => {
+    for (const d of [deps, fallbackDeps]) {
+      for (const name of ['v1-plain', 'v2-sealed-two-recipients', 'v2-sealed-passphrase']) {
+        const v = await reader.verify(vec(name), d);
+        assert.equal(v.ok, true, name);
+        assert.equal(v.trust, 'self-consistent', name);
+      }
+    }
+    const o = await reader.open(vec('v2-sealed-two-recipients'), { recipientKey: V.recipients.r1.privateKeyHex }, deps);
+    assert.equal(o.verification.trust, 'self-consistent');
+    assert.equal((await reader.open(vec('v1-plain'), {}, deps)).verification.trust, 'self-consistent');
+    // A refusal carries no trust claim.
+    const t = vec('v1-plain');
+    t[t.length - 1] ^= 1;
+    assert.equal((await reader.verify(t, deps)).trust, undefined);
+  });
+
+  it('size cap: a bundle over the 2,953 B QR cap is refused before any decoding, even with a valid signature', async () => {
+    let decoded = 0;
+    const spy = { ...deps, brotliDecode: (u8) => { decoded++; return deps.brotliDecode(u8); } };
+    const big = v1Bundle(crypto.randomBytes(3500));
+    assert.ok(big.length > reader.QR_CAP);
+    const v = await reader.verify(big, spy);
+    assert.equal(v.ok, false);
+    assert.equal(v.code, 'PAP_BUNDLE_TOO_LARGE');
+    assert.equal(v.bytes, big.length);
+    assert.equal(await codeOf(reader.open(big, {}, spy)), 'PAP_BUNDLE_TOO_LARGE');
+    assert.equal(decoded, 0, 'the brotli decoder must not run on an oversized bundle');
+    // Control: a small valid bundle of the same shape is read.
+    const small = v1Bundle(zlib.brotliCompressSync(Buffer.from('ok')));
+    assert.ok(small.length <= reader.QR_CAP);
+    assert.equal((await reader.open(small, {}, spy)).spine, 'ok');
+    assert.equal(decoded, 1);
+    // The boundary: exactly the cap reaches the parser, one byte more does not.
+    const exact = new Uint8Array(reader.QR_CAP);
+    exact[0] = 9;
+    assert.equal((await reader.verify(exact, spy)).code, 'PAP_MALFORMED', 'at the cap it reaches the parser');
+    assert.equal((await reader.verify(new Uint8Array(reader.QR_CAP + 1), spy)).code, 'PAP_BUNDLE_TOO_LARGE');
+  });
+
+  it('decompression: output over 4 MiB is PAP_SPINE_TOO_LARGE and a decoder failure is PAP_DECOMPRESS_FAILED (v1 and v2)', async () => {
+    const huge = { ...deps, brotliDecode: () => new Uint8Array(4 * 1024 * 1024 + 1) };
+    const broken = { ...deps, brotliDecode: () => { throw new Error('decoder blew up'); } };
+    const atCap = { ...deps, brotliDecode: () => new Uint8Array(4 * 1024 * 1024) };
+    const r1 = V.recipients.r1.privateKeyHex;
+    assert.equal(await codeOf(reader.open(vec('v1-plain'), {}, huge)), 'PAP_SPINE_TOO_LARGE');
+    assert.equal(await codeOf(reader.open(vec('v1-plain'), {}, broken)), 'PAP_DECOMPRESS_FAILED');
+    assert.equal(await codeOf(reader.open(vec('v2-sealed-two-recipients'), { recipientKey: r1 }, huge)), 'PAP_SPINE_TOO_LARGE');
+    assert.equal(await codeOf(reader.open(vec('v2-sealed-two-recipients'), { recipientKey: r1 }, broken)), 'PAP_DECOMPRESS_FAILED');
+    // Exactly at the cap is not over it (v1 has no inner signature to fail).
+    assert.equal((await reader.open(vec('v1-plain'), {}, atCap)).spine.length, 4 * 1024 * 1024);
+    assert.equal(reader.MAX_SPINE_RAW_BYTES, 4 * 1024 * 1024);
+  });
+
+  it('content key: anything that is not 32 bytes / 64 hex chars is PAP_BAD_CONTENT_KEY, not a commitment mismatch', async () => {
+    const b = vec('v2-sealed-two-recipients');
+    for (const bad of ['zz'.repeat(32), 'ab'.repeat(31), 'ab'.repeat(33), '', 'not hex at all', new Uint8Array(31), new Uint8Array(33)]) {
+      assert.equal(await codeOf(reader.open(b, { contentKey: bad }, deps)), 'PAP_BAD_CONTENT_KEY', JSON.stringify(String(bad)).slice(0, 24));
+    }
+    assert.equal(await codeOf(reader.open(b, { contentKey: 'ab'.repeat(32) }, deps)), 'PAP_KEY_COMMIT_MISMATCH');
+    const { contentKey } = await reader.open(b, { recipientKey: V.recipients.r1.privateKeyHex }, deps);
+    assert.equal((await reader.open(b, { contentKey: ' ' + contentKey + ' ' }, deps)).spine, V.spine, 'surrounding whitespace from a paste is fine');
+  });
+
+  it('wording: the page says the signature matches the fingerprint the bundle carries, and never claims authorship', () => {
+    const view = fs.readFileSync(path.join(repoRoot, 'web', 'reader', 'view.js'), 'utf8');
+    const src = fs.readFileSync(path.join(repoRoot, 'web', 'reader', 'index.src.html'), 'utf8');
+    const html = fs.readFileSync(path.join(repoRoot, 'web', 'reader', 'index.html'), 'utf8');
+    assert.match(view, /matches the fingerprint this bundle carries/);
+    assert.match(view, /[Cc]ompare that fingerprint with one you trust/);
+    const body = html.slice(html.indexOf('<body>'), html.indexOf('<!-- vendor:'));
+    for (const [label, text] of [['view.js', view], ['index.src.html', src], ['index.html body', body]]) {
+      assert.doesNotMatch(text, /was signed by the key|signed by the key with this fingerprint|authored by|proves who/i, label);
+    }
+    assert.match(src, /names a signer only if you compare it with one you already trust/);
+    assert.match(src, /Trust basis/);
   });
 });
 
