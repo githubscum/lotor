@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
+ stamped 2026-10-27
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: 787aa8878ed3ca65fc6a36c82a5812c5cea965c4da79685f49b14f2d39a50fbb
+ body-sha256: a74d310c9d64ba36185a3a1c4d003d8fbb214d13f507e4778e8c11cd9bea258a
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -1879,6 +1879,30 @@ a passphrase can open it, the signer's fingerprint, the chain head, the seq and
 the timestamp. A passphrase-sealed QR can be attacked offline by anyone who scans
 it, as many guesses as they can afford: PBKDF2 at 600,000 iterations slows a
 guess, it does not stop a weak passphrase. Seal to keys when it matters.
+
+Amended 2026-10-26 (wringer review of the sealed-mode patch; sealed mode still
+not landed). Three additions, nothing above is withdrawn. First, what a
+passphrase needs: PBKDF2 is not memory-hard, so GPUs and ASICs attack it far
+faster per dollar than they would a memory-hard KDF. That is the price of using
+only WebCrypto primitives so the offline reader can open a bundle at all. The
+salt and the iteration count are public in the QR, and a writer cannot choose
+fewer than 100,000 rounds (the floor, enforced at seal time; a reader opens
+whatever count the bundle carries). Treat the passphrase as the whole secret:
+it needs real entropy (a long random one, not a chosen word or phrase), because
+the scanned QR gives an attacker unlimited offline guesses for as long as the
+bundle exists. Second, a recipient-membership oracle: the stanzas carry no
+recipient identifier, and each either authenticates under a candidate secret or
+does not. Anyone holding a candidate passphrase, or a candidate recipient
+private key such as a leaked or seized one, can test offline against any
+scanned bundle whether it opens, without the author knowing. A candidate public
+key alone does not give that test (the unwrap needs the secret half); the
+bundle itself shows only how many X25519 stanzas it has and whether a
+passphrase stanza exists. Third, the sentence above that a signature "proves who
+authored the bundle" reads, precisely: the bundle verifies under the key
+fingerprint it carries. That is self-consistency. It names an author only to a
+reader who compares that fingerprint with one they already trust, or who
+supplies the key; `inspect()`, `unpack()` and `pap-boot` report which of the
+two happened.
 
 ## 46. A PAP signature proves authorship and integrity, never spine quality or safety
 

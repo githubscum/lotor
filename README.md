@@ -176,7 +176,7 @@ npm run grant -- --session <id> --all-pending --max-actions 20 --expires-in-ms 3
 
 `npm run pap:export -- --spine <file> --public` packs a text spine into one QR (2,953 bytes at most), signed with your chain key and stamped with your chain head and seq. `npm run pap:boot -- --bundle <file.bin>` verifies the signature and prints the spine.
 
-**What the signature proves, and only that.** Anyone can check that the bundle is untouched and was signed by the key whose fingerprint it carries. "Cannot be forged" means "cannot be forged without the chain key file", and that file sits unencrypted on your disk (KNOWN-LIMITS 8, 48): anyone who can read it can sign bundles in your name. A signature proves custody, never that the spine is correct (KNOWN-LIMITS 46). A QR is a broadcast medium; `--public` is required because anyone who scans it reads it (KNOWN-LIMITS 45).
+**What the signature proves, and only that.** Anyone can check that the bundle is untouched and verifies under the key fingerprint it carries. The fingerprint is inside the bundle, so that check alone is self-consistency: it names an author only if you compare that fingerprint with one you already trust, or pass the key in yourself. "Cannot be forged" means "cannot be forged without the chain key file", and that file sits unencrypted on your disk (KNOWN-LIMITS 8, 48): anyone who can read it can sign bundles in your name. A signature proves custody, never that the spine is correct (KNOWN-LIMITS 46). A QR is a broadcast medium; `--public` is required because anyone who scans it reads it (KNOWN-LIMITS 45).
 
 ## Not built yet
 
