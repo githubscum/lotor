@@ -120,25 +120,50 @@ packNew = replaceOnce(packNew, 'pack imports',
     '  HEADER_FIXED_LEN,',
     '  SPINE_LEN_TAG_BYTES,',
     '  VERSION_SEALED,',
-    '  PASSPHRASE_SALT_LEN,',
     "} from './manifest.js';",
     'import {',
-    '  DEFAULT_PBKDF2_ITERATIONS,',
-    '  generateContentKey,',
-    '  keyCommitment,',
+    '  createSealer,',
     '  commitmentMatches,',
-    '  bodyKey,',
-    '  aeadSeal,',
     '  aeadOpen,',
-    '  x25519RawPublic,',
+    '  openBody,',
     '  generateRecipientKeypair,',
-    '  parseRecipientPublicKey,',
     '  parseRecipientPrivateKey,',
-    '  x25519Wrap,',
     '  x25519Unwrap,',
     '  passphraseKek,',
     '  innerMessage,',
+    '  outerMessage,',
     "} from './seal.js';",
+  ].join(LF));
+// v1 unpack(): same bytes in and out; the signer check, the capped decompress
+// and the trust field now come from the shared helpers in the sealed block.
+packNew = replaceOnce(packNew, 'v1 unpack verify',
+  [
+    '  const verifyKey = inputs.verifyKey || rawEd25519PublicKeyToKeyObject(manifest.chainPubkeyFp);',
+    '  const ok = crypto.verify(null, manifestBytes, verifyKey, signature);',
+    '  if (!ok) {',
+    "    const err = new Error('signature verification failed: bundle has been altered or was signed by a different key');",
+    "    err.code = 'PAP_SIGNATURE_INVALID';",
+    '    throw err;',
+    '  }',
+  ].join(LF),
+  [
+    '  const { verifyKey, trust } = resolveVerifier(inputs.verifyKey, manifest.chainPubkeyFp);',
+    '  if (!crypto.verify(null, manifestBytes, verifyKey, signature)) throw signatureInvalid();',
+  ].join(LF));
+packNew = replaceOnce(packNew, 'v1 unpack decompress',
+  '  const spineRaw = zlib.brotliDecompressSync(manifest.spineCompressed);',
+  '  const spineRaw = boundedBrotli(manifest.spineCompressed);');
+packNew = replaceOnce(packNew, 'v1 unpack result',
+  ['    spineCompressedLen: manifest.spineCompressed.length,', '  };'].join(LF),
+  ['    spineCompressedLen: manifest.spineCompressed.length,', '    trust,', '  };'].join(LF));
+packNew = replaceOnce(packNew, 'v1 unpack doc',
+  [' * @returns {{ manifest: Object, spine: string, spineRawLen: number,', ' *             spineCompressedLen: number }}'].join(LF),
+  [
+    ' * @returns {{ manifest: Object, spine: string, spineRawLen: number,',
+    ' *             spineCompressedLen: number, trust: string }}',
+    ' *   trust is "self-consistent" when the key came from the bundle itself,',
+    ' *   "verified-against-supplied-key" when the caller passed verifyKey (which',
+    ' *   must equal the embedded fingerprint, else PAP_SIGNER_MISMATCH).',
   ].join(LF));
 packNew = replaceOnce(packNew, 'pack dispatch',
   ['function pack(inputs) {', '  if (typeof inputs.spine'].join(LF),
@@ -156,7 +181,7 @@ packNew = replaceOnce(packNew, 'sealed block',
   readProp('pack.sealed-block.txt') + '// ---------- internal ----------' + LF);
 packNew = replaceOnce(packNew, 'pack exports',
   ['export {', '  pack,', '  unpack,', '  generateKeypair,', '};'].join(LF),
-  ['export {', '  pack,', '  unpack,', '  inspect,', '  generateKeypair,', '  generateRecipientKeypair,', '};'].join(LF));
+  ['export {', '  pack,', '  unpack,', '  inspect,', '  generateKeypair,', '  generateRecipientKeypair,', '  MAX_SPINE_RAW_BYTES,', '};'].join(LF));
 
 // ---- whole-file proposals (base-hash guarded above, or new)
 //

@@ -17,7 +17,10 @@
 //   ciphertextLen     u16
 //   ciphertext        AES-256-GCM output with the 16-byte tag appended
 //
-// The outer Ed25519 signature (64B, appended by pack.js) covers all of it.
+// The outer Ed25519 signature (64B, appended by pack.js) covers all of it,
+// prefixed by the domain string "lotor/pap/v2/outer" and one 0x00 byte. The
+// prefix is not part of the layout and not on the wire; v1 signs the bare
+// manifest and is unchanged.
 
 const VERSION_SEALED = 0x02;
 const KEY_COMMIT_LEN = 32;

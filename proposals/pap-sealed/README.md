@@ -27,8 +27,20 @@ mode is a patch, not a commit, and lands one signature per target.
    `git apply --include=src/publish/seal.js proposals/pap-sealed.patch`, then
    `manifest.js`, `pack.js`, `bin/pap-export.js`, `bin/pap-boot.js`,
    `bin/pap-keygen.js`. Six signatures.
-3. `npm run limits-pin -- --stamp` (src/ moved), then `npm test`. Expected: the 16
+3. `npm run limits-pin -- --stamp` (src/ moved), then `npm test`. Expected: the 29
    sealed tests run instead of skipping, the 3 rehearsal tests skip (LANDED), 0 fail.
+   (The 5 docs tests in `test/pap-sealed-docs.test.js` run before and after.)
+
+## Review amendments (wringer, 2026-10-26)
+
+Two things the sitting should know changed after the first draft of this patch:
+
+- The outer signature of a v2 bundle covers `"lotor/pap/v2/outer" 0x00 || manifest`.
+  Vectors made before the amendment do not verify; the committed ones are the new ones.
+- `seal.js` exports no function that encrypts under a caller-supplied key. Low-level
+  sealing for tests and vector generation lives in
+  `test-data/pap-vectors/seal-primitives.mjs` (test only, no safety limits, never
+  imported from `src/` or `bin/`).
 4. Optional live check: `node bin/pap-keygen.js --out <tmp>/me`, export a sealed
    bundle to `<tmp>/me.pub`, `pap-boot` it with no key (exit 5) and with the key
    (exit 0).

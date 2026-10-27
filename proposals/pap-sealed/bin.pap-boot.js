@@ -9,9 +9,15 @@
  *   node bin/pap-boot.js --bundle <path.bin> --content-key <hex64>
  *
  * Reads bundle bytes from --bundle (or stdin if the path is `-`),
- * verifies the signature (against --verify-key if supplied, otherwise
- * against the pubkey embedded in the manifest), decompresses the spine,
- * and writes it to stdout.
+ * verifies the signature, decompresses the spine, and writes it to stdout.
+ *
+ * What "verified" means is printed as a trust line. With no --verify-key the
+ * signature is checked against the pubkey the bundle itself carries, so the
+ * result is "self-consistent": the bundle is unaltered and agrees with its own
+ * fingerprint. That proves who signed it only if you compare the printed
+ * fingerprint with one you already trust. With --verify-key the key must BE
+ * the bundle's embedded fingerprint, else exit 4 (signer mismatch), and the
+ * trust line reads "verified-against-supplied-key".
  *
  * A sealed (v2) bundle verifies without a key: with no key flag, pap-boot
  * prints "verified, sealed to N" and exits 5 with nothing on stdout. A
@@ -23,11 +29,13 @@
  * Exit codes:
  *   0 on success
  *   1 on I/O error or unexpected failure
- *   2 on bad arguments
- *   4 on signature verification failure (limit of the record itself)
+ *   2 on bad arguments (including a malformed recipient or content key)
+ *   4 on signature verification failure, or a --verify-key that is not the
+ *     bundle's embedded signer (limit of the record itself)
  *   5 sealed bundle verified, but no key given to open it
  *   6 sealed bundle verified, but the key does not open it
- *   7 sealed bundle failed its key commitment, decrypt or inner binding check
+ *   7 bundle failed its key commitment, decrypt or inner binding check, or
+ *     its spine would expand past the cap or is not valid brotli
  *
  * A separate decoder-from-image tool is out of scope for v1 (see
  * src/publish/qr.js). The boot spec (BOOT-SPEC.md in the WO-PAP-01
@@ -53,7 +61,20 @@ const SEALED_EXIT = {
   PAP_KEY_COMMIT_MISMATCH: 7,
   PAP_DECRYPT_FAILED: 7,
   PAP_INNER_BINDING_INVALID: 7,
+  PAP_SPINE_TOO_LARGE: 7,
+  PAP_DECOMPRESS_FAILED: 7,
+  PAP_KDF_BAD_PARAMS: 7,
+  PAP_BAD_KEY: 2,
+  PAP_BAD_CONTENT_KEY: 2,
 };
+
+function trustLine(trust) {
+  if (trust === 'verified-against-supplied-key') {
+    return '  trust verified-against-supplied-key (matches the key given with --verify-key)\n';
+  }
+  return '  trust self-consistent (verified against the fingerprint the bundle carries; ' +
+    'compare the fingerprint with one you trust before relying on who signed it)\n';
+}
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -87,7 +108,7 @@ function main() {
   }
 
   try {
-    const { manifest, spine, spineRawLen, spineCompressedLen, contentKey } = unpack({ bundle, verifyKey, ...opener });
+    const { manifest, spine, spineRawLen, spineCompressedLen, contentKey, trust } = unpack({ bundle, verifyKey, ...opener });
     process.stdout.write(spine);
     process.stderr.write(
       `pap-boot ok\n` +
@@ -97,6 +118,7 @@ function main() {
       `  timestamp ${manifest.timestamp} (${new Date(manifest.timestamp).toISOString()})\n` +
       `  chain head ${manifest.chainHeadHash.toString('hex')}\n` +
       `  chain pubkey fp ${manifest.chainPubkeyFp.toString('hex')}\n` +
+      trustLine(trust) +
       (manifest.memoirUrl ? `  memoir ${manifest.memoirUrl}\n` : '') +
       `  raw ${spineRawLen} B, compressed ${spineCompressedLen} B\n` +
       (args.printContentKey && contentKey ? `  content key ${contentKey.toString('hex')}\n` : ''),
@@ -107,6 +129,10 @@ function main() {
       process.stderr.write('pap-boot: ' + err.message + '\n');
       process.exit(4);
     }
+    if (err.code === 'PAP_SIGNER_MISMATCH') {
+      process.stderr.write('pap-boot: signer mismatch: ' + err.message + '\n');
+      process.exit(4);
+    }
     if (err.code in SEALED_EXIT) {
       const i = err.info;
       process.stderr.write(
@@ -115,7 +141,8 @@ function main() {
           ? `  seq ${i.seq}\n` +
             `  timestamp ${i.timestamp} (${new Date(i.timestamp).toISOString()})\n` +
             `  chain head ${i.chainHeadHash.toString('hex')}\n` +
-            `  chain pubkey fp ${i.chainPubkeyFp.toString('hex')}\n`
+            `  chain pubkey fp ${i.chainPubkeyFp.toString('hex')}\n` +
+            trustLine(i.trust)
           : ''),
       );
       process.exit(SEALED_EXIT[err.code]);

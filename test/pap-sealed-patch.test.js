@@ -130,7 +130,7 @@ describe('sealed PAP patch rehearsal (staged; proves the queued core patch)', ()
       const r = runSuites(tmp, ['test/pap-sealed.test.js', 'test/pap-pack.test.js', 'test/pap-qr.test.js']);
       assert.equal(r.fail, 0, r.out);
       assert.equal(r.status, 0, r.out);
-      assert.ok(r.pass >= 29, 'expected at least 29 passing tests, got ' + r.pass + LF + r.out);
+      assert.ok(r.pass >= 42, 'expected at least 42 passing tests, got ' + r.pass + LF + r.out);
     } finally {
       cleanup(tmp);
     }
@@ -143,7 +143,7 @@ describe('sealed PAP patch rehearsal (staged; proves the queued core patch)', ()
       const r = runSuites(tmp, ['test/pap-sealed.test.js']);
       assert.notEqual(r.status, 0, 'sealed suite passed with no patch: it proves nothing' + LF + r.out);
       assert.equal(r.pass, 0, r.out);
-      assert.ok(r.fail >= 16, 'expected every sealed test to fail unpatched, got ' + r.fail);
+      assert.ok(r.fail >= 29, 'expected every sealed test to fail unpatched, got ' + r.fail);
     } finally {
       cleanup(tmp);
     }

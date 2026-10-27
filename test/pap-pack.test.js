@@ -140,10 +140,17 @@ test('tamper: bundle signed by a different key is rejected', () => {
   // Ask unpack to verify against a *different* public key. The bundle
   // itself is valid, but it wasn't signed by the key the reader is
   // checking against — that must be rejected.
+  //
+  // The error code depends on whether the sealed-mode patch has landed
+  // (proposals/pap-sealed.patch). On main today the signature check fails:
+  // PAP_SIGNATURE_INVALID. Once the patch lands, a supplied key must equal
+  // the fingerprint the bundle carries, and a different one is refused before
+  // any signature work: PAP_SIGNER_MISMATCH. Either way it is rejected, and
+  // the v1 bundle bytes are the same.
   const { publicKey: otherPublic } = generateKeypair();
   assert.throws(
     () => unpack({ bundle, verifyKey: otherPublic }),
-    (err) => err.code === 'PAP_SIGNATURE_INVALID',
+    (err) => err.code === 'PAP_SIGNATURE_INVALID' || err.code === 'PAP_SIGNER_MISMATCH',
     'bundle verified against a wrong key must be rejected',
   );
 });

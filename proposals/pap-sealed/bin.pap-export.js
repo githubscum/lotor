@@ -31,8 +31,10 @@
  *
  * The --public flag is required and unlocks nothing except the operator's
  * acknowledgment that everything about to be encoded is going onto a
- * medium anyone can scan. See KNOWN-LIMITS 45. The signature proves who
- * authored the bundle, not that the bundle is safe to distribute. Sealed
+ * medium anyone can scan. See KNOWN-LIMITS 45. The signature ties the bundle
+ * to the key fingerprint it carries; it does not make the bundle safe to
+ * distribute, and it names the author only to a reader who compares that
+ * fingerprint with one they trust. Sealed
  * mode still needs --public: the ciphertext, the recipient count, the
  * signer, the chain head, the seq and the timestamp stay readable by anyone.
  *
@@ -74,9 +76,10 @@ const USAGE = [
   '                       --seq <n> --timestamp <ms>',
   '',
   'What a bundle proves, and what it does not:',
-  '  Anyone can check that the bundle is untouched and was signed by the chain key',
-  '  whose fingerprint it carries. That holds only while the chain key is secret,',
-  '  and the chain key is stored unencrypted on this machine (KNOWN-LIMITS 8, 48):',
+  '  Anyone can check that the bundle is untouched and verifies under the key',
+  '  fingerprint it carries. That names you only to a reader who compares the',
+  '  fingerprint with one they already trust, and only while the chain key is',
+  '  secret. The chain key is stored unencrypted on this machine (KNOWN-LIMITS 8, 48):',
   '  anyone who can read the key file can sign bundles in your name.',
   '  A signature proves custody, never that the spine is correct (KNOWN-LIMITS 46).',
   '  Sealed mode hides the spine, not the fact of the bundle: the ciphertext,',
@@ -244,6 +247,10 @@ main().catch((err) => {
   if (err && err.code === 'PAP_BUDGET_EXCEEDED') {
     process.stderr.write('pap-export: ' + err.message + '\n');
     process.exit(3);
+  }
+  if (err && (err.code === 'PAP_BAD_KEY' || err.code === 'PAP_SPINE_TOO_LARGE' || err.code === 'PAP_KDF_TOO_WEAK')) {
+    process.stderr.write('pap-export: ' + err.message + '\n');
+    process.exit(2);
   }
   process.stderr.write('pap-export: ' + (err && err.stack || err) + '\n');
   process.exit(1);

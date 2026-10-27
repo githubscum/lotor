@@ -25,7 +25,7 @@
       ],
       "memoirUrl": "https://example.invalid/memoir",
       "bytes": 539,
-      "sha256": "5e14d0e15e465ea1c8b862662acd5d863f2048f083522c6be5cad1c656a59026"
+      "sha256": "d11a03fda74dcfe014ecdbfbbb155725bfc4fb1b8874c467e1003e34cc14899b"
     },
     "v2-sealed-passphrase": {
       "file": "v2-sealed-passphrase.bin",
@@ -33,7 +33,7 @@
       "passphrase": true,
       "memoirUrl": "",
       "bytes": 449,
-      "sha256": "0ffb33248967037998f89f1094719b7f191eddd4480b6494cab6bcfa72d1c1c2"
+      "sha256": "d21e632fbfd6c27a5f550d8401c33e4dfea696f9020ac55e2300ed0e323da9b2"
     },
     "v2-neg-readdressed": {
       "file": "v2-neg-readdressed.bin",
@@ -43,7 +43,7 @@
         "r2": "PAP_INNER_BINDING_INVALID"
       },
       "bytes": 491,
-      "sha256": "941490a6d43ec1cccd6aba030e472b6bf54febdb9d1c62c79a8f9fde93293f57"
+      "sha256": "eae8579d997b8128c60910e6af09c57ae4ce4fa83752171ea74fab7723cbb8c7"
     },
     "v2-neg-key-commit": {
       "file": "v2-neg-key-commit.bin",
@@ -54,23 +54,32 @@
         "r2": "PAP_KEY_COMMIT_MISMATCH"
       },
       "bytes": 509,
-      "sha256": "6a5348732dd317bd3b016c295e08e8ca6d10143ac60aebd9269862734cdba50e"
+      "sha256": "e6846b8906b6c106c8c884eaf7a88661e9137b67687cb68b77ad5e29095c8832"
+    },
+    "v2-neg-outer-no-domain": {
+      "file": "v2-neg-outer-no-domain.bin",
+      "version": 2,
+      "negative": true,
+      "outerInvalid": true,
+      "expect": {},
+      "bytes": 539,
+      "sha256": "7f58c62bf13475697778c0521a86eac8764bd8f776da7988c1462d9fdae3ef48"
     }
   },
   "recipients": {
     "r1": {
-      "privateKeyHex": "6839f49b459da9ff0743b26b1e827ad9183dec9177e8cbcdca815a1c7e548056",
-      "publicKeyHex": "0b49218e2afeacd1932fc550f786c0cd1b60cbe1cb61601445f0a79b71fcb77b"
+      "privateKeyHex": "c847ccd2eadb6448549f2c098043323373f9980f67c7c2ee6e4b7caa6da1e671",
+      "publicKeyHex": "a16eccea9ce3f1c9a201d37474b110d8a263ee2cc177da3fe77c45e24b49fa40"
     },
     "r2": {
-      "privateKeyHex": "20b09b79d9dccb1e304f0d4313ace9b7e5bcde02d184aac2fdc451a1cc265f44",
-      "publicKeyHex": "9e04a9d01b62af8e1d3e07055815c23259f3fc5defd938cdff83451e6dad2a54"
+      "privateKeyHex": "88fd719cd53bf8fc827bde7555a3ebc8190e7eac5b25ba912265cf1f3bb8cb41",
+      "publicKeyHex": "4600fc2626fd17a732613609913df4d8d148e7514ef62d2319d0b45bbb4ddb25"
     },
     "outsider": {
-      "privateKeyHex": "4027fb1f3cdd2596ccc05dab9af1ad55586de1e7dcdacd0b28823c05d5fac24e",
-      "publicKeyHex": "c1e070785480150aeb554e8f761f49df3146eda9f9c7db80271134be995dae24"
+      "privateKeyHex": "107ddbf27bcc7ebdf49cc43f0c69db2623a13f7b78cf297f5b3af690f607ff62",
+      "publicKeyHex": "f0d39db2c4017b940367a69c0d6dd43ece2f09612555ae5c77d00fef6a20ba32"
     }
   },
   "passphrase": "correct horse battery staple, test only",
-  "passphraseIterations": 1000
+  "passphraseIterations": 100000
 }
