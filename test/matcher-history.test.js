@@ -271,29 +271,50 @@ describe('matcher-history (KNOWN-LIMITS 53, reader half)', () => {
     }
   });
 
+  // Isolated from the shared system temp dir: other test files, worktrees and
+  // processes create lotor-mh- dirs at the same time (test files run in
+  // parallel), so a system-wide count drifts with no relation to this code.
   it('temp dirs prefixed lotor-mh- are cleaned up (count before/after in os.tmpdir())', async () => {
+    const privateTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mhiso-'));
+    const savedTmpdir = process.env.TMPDIR;
+    const savedTemp = process.env.TEMP;
+    const savedTmp = process.env.TMP;
+    process.env.TMPDIR = privateTmp;
+    process.env.TEMP = privateTmp;
+    process.env.TMP = privateTmp;
     const countTmp = () => fs.readdirSync(os.tmpdir())
       .filter(n => n.startsWith('lotor-mh-')).length;
-    const before = countTmp();
     let repo;
     try {
-      repo = makeTempRepo();
-      const withRepo = countTmp(); // the throwaway repo itself is lotor-mh-prefixed
-      writePolicy(repo, POLICY_A);
-      const shaA = commitAll(repo, 'stamp a');
-      writePolicy(repo, POLICY_B);
-      commitAll(repo, 'stamp b');
+      const before = countTmp();
+      try {
+        repo = makeTempRepo();
+        const withRepo = countTmp(); // the throwaway repo itself is lotor-mh-prefixed
+        writePolicy(repo, POLICY_A);
+        const shaA = commitAll(repo, 'stamp a');
+        writePolicy(repo, POLICY_B);
+        commitAll(repo, 'stamp b');
 
-      await matcherHistory(repo);
-      await matcherHashAt(repo, shaA);
-      await findMatcherHash(repo, A_HASH);
+        await matcherHistory(repo);
+        await matcherHashAt(repo, shaA);
+        await findMatcherHash(repo, A_HASH);
 
-      assert.strictEqual(countTmp(), withRepo,
-        'every lotor-mh- dir the reader created must be gone; the only survivor is the test repo it started with');
+        assert.strictEqual(countTmp(), withRepo,
+          'every lotor-mh- dir the reader created must be gone; the only survivor is the test repo it started with');
+      } finally {
+        if (repo) fs.rmSync(repo, { recursive: true, force: true });
+      }
+      assert.strictEqual(countTmp(), before, 'after the test itself cleans up, the tmpdir count returns to where it was');
+      assert.strictEqual(os.tmpdir(), privateTmp,
+        'the private temp root is in effect: os.tmpdir() reads TMPDIR/TEMP/TMP at call time');
     } finally {
-      if (repo) fs.rmSync(repo, { recursive: true, force: true });
+      // Restore by delete-or-assign: assigning the string "undefined" would
+      // poison os.tmpdir() for the rest of the run.
+      if (savedTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmpdir;
+      if (savedTemp === undefined) delete process.env.TEMP; else process.env.TEMP = savedTemp;
+      if (savedTmp === undefined) delete process.env.TMP; else process.env.TMP = savedTmp;
+      fs.rmSync(privateTmp, { recursive: true, force: true });
     }
-    assert.strictEqual(countTmp(), before, 'after the test itself cleans up, the tmpdir count returns to where it was');
   });
 
   it('REAL-REPO smoke: HEAD recompute equals the live matcherVersionHash when src/policy is clean vs HEAD', async t => {
