@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
+ stamped 2026-10-27
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
+ body-sha256: c320a4e344de9238176908d2b6d44ef75cd39123ee8c3c2c91e2bd3ed7930c52
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3321,3 +3321,45 @@ platform. Until then the three tests that assert backslash-as-separator
 backslash absolute path into another repository", and
 `test/policy-opaque-exec-extensionless.test.js` "gates the Windows spelling")
 run as `todo` on non-Windows hosts and as ordinary tests on Windows.
+
+## 84. The matcher stamp still misses helpers its hashed rules call
+
+Limit 63 closed by naming the self-mod deciders in `matcherHashInputs()`, and
+its residual says only that code outside the policy module is unstamped. A
+measurement on 2026-10-27 found the gap is also inside the module: 18
+top-level helper functions and 5 top-level regex constants are called or
+referenced by hashed rules, and their own source is not in the hashed text.
+`Function.prototype.toString()` returns a function's own body and nothing it
+calls, so these decide gate outcomes from outside the stamp.
+
+The list includes `matchableCommand`, the choke point every command matcher
+starts from (limit 26's prose stripping lives behind it), `firstBraceGroup`
+(where the brace split behind limit 58 is decided), the egress helpers
+(`usesEgressTool`, `hasDataFlag`, `usesAuthedRemoteClient` and five more), the
+destructive helpers (`extractDestructiveTarget`, `rmTriggerFlags`,
+`isGitCleanForceDelete`, `destructiveAllowlisted`), `interpreterHandsFile`,
+`isCommandTool`, `escapeRegExp`, and the constants `CMD_SEPARATORS`,
+`SYSTEMD_RUN`, `SYSTEMD_RUN_SCHEDULED`, `LAUNCHCTL_REGISTRATION`,
+`SCRIPT_EXT`. The full list is the tripwire test below.
+
+Proven by mutation on scratch copies of the module, not by reading: dropping
+the prose stripping in `matchableCommand` turns
+`git commit -m "do not git push --force"` into a force-push hit, and making
+`firstBraceGroup` return null lets `touch src/g{a,x}te/x.js` past the self-mod
+rule. In both cases `matcherVersionHash()` was byte-identical before and after
+(`e0877fab0f459e0c`). The second is the direction that matters: a weakened
+matcher stamps as the stronger one, which is exactly what 63 was filed to stop.
+Not covered by this entry: functions the hashed rules never reach but
+`evaluate()` calls directly (for example `isImplicitProtectedPush`), and
+helpers reached only through other unhashed helpers (for example
+`INLINE_CODE_FLAG`, `PRESIGN_PARAM_PREFIX`); the measurement counted direct
+references from hashed text only, so the true set is at least this large.
+
+The fix is core and queues for a signing sitting: name every helper and
+constant in `parts` (or derive the list from the module's call graph so it
+cannot drift again), bump `MATCHER_SCHEMA`, and invert the tripwire.
+`test/policy-matcher-stamp-helpers.test.js` asserts the defect today and was
+checked to fail on that fix: with all 23 names added to `parts` in a scratch
+copy, the file's 23 defect tests fail and its 2 controls pass. The constant
+checks key on the regex literal, because hashing `NAME.toString()` emits the
+literal and never the text `const NAME =`.
