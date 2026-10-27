@@ -9,7 +9,6 @@ Outside work is welcome here, and it lands with your name on it. Lotor is a gate
 3. **Fail-first evidence.** Say in the description which new test fails on `main` and passes on your branch, and how you checked. A test that passes either way proves nothing.
 4. **Green CI on both platforms.** Tests run on Linux and on Windows, where files check out with CRLF line endings. Line endings have broken this codebase twice (see `KNOWN-LIMITS.md` 77 and 81).
 5. **The log kept honest.** If your change opens, narrows or closes a limit, update `KNOWN-LIMITS.md`. Numbers run without gaps; if an open pull request already claims the next number, take the one after and say so. Any change under `src/` re-stamps the pin in the same pull request: `npm run limits-pin -- --stamp`.
-6. **No em dashes.** Use a period, comma, colon or parentheses. CI checks the lines you add.
 
 ## Core changes
 

@@ -96,35 +96,7 @@ if [ "$fork" = "true" ]; then
   fi
 fi
 
-# 3. No em dashes added anywhere (existing ones are not this PR's problem).
-#    A committed .patch or .diff is the exception in how lines are read: the
-#    PR diff shows every line of the patch as added, including the patch's own
-#    removed (-) and context ( ) lines. For those files only the lines the
-#    patch itself adds count: content starting with "+", minus "+++ " headers.
-emdash=$(printf '\xe2\x80\x94')
-git diff --unified=0 "$base"..."$head" | LC_ALL=C awk -v e="$emdash" '
-  /^diff --git / { file = ""; inhdr = 1; next }
-  inhdr && /^\+\+\+ / {
-    f = substr($0, 5); sub(/^b\//, "", f); sub(/"$/, "", f); file = f; inhdr = 0; next
-  }
-  /^@@/ { inhdr = 0; next }
-  inhdr { next }
-  /^\+/ {
-    line = $0
-    if (file ~ /\.(patch|diff)$/) {
-      body = substr(line, 2)
-      if (substr(body, 1, 1) != "+" || substr(body, 1, 4) == "+++ ") next
-    }
-    if (index(line, e) > 0) printf "%s\t%s\n", file, line
-  }
-' > "$work/emdash.out"
-added=$(wc -l < "$work/emdash.out" | tr -d ' ')
-if [ "$added" -gt 0 ]; then
-  note "PR adds $added line(s) containing an em dash. Use a period, comma, colon or parentheses."
-  head -40 "$work/emdash.out" | sed 's/^/  /'
-fi
-
-# 4. A PR that touches src/ must re-stamp the KNOWN-LIMITS pin in the same PR.
+# 3. A PR that touches src/ must re-stamp the KNOWN-LIMITS pin in the same PR.
 if printf '%s\n' "$files" | grep -q '^src/' && ! printf '%s\n' "$files" | grep -qx 'KNOWN-LIMITS.md'; then
   note "PR changes src/ but not KNOWN-LIMITS.md. Run: npm run limits-pin -- --stamp, and commit the pin."
 fi
