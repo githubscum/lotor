@@ -3,10 +3,17 @@
 A single static page, `index.html`, that checks a Lotor PAP bundle with no server
 and no network. Scan the QR with a camera, load a `.bin` or a photo of the QR, or
 paste the bundle as hex or base64. It shows whether the signature verifies, the
-signer's fingerprint, the chain head, the seq, the time the signer claims, the size
-against the 2,953 B QR cap, and whether the bundle is sealed and to how many
-recipients. A sealed bundle verifies before any key is given; a recipient key, the
-passphrase, or a revealed content key opens it.
+key fingerprint the bundle carries, the chain head, the seq, the time the signer
+claims, the size against the 2,953 B QR cap, and whether the bundle is sealed and to
+how many recipients. A sealed bundle verifies before any key is given; a recipient
+key, the passphrase, or a revealed content key opens it.
+
+What "verified" means here: the bundle is unaltered and its signature matches the
+fingerprint the bundle itself carries (trust: `self-consistent`). The page has no key
+of its own to check against, so it cannot say who signed it; compare the printed
+fingerprint with one you already trust. A bundle larger than the 2,953 B QR cap is
+refused before any decoding, and a decoded spine over 4 MiB is refused (the
+vendored brotli decoder has no output limit of its own, KNOWN-LIMITS 83).
 
 It also reads sealed (v2) bundles, specified in `docs/PAP-SEALED.md`. The node side
 of sealed mode is queued for a signing sitting; this page can read v2 now, and the
