@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
+ stamped 2026-10-27
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: 6813c8dbe4980f55c2f1e7606ef0eaadbc817cd85d6fbfbabf372f015d5941a5
+ body-sha256: 18c6ef213d1e63b40d753be04c608c151bc884c6eae40b4c1e156a61ded1b4e2
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3299,3 +3299,29 @@ does see, so each landing carries one signature. That is a convention, not a
 control: nothing forces it. The fix is core: when a command applies a patch,
 read the patch's `+++`/`---` targets and classify those paths too, failing
 closed when the patch file cannot be read. Not staged.
+
+## 83. The offline reader is only as trustworthy as the copy of it you run
+
+`web/reader/index.html` verifies PAP bundles in the browser, and "anyone can
+verify" holds only for someone running an honest copy of that page. A page
+served by whoever wants a bundle believed can print "Verified" for anything; the
+signature math being right in this repository does nothing for a visitor to a
+different page. The defence is the one any offline verifier has: save the file,
+compare its SHA-256 with the one built from this repository
+(`node web/reader/build.mjs` prints it), run it offline, or verify with
+`pap-boot` instead. Also unproven: decoding a version-40 QR from a phone camera.
+The byte path is tested from a rendered image (`test/pap-reader.test.js`), not
+from a real camera, and a 177-module code is hard to capture; loading a photo
+or pasting the bytes are the dependable routes. The camera needs the page served
+over https or from localhost, and opening a sealed bundle needs WebCrypto X25519
+(no fallback is shipped for it). The page reports a pass as "self-consistent"
+and never as authorship: the fingerprint it checks against is the one inside the
+bundle, so it names a signer only if you compare it with one you already trust.
+The vendored brotli decoder has no output limit. The page refuses any input
+over the 2,953 B QR cap before decoding and refuses a decoded spine over 4 MiB
+after it, but a bundle at or under the cap can still make the decoder allocate
+far more than that before the second check runs, so a hostile bundle can stall
+or exhaust the tab. Residual risk, not closed: open unknown bundles in a
+throwaway tab, or use `pap-boot`, which caps the output while it decodes.
+(Number may collide with an open PR that also appends a limit; renumber at
+merge.)
