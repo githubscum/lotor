@@ -9,3 +9,7 @@ proposals/*.patch text eol=lf
 # line-ending fold, so a CRLF checkout digests differently from the LF bytes
 # git stores and the committed-pin tripwire fails on Windows (limit 81).
 KNOWN-LIMITS.md text eol=lf
+
+# Shared PAP test vectors are exact bundle bytes checked by signature; any
+# line-ending conversion would break them.
+test-data/pap-vectors/*.bin binary

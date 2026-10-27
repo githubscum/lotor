@@ -1,0 +1,308 @@
+// ---------- sealed (v2) ----------
+//
+// Encrypt-then-sign (WO-CARTRIDGE-SEAL, spec docs/PAP-SEALED.md). The outer
+// Ed25519 signature covers the ciphertext manifest, so anyone can check that
+// the bundle is unaltered and self-consistent with the key fingerprint it
+// carries, without a key. Whether that fingerprint is the author you mean is a
+// comparison the reader makes against a fingerprint they already trust. Inside
+// the ciphertext, a second signature by the same key binds the plaintext to
+// the exact header it was sealed under, so a key holder cannot be handed a
+// re-encrypted or re-addressed swap. A public key commitment makes every
+// recipient read the same plaintext.
+
+// Cap on a decompressed spine, v1 and v2. A bundle is at most 2,953 B, but
+// brotli expands tiny inputs enormously, and the decompression runs before the
+// inner signature can be checked. Exceeding it is PAP_SPINE_TOO_LARGE.
+const MAX_SPINE_RAW_BYTES = 4 * 1024 * 1024;
+
+const TRUST_SELF_CONSISTENT = 'self-consistent';
+const TRUST_SUPPLIED_KEY = 'verified-against-supplied-key';
+
+function papError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+/** brotli with an output cap and PAP error codes. Never a raw zlib error. */
+function boundedBrotli(compressed) {
+  try {
+    return zlib.brotliDecompressSync(compressed, { maxOutputLength: MAX_SPINE_RAW_BYTES });
+  } catch (e) {
+    if (e && e.code === 'ERR_BUFFER_TOO_LARGE') {
+      throw papError('PAP_SPINE_TOO_LARGE',
+        `spine decompresses past the ${MAX_SPINE_RAW_BYTES}-byte cap; refusing to expand it`);
+    }
+    throw papError('PAP_DECOMPRESS_FAILED', `spine is not valid brotli (${(e && (e.code || e.message)) || 'unknown error'})`);
+  }
+}
+
+/**
+ * Pick the key the outer signature is checked under, and say on what basis.
+ * No supplied key: the bundle's own embedded fingerprint, which makes the
+ * result "self-consistent" and nothing more. A supplied key must BE that
+ * fingerprint (raw-key equality), else PAP_SIGNER_MISMATCH before any
+ * signature work; then the result is "verified against the supplied key".
+ */
+function resolveVerifier(supplied, chainPubkeyFp) {
+  if (!supplied) {
+    return { verifyKey: rawEd25519PublicKeyToKeyObject(chainPubkeyFp), trust: TRUST_SELF_CONSISTENT };
+  }
+  let pub = null;
+  let raw = null;
+  try {
+    pub = supplied.type === 'private' ? crypto.createPublicKey(supplied) : supplied;
+    if (pub.asymmetricKeyType === 'ed25519') raw = pub.export({ format: 'der', type: 'spki' }).subarray(-32);
+  } catch {
+    raw = null;
+  }
+  if (raw === null || raw.length !== chainPubkeyFp.length || !crypto.timingSafeEqual(raw, chainPubkeyFp)) {
+    throw papError('PAP_SIGNER_MISMATCH',
+      'the supplied verify key is not the key this bundle carries (its embedded fingerprint differs): ' +
+      'either this is not the signer you expected, or the bundle is not what it claims');
+  }
+  return { verifyKey: pub, trust: TRUST_SUPPLIED_KEY };
+}
+
+function signatureInvalid() {
+  return papError('PAP_SIGNATURE_INVALID',
+    'signature verification failed: the bundle does not verify under the key whose fingerprint it carries ' +
+    '(it was altered after signing, or it was not signed by that key)');
+}
+
+/**
+ * pack() with inputs.seal set:
+ * @param {Object} inputs.seal
+ * @param {Array<Buffer|string>} [inputs.seal.to] - X25519 recipient public
+ *   keys (32-byte Buffer, 64 hex chars, or SPKI PEM)
+ * @param {string} [inputs.seal.passphrase] - optional passphrase recipient
+ * @param {number} [inputs.seal.iterations] - PBKDF2 iterations (default
+ *   600000; below 100000 is refused with PAP_KDF_TOO_WEAK)
+ */
+function packSealed(inputs) {
+  if (typeof inputs.spine !== 'string' || inputs.spine.length === 0) {
+    throw new Error('spine must be a non-empty string');
+  }
+  const seal = inputs.seal;
+  const sealer = createSealer({ to: seal.to || [], passphrase: seal.passphrase, iterations: seal.iterations });
+  const recipientCount = sealer.x25519Wrapped.length;
+  const hasPassphrase = sealer.passphrase !== null;
+
+  const spineRaw = Buffer.from(inputs.spine, 'utf8');
+  if (spineRaw.length > MAX_SPINE_RAW_BYTES) {
+    throw papError('PAP_SPINE_TOO_LARGE',
+      `spine is ${spineRaw.length} bytes; a sealed bundle's reader refuses anything over ${MAX_SPINE_RAW_BYTES}`);
+  }
+  const spineCompressed = brotliCompressMax(spineRaw);
+  const memoirUrlBytes = Buffer.from(inputs.memoirUrl || '', 'utf8');
+  if (memoirUrlBytes.length > 0xFFFF) {
+    throw new Error(`memoirUrl too long: ${memoirUrlBytes.length} bytes, max 65535`);
+  }
+
+  const headerBytes = encodeSealedHeader({
+    chainHeadHash: inputs.chainHeadHash,
+    chainPubkeyFp: inputs.chainPubkeyFp,
+    seq: inputs.seq,
+    timestamp: inputs.timestamp,
+    keyCommit: sealer.keyCommit,
+    ephemeralPub: sealer.ephemeralPub,
+    x25519Wrapped: sealer.x25519Wrapped,
+    passphrase: sealer.passphrase,
+  });
+
+  const innerSig = crypto.sign(null, innerMessage(headerBytes, spineRaw, memoirUrlBytes), inputs.signingKey);
+  if (innerSig.length !== SIG_LEN) {
+    throw new Error(`unexpected Ed25519 signature length: ${innerSig.length}, expected ${SIG_LEN}`);
+  }
+  const memoirLen = Buffer.alloc(2);
+  memoirLen.writeUInt16BE(memoirUrlBytes.length, 0);
+  const inner = Buffer.concat([innerSig, memoirLen, memoirUrlBytes, spineCompressed]);
+  const ciphertext = sealer.encryptBody(inner, headerBytes);
+  const manifestBytes = encodeSealedManifest(headerBytes, ciphertext);
+
+  const signature = crypto.sign(null, outerMessage(manifestBytes), inputs.signingKey);
+  if (signature.length !== SIG_LEN) {
+    throw new Error(`unexpected Ed25519 signature length: ${signature.length}, expected ${SIG_LEN}`);
+  }
+  const bundle = Buffer.concat([manifestBytes, signature]);
+  const totalLen = bundle.length;
+  const budget = QR_V40_BINARY_ECL_CAPACITY;
+  const headroom = budget - totalLen;
+  // What the same spine and memoir cost as a plaintext v1 bundle, so the
+  // price of sealing is a measured number, not an estimate.
+  const plainEquivalentLen = HEADER_FIXED_LEN + memoirUrlBytes.length + SPINE_LEN_TAG_BYTES + spineCompressed.length + SIG_LEN;
+  const sealOverhead = totalLen - plainEquivalentLen;
+
+  if (totalLen > budget) {
+    const err = new Error(
+      budgetMessage(spineRaw.length, spineCompressed.length, manifestBytes.length, totalLen, budget) +
+      `\n  of which sealing costs ${sealOverhead} bytes (${recipientCount} recipient key(s)${hasPassphrase ? ' plus a passphrase' : ''}).`,
+    );
+    err.code = 'PAP_BUDGET_EXCEEDED';
+    err.spineRawLen = spineRaw.length;
+    err.spineCompressedLen = spineCompressed.length;
+    err.totalLen = totalLen;
+    err.budget = budget;
+    err.sealOverhead = sealOverhead;
+    throw err;
+  }
+
+  return {
+    bundle,
+    manifestLen: manifestBytes.length,
+    sigLen: signature.length,
+    spineRawLen: spineRaw.length,
+    spineCompressedLen: spineCompressed.length,
+    totalLen,
+    budget,
+    headroom,
+    compressionRatio: spineRaw.length / spineCompressed.length,
+    sealed: true,
+    recipients: { x25519: recipientCount, passphrase: hasPassphrase },
+    sealOverhead,
+  };
+}
+
+/**
+ * Verify the outer signature and report the public fields of a v1 or v2
+ * bundle. Never decrypts and needs no key: this is what a stranger can check.
+ *
+ * What a pass means depends on info.trust. 'self-consistent': the bundle is
+ * unaltered and verifies under the key fingerprint it carries, which proves
+ * nothing about WHO holds that key until the reader compares the fingerprint
+ * to one they already trust. 'verified-against-supplied-key': the caller's
+ * key equals the embedded fingerprint and the signature verifies under it.
+ *
+ * @param {Object} inputs
+ * @param {Buffer} inputs.bundle
+ * @param {crypto.KeyObject} [inputs.verifyKey] - as in unpack(). Must equal
+ *   the bundle's embedded fingerprint, else PAP_SIGNER_MISMATCH.
+ */
+function inspect(inputs) {
+  if (!Buffer.isBuffer(inputs.bundle)) throw new TypeError('bundle must be a Buffer');
+  if (inputs.bundle.length < SIG_LEN + 1) {
+    throw new Error(`bundle too short: ${inputs.bundle.length} bytes`);
+  }
+  const manifestBytes = inputs.bundle.subarray(0, inputs.bundle.length - SIG_LEN);
+  const signature = inputs.bundle.subarray(inputs.bundle.length - SIG_LEN);
+  const sealed = inputs.bundle[0] === VERSION_SEALED;
+  const m = sealed ? decodeSealedManifest(Buffer.from(manifestBytes)) : decodeManifest(Buffer.from(manifestBytes));
+  const { verifyKey, trust } = resolveVerifier(inputs.verifyKey, m.chainPubkeyFp);
+  // v2 signs a domain string and the manifest; v1 signs the bare manifest.
+  const signedBytes = sealed ? outerMessage(manifestBytes) : manifestBytes;
+  if (!crypto.verify(null, signedBytes, verifyKey, signature)) throw signatureInvalid();
+  const info = {
+    version: m.version,
+    sealed,
+    trust,
+    chainHeadHash: m.chainHeadHash,
+    chainPubkeyFp: m.chainPubkeyFp,
+    seq: m.seq,
+    timestamp: m.timestamp,
+    bytes: inputs.bundle.length,
+  };
+  if (sealed) {
+    info.recipients = { x25519: m.x25519Wrapped.length, passphrase: m.passphrase !== null };
+    info.keyCommit = m.keyCommit;
+    info.ciphertextLen = m.ciphertext.length;
+  } else {
+    info.memoirUrl = m.memoirUrl;
+  }
+  return { info, manifest: m, verifyKey, trust };
+}
+
+/** A content key is 32 raw bytes or 64 hex chars; anything else is not a key. */
+function parseContentKey(input) {
+  if (Buffer.isBuffer(input) && input.length === 32) return input;
+  if (typeof input === 'string' && /^[0-9a-f]{64}$/i.test(input.trim())) return Buffer.from(input.trim(), 'hex');
+  throw papError('PAP_BAD_CONTENT_KEY', 'content key must be 32 bytes or 64 hex characters');
+}
+
+/**
+ * unpack() for a v2 bundle. One of recipientKey, passphrase or contentKey
+ * opens it; with none, throws PAP_SEALED_NEEDS_KEY carrying err.info (the
+ * outer signature has already verified by then).
+ */
+function unpackSealed(inputs) {
+  const { info, manifest: m, verifyKey, trust } = inspect(inputs);
+
+  let cek = null;
+  if (inputs.contentKey !== undefined && inputs.contentKey !== null) {
+    cek = parseContentKey(inputs.contentKey);
+  } else if (inputs.recipientKey === undefined && inputs.passphrase === undefined) {
+    const err = new Error(
+      `verified, sealed to ${describeRecipients(info.recipients)}; no key given, so the spine stays closed`,
+    );
+    err.code = 'PAP_SEALED_NEEDS_KEY';
+    err.info = info;
+    throw err;
+  } else {
+    if (inputs.passphrase !== undefined && m.passphrase) {
+      const kek = passphraseKek(inputs.passphrase, m.passphrase.salt, m.passphrase.iterations);
+      cek = aeadOpen(kek, m.passphrase.wrapped, null);
+    }
+    if (!cek && inputs.recipientKey !== undefined && m.ephemeralPub) {
+      const priv = parseRecipientPrivateKey(inputs.recipientKey);
+      for (const w of m.x25519Wrapped) {
+        cek = x25519Unwrap(w, priv, m.ephemeralPub);
+        if (cek) break;
+      }
+    }
+    if (!cek) {
+      const err = new Error('this key does not open the bundle: it is not one of the recipients (the outer signature did verify)');
+      err.code = 'PAP_NOT_A_RECIPIENT';
+      err.info = info;
+      throw err;
+    }
+  }
+
+  if (!commitmentMatches(cek, m.keyCommit)) {
+    const err = new Error('content key does not match the bundle\'s key commitment: refusing to decrypt');
+    err.code = 'PAP_KEY_COMMIT_MISMATCH';
+    throw err;
+  }
+  const inner = openBody(cek, m.ciphertext, m.headerBytes);
+  if (!inner || inner.length < SIG_LEN + 2) {
+    const err = new Error('sealed body failed authentication');
+    err.code = 'PAP_DECRYPT_FAILED';
+    throw err;
+  }
+  const innerSig = inner.subarray(0, SIG_LEN);
+  const memoirUrlLen = inner.readUInt16BE(SIG_LEN);
+  if (SIG_LEN + 2 + memoirUrlLen > inner.length) {
+    const err = new Error('sealed body is malformed: memoir URL runs past the end');
+    err.code = 'PAP_DECRYPT_FAILED';
+    throw err;
+  }
+  const memoirUrlBytes = inner.subarray(SIG_LEN + 2, SIG_LEN + 2 + memoirUrlLen);
+  const spineCompressed = Buffer.from(inner.subarray(SIG_LEN + 2 + memoirUrlLen));
+  const spineRaw = boundedBrotli(spineCompressed);
+
+  if (!crypto.verify(null, innerMessage(m.headerBytes, spineRaw, memoirUrlBytes), verifyKey, innerSig)) {
+    const err = new Error(
+      'inner binding failed: the plaintext was not signed under this header by this key ' +
+      '(re-encrypted, re-addressed, or re-signed by someone else)',
+    );
+    err.code = 'PAP_INNER_BINDING_INVALID';
+    throw err;
+  }
+
+  return {
+    manifest: { ...info, memoirUrl: memoirUrlBytes.toString('utf8') },
+    trust,
+    spine: spineRaw.toString('utf8'),
+    spineRawLen: spineRaw.length,
+    spineCompressedLen: spineCompressed.length,
+    // Anyone holding this opens the bundle, and the public commitment proves
+    // it is the right key. Publishing it is how a sealed bundle is revealed.
+    contentKey: cek,
+  };
+}
+
+function describeRecipients(r) {
+  const parts = [];
+  if (r.x25519 > 0) parts.push(`${r.x25519} recipient key${r.x25519 === 1 ? '' : 's'}`);
+  if (r.passphrase) parts.push('a passphrase');
+  return parts.join(' and ');
+}
+

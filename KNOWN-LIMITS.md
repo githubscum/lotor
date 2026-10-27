@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
+ stamped 2026-10-27
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: 6813c8dbe4980f55c2f1e7606ef0eaadbc817cd85d6fbfbabf372f015d5941a5
+ body-sha256: a74d310c9d64ba36185a3a1c4d003d8fbb214d13f507e4778e8c11cd9bea258a
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -1870,6 +1870,40 @@ discipline check in the same spirit as the self-cancelling-leak-grep lesson
 (2026-07-20), where the tool cannot know what is private and must force the
 human to say so.
 
+Amended 2026-10-26 (WO-CARTRIDGE-SEAL, sealed mode queued as
+`proposals/pap-sealed.patch`, not landed): sealed mode encrypts the spine to
+chosen X25519 recipients or a passphrase, and still requires `--public`, because
+a sealed QR is still a broadcast. What stays public: the ciphertext, the
+ciphertext length (so a rough spine size), the number of recipient keys, whether
+a passphrase can open it, the signer's fingerprint, the chain head, the seq and
+the timestamp. A passphrase-sealed QR can be attacked offline by anyone who scans
+it, as many guesses as they can afford: PBKDF2 at 600,000 iterations slows a
+guess, it does not stop a weak passphrase. Seal to keys when it matters.
+
+Amended 2026-10-26 (wringer review of the sealed-mode patch; sealed mode still
+not landed). Three additions, nothing above is withdrawn. First, what a
+passphrase needs: PBKDF2 is not memory-hard, so GPUs and ASICs attack it far
+faster per dollar than they would a memory-hard KDF. That is the price of using
+only WebCrypto primitives so the offline reader can open a bundle at all. The
+salt and the iteration count are public in the QR, and a writer cannot choose
+fewer than 100,000 rounds (the floor, enforced at seal time; a reader opens
+whatever count the bundle carries). Treat the passphrase as the whole secret:
+it needs real entropy (a long random one, not a chosen word or phrase), because
+the scanned QR gives an attacker unlimited offline guesses for as long as the
+bundle exists. Second, a recipient-membership oracle: the stanzas carry no
+recipient identifier, and each either authenticates under a candidate secret or
+does not. Anyone holding a candidate passphrase, or a candidate recipient
+private key such as a leaked or seized one, can test offline against any
+scanned bundle whether it opens, without the author knowing. A candidate public
+key alone does not give that test (the unwrap needs the secret half); the
+bundle itself shows only how many X25519 stanzas it has and whether a
+passphrase stanza exists. Third, the sentence above that a signature "proves who
+authored the bundle" reads, precisely: the bundle verifies under the key
+fingerprint it carries. That is self-consistency. It names an author only to a
+reader who compares that fingerprint with one they already trust, or who
+supplies the key; `inspect()`, `unpack()` and `pap-boot` report which of the
+two happened.
+
 ## 46. A PAP signature proves authorship and integrity, never spine quality or safety
 
 A verified PAP signature confirms that the bytes now decoded are the bytes the
@@ -1881,6 +1915,12 @@ transfers identity and policy, not capability, so the resulting agent's ceiling
 is the receiving model's. Same class as the standing observation that receipts
 are behavioral metadata, never intent — a signature is evidence of custody, not
 of correctness.
+
+Amended 2026-10-26: this holds unchanged for sealed bundles. "Sealed and
+signed" proves the bundle is untouched and that the chain key signed it, before
+and after encryption. It does not prove the spine is right, and it does not
+prove the prediction or workflow inside it was made honestly. When it was signed
+is a separate question, and limit 85 answers it.
 
 ## 47. The head hash verifies memoir integrity, never memoir availability
 
@@ -3299,3 +3339,45 @@ does see, so each landing carries one signature. That is a convention, not a
 control: nothing forces it. The fix is core: when a command applies a patch,
 read the patch's `+++`/`---` targets and classify those paths too, failing
 closed when the patch file cannot be read. Not staged.
+
+## 83. A sealed bundle stays sealed only while every recipient key stays secret, and a QR is forever
+
+Sealed PAP bundles (queued as `proposals/pap-sealed.patch`, not landed) wrap the
+content key to each recipient with X25519. There is no forward secrecy: whoever
+later obtains any one recipient's secret key opens every bundle ever sealed to
+it, and a QR, once printed or posted, can be photographed and kept by anyone
+indefinitely. Recipient keys made by `pap-keygen` are stored unencrypted, like
+the chain key (limit 8). X25519 is not post-quantum, so a bundle recorded today
+is readable by whoever can break X25519 later. Rotating a recipient key protects
+future bundles only. (Number may collide with an open PR that also appends a
+limit; renumber at merge.)
+
+## 84. Sealing controls who can open a bundle, not what a recipient does with it
+
+The inner signature binds the plaintext to its header (signer, chain head, seq,
+timestamp, key commitment, every recipient stanza), so a recipient who forwards
+the inner bytes to someone else under a new header, even with a valid outer
+signature of their own, is caught. A recipient who strips the inner signature
+and signs the plaintext as themselves is not caught, and cannot be: that bundle
+truthfully names them as its signer, and nothing in the format can tell an
+author from a copier who signs first. Likewise, a recipient can publish the
+content key, which opens the bundle for everyone and verifies against the
+public commitment. That is the reveal feature; it is also a leak. Sealing is
+access control at the moment of sharing, never after. (Renumber at merge if
+needed.)
+
+## 85. A bundle's time is the signer's claim; nothing proves it was signed before anything
+
+The timestamp in a PAP manifest, sealed or not, is whatever the signer's clock
+or `--timestamp` said. The chain head proves the bundle was signed no earlier
+than that chain entry existed, because the head is a hash nobody could predict.
+It says nothing about the latest moment it could have been signed: a signer can
+sign today with last week's head and last week's timestamp. "Signed before the
+outcome" therefore needs a witness outside the signer, such as the time a third
+party received or published the QR, or an external timestamp (limit 3; the
+OpenTimestamps anchor is out of scope while the notary is down). The key
+commitment closes a different gap: it stops an author showing different
+recipients different predictions, not an author backdating one. Nor does it stop
+an author sealing ten predictions and revealing only the one that came true;
+only publishing every bundle before the outcome, where others can see the count,
+does that. (Renumber at merge if needed.)

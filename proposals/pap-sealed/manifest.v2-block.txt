@@ -1,0 +1,178 @@
+// ---------- v2: sealed ----------
+//
+// v2 layout, in order (all integers big-endian; spec docs/PAP-SEALED.md):
+//   version           u8   = 0x02
+//   chainHeadHash     32B
+//   chainPubkeyFp     32B
+//   seq               u32
+//   timestamp         u64
+//   keyCommit         32B  SHA-256 commitment to the content key
+//   x25519Count       u8   number of X25519 recipient stanzas
+//   passphraseCount   u8   0 or 1
+//   ephemeralPub      32B  present only when x25519Count > 0
+//   x25519Wrapped     x25519Count * 48B (wrapped content key + GCM tag)
+//   passphrase stanza present only when passphraseCount = 1:
+//     salt 16B, iterations u32, wrapped 48B
+//   ---- everything above is the header, and is the AEAD's associated data ----
+//   ciphertextLen     u16
+//   ciphertext        AES-256-GCM output with the 16-byte tag appended
+//
+// The outer Ed25519 signature (64B, appended by pack.js) covers all of it,
+// prefixed by the domain string "lotor/pap/v2/outer" and one 0x00 byte. The
+// prefix is not part of the layout and not on the wire; v1 signs the bare
+// manifest and is unchanged.
+
+const VERSION_SEALED = 0x02;
+const KEY_COMMIT_LEN = 32;
+const EPHEMERAL_PUB_LEN = 32;
+const WRAPPED_KEY_LEN = 48;
+const PASSPHRASE_SALT_LEN = 16;
+const SEALED_FIXED_LEN = 1 + CHAIN_HEAD_HASH_LEN + CHAIN_PUBKEY_FP_LEN + 4 + 8 + KEY_COMMIT_LEN + 1 + 1;
+
+/**
+ * Encode the v2 header (the AEAD associated data). Does NOT sign or encrypt.
+ */
+function encodeSealedHeader(h) {
+  requireBufferOfLength(h.chainHeadHash, CHAIN_HEAD_HASH_LEN, 'chainHeadHash');
+  requireBufferOfLength(h.chainPubkeyFp, CHAIN_PUBKEY_FP_LEN, 'chainPubkeyFp');
+  requireU32(h.seq, 'seq');
+  requireSafeInteger(h.timestamp, 'timestamp');
+  requireBufferOfLength(h.keyCommit, KEY_COMMIT_LEN, 'keyCommit');
+  const wrapped = h.x25519Wrapped || [];
+  if (wrapped.length > 0xFF) throw new Error(`too many recipients: ${wrapped.length}, max 255`);
+  if (wrapped.length > 0) requireBufferOfLength(h.ephemeralPub, EPHEMERAL_PUB_LEN, 'ephemeralPub');
+  for (const w of wrapped) requireBufferOfLength(w, WRAPPED_KEY_LEN, 'x25519 wrapped key');
+  const p = h.passphrase || null;
+  if (p) {
+    requireBufferOfLength(p.salt, PASSPHRASE_SALT_LEN, 'passphrase salt');
+    requireU32(p.iterations, 'passphrase iterations');
+    requireBufferOfLength(p.wrapped, WRAPPED_KEY_LEN, 'passphrase wrapped key');
+  }
+  if (wrapped.length === 0 && !p) throw new Error('a sealed bundle needs at least one recipient or a passphrase');
+
+  const fixed = Buffer.alloc(SEALED_FIXED_LEN);
+  let off = 0;
+  fixed.writeUInt8(VERSION_SEALED, off); off += 1;
+  h.chainHeadHash.copy(fixed, off); off += CHAIN_HEAD_HASH_LEN;
+  h.chainPubkeyFp.copy(fixed, off); off += CHAIN_PUBKEY_FP_LEN;
+  fixed.writeUInt32BE(h.seq, off); off += 4;
+  writeUInt64BE(fixed, BigInt(h.timestamp), off); off += 8;
+  h.keyCommit.copy(fixed, off); off += KEY_COMMIT_LEN;
+  fixed.writeUInt8(wrapped.length, off); off += 1;
+  fixed.writeUInt8(p ? 1 : 0, off); off += 1;
+  const parts = [fixed];
+  if (wrapped.length > 0) parts.push(h.ephemeralPub, ...wrapped);
+  if (p) {
+    const iter = Buffer.alloc(4);
+    iter.writeUInt32BE(p.iterations, 0);
+    parts.push(p.salt, iter, p.wrapped);
+  }
+  return Buffer.concat(parts);
+}
+
+/**
+ * Header || u16 ciphertextLen || ciphertext. Does NOT sign.
+ */
+function encodeSealedManifest(headerBytes, ciphertext) {
+  requireBuffer(headerBytes, 'headerBytes');
+  requireBuffer(ciphertext, 'ciphertext');
+  if (ciphertext.length > 0xFFFF) {
+    throw new Error(`ciphertext too long: ${ciphertext.length} bytes, max 65535`);
+  }
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(ciphertext.length, 0);
+  return Buffer.concat([headerBytes, len, ciphertext]);
+}
+
+/**
+ * Decode a v2 manifest. Returns the public fields plus headerBytes (the AEAD
+ * associated data) and the ciphertext. Nothing here needs a key.
+ */
+function decodeSealedManifest(bytes) {
+  requireBuffer(bytes, 'manifest bytes');
+  if (bytes.length < SEALED_FIXED_LEN + 2) {
+    throw new Error(`sealed manifest too short: ${bytes.length} bytes, need at least ${SEALED_FIXED_LEN + 2}`);
+  }
+  let off = 0;
+  const version = bytes.readUInt8(off); off += 1;
+  if (version !== VERSION_SEALED) {
+    throw new Error(`unknown sealed manifest version: 0x${version.toString(16)}, expected 0x${VERSION_SEALED.toString(16)}`);
+  }
+  const chainHeadHash = Buffer.from(bytes.subarray(off, off + CHAIN_HEAD_HASH_LEN)); off += CHAIN_HEAD_HASH_LEN;
+  const chainPubkeyFp = Buffer.from(bytes.subarray(off, off + CHAIN_PUBKEY_FP_LEN)); off += CHAIN_PUBKEY_FP_LEN;
+  const seq = bytes.readUInt32BE(off); off += 4;
+  const timestampBig = readUInt64BE(bytes, off); off += 8;
+  const timestamp = Number(timestampBig);
+  if (!Number.isSafeInteger(timestamp)) {
+    throw new Error(`timestamp ${timestampBig} exceeds safe integer range`);
+  }
+  const keyCommit = Buffer.from(bytes.subarray(off, off + KEY_COMMIT_LEN)); off += KEY_COMMIT_LEN;
+  const x25519Count = bytes.readUInt8(off); off += 1;
+  const passphraseCount = bytes.readUInt8(off); off += 1;
+  if (passphraseCount > 1) throw new Error(`passphraseCount must be 0 or 1, got ${passphraseCount}`);
+  if (x25519Count === 0 && passphraseCount === 0) throw new Error('sealed manifest has no recipients');
+
+  const need = (n, what) => {
+    if (off + n > bytes.length) throw new Error(`sealed manifest ends early inside ${what}`);
+  };
+  let ephemeralPub = null;
+  const x25519Wrapped = [];
+  if (x25519Count > 0) {
+    need(EPHEMERAL_PUB_LEN, 'ephemeralPub');
+    ephemeralPub = Buffer.from(bytes.subarray(off, off + EPHEMERAL_PUB_LEN)); off += EPHEMERAL_PUB_LEN;
+    for (let i = 0; i < x25519Count; i++) {
+      need(WRAPPED_KEY_LEN, `x25519 stanza ${i}`);
+      x25519Wrapped.push(Buffer.from(bytes.subarray(off, off + WRAPPED_KEY_LEN))); off += WRAPPED_KEY_LEN;
+    }
+  }
+  let passphrase = null;
+  if (passphraseCount === 1) {
+    need(PASSPHRASE_SALT_LEN + 4 + WRAPPED_KEY_LEN, 'passphrase stanza');
+    const salt = Buffer.from(bytes.subarray(off, off + PASSPHRASE_SALT_LEN)); off += PASSPHRASE_SALT_LEN;
+    const iterations = bytes.readUInt32BE(off); off += 4;
+    const wrapped = Buffer.from(bytes.subarray(off, off + WRAPPED_KEY_LEN)); off += WRAPPED_KEY_LEN;
+    passphrase = { salt, iterations, wrapped };
+  }
+  const headerBytes = Buffer.from(bytes.subarray(0, off));
+  need(2, 'ciphertextLen');
+  const ciphertextLen = bytes.readUInt16BE(off); off += 2;
+  if (off + ciphertextLen !== bytes.length) {
+    throw new Error(`ciphertextLen ${ciphertextLen} does not match trailing bytes ${bytes.length - off}`);
+  }
+  const ciphertext = Buffer.from(bytes.subarray(off, off + ciphertextLen));
+
+  return {
+    version,
+    chainHeadHash,
+    chainPubkeyFp,
+    seq,
+    timestamp,
+    keyCommit,
+    ephemeralPub,
+    x25519Wrapped,
+    passphrase,
+    headerBytes,
+    ciphertext,
+    manifestLen: bytes.length,
+  };
+}
+
+export {
+  VERSION,
+  VERSION_SEALED,
+  HEADER_FIXED_LEN,
+  SPINE_LEN_TAG_BYTES,
+  SIG_LEN,
+  QR_V40_BINARY_ECL_CAPACITY,
+  USEFUL_PAYLOAD_BUDGET,
+  KEY_COMMIT_LEN,
+  EPHEMERAL_PUB_LEN,
+  WRAPPED_KEY_LEN,
+  PASSPHRASE_SALT_LEN,
+  SEALED_FIXED_LEN,
+  encodeManifest,
+  decodeManifest,
+  encodeSealedHeader,
+  encodeSealedManifest,
+  decodeSealedManifest,
+};
