@@ -2,7 +2,7 @@
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
  stamped 2026-10-26
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: 6813c8dbe4980f55c2f1e7606ef0eaadbc817cd85d6fbfbabf372f015d5941a5
+ body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3299,3 +3299,25 @@ does see, so each landing carries one signature. That is a convention, not a
 control: nothing forces it. The fix is core: when a command applies a patch,
 read the patch's `+++`/`---` targets and classify those paths too, failing
 closed when the patch file cannot be read. Not staged.
+
+## 83. Backslash is a path separator only on Windows hosts, so path classification differs by host
+
+The grant module's path classifier and the policy's opaque-exec check for an
+explicit local path both resolve their input with `path.resolve`, which treats
+`\` as a separator only on win32. On Linux and macOS a backslash is an ordinary
+filename character, so `src\gate\index.js` classifies as grantable rather than
+core, `C:\other\repo\x` classifies as grantable rather than refused, and
+`.\deploy` is not gated as opaque execution. Exposure: on a POSIX host those
+strings name different files from the core ones (a single file whose name
+contains backslashes, in the repository root or the working directory), so
+the real core files are not reachable through them. But the verdict for the
+same string differs by host,
+which contradicts the classifier's own folding rule that more matches is
+safer, and it went unseen because the suite only ever ran on Windows until CI
+was added (PR #88). The fix is core and is queued for the next signing
+sitting, not staged here: fold `\` to `/` before classification on every
+platform. Until then the three tests that assert backslash-as-separator
+(`test/grant-core-paths.test.js` "matches mixed separators" and "refuses a
+backslash absolute path into another repository", and
+`test/policy-opaque-exec-extensionless.test.js` "gates the Windows spelling")
+run as `todo` on non-Windows hosts and as ordinary tests on Windows.

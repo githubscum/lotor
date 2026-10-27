@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   PIN_BEGIN,
   PIN_END,
@@ -60,6 +61,51 @@ function tmpFile(content) {
   const file = path.join(dir, 'KNOWN-LIMITS.md');
   fs.writeFileSync(file, content);
   return file;
+}
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REAL_LOG = path.join(REPO, 'KNOWN-LIMITS.md');
+
+/**
+ * Run `fn` against a detached worktree of this repository at HEAD.
+ *
+ * The "REAL shipped log" cases below used to stamp and mangle the repo's own
+ * KNOWN-LIMITS.md and restore it in `finally`. `node --test` runs files in
+ * parallel processes, so the committed-pin tripwire
+ * (test/known-limits-committed-pin.test.js) could read the log mid-swap and
+ * fail with a foreign pin; a crash before `finally` would have shipped the
+ * mangled log. A worktree is a real checkout of the shipped tree with its own
+ * copy of the file, and bin/limits-pin.js resolves its repo from its own
+ * location, so running the worktree's copy exercises the real tool on the real
+ * shipped log without ever touching the file other tests read.
+ */
+function withIsolatedCheckout(fn) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-l29-wt-'));
+  const checkout = path.join(parent, 'checkout');
+  execFileSync('git', ['worktree', 'add', '--detach', checkout, 'HEAD'], { cwd: REPO, stdio: 'ignore' });
+  try {
+    return fn(checkout);
+  } finally {
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', checkout], { cwd: REPO, stdio: 'ignore' });
+    } catch {
+      // fall through to the directory removal; `git worktree prune` clears the metadata
+    }
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+}
+
+/** Snapshot of the real log, so a case can prove it never wrote to it. */
+function realLogSnapshot() {
+  return { bytes: fs.readFileSync(REAL_LOG), mtimeMs: fs.statSync(REAL_LOG).mtimeMs };
+}
+
+function assertRealLogUntouched(before) {
+  const after = realLogSnapshot();
+  assert.ok(after.bytes.equals(before.bytes),
+    'the repo KNOWN-LIMITS.md must be byte-identical: these cases work on an isolated checkout only');
+  assert.strictEqual(after.mtimeMs, before.mtimeMs,
+    'the repo KNOWN-LIMITS.md must not be rewritten at all, not even with identical bytes');
 }
 
 describe('L29: the log states which commit it describes', () => {
@@ -139,47 +185,57 @@ describe('L29: the log states which commit it describes', () => {
     // the suite touched the real KNOWN-LIMITS.md). Stamping pins the last src/
     // commit; --check against the same checkout must be GREEN (exit 0), not the
     // permanent exit-1 the HEAD-based pin produced on its own submission.
-    const repoLog = path.join(process.cwd(), 'KNOWN-LIMITS.md');
-    const restore = fs.readFileSync(repoLog, 'utf8');
+    // Runs on an isolated checkout of HEAD, never the repo's own file.
+    const before = realLogSnapshot();
 
-    try {
-      // Re-stamp the real log (writes the current src-commit as the pin).
-      execFileSync('node', ['bin/limits-pin.js', '--stamp'], { encoding: 'utf8' });
+    withIsolatedCheckout(checkout => {
+      const tool = path.join(checkout, 'bin', 'limits-pin.js');
+
+      // Re-stamp the shipped log (writes the current src-commit as the pin).
+      execFileSync(process.execPath, [tool, '--stamp'], { cwd: checkout, encoding: 'utf8' });
 
       // --check must exit 0 (current) on the same checkout.
-      const out = execFileSync('node', ['bin/limits-pin.js', '--check'], { encoding: 'utf8' });
+      const out = execFileSync(process.execPath, [tool, '--check'], { cwd: checkout, encoding: 'utf8' });
       // execFileSync throws on non-zero exit, so reaching here means exit 0.
       assert.ok(/matches your checkout/.test(out),
         'after stamping, --check must report current, not diverged: ' + out);
-    } finally {
-      fs.writeFileSync(repoLog, restore);
-    }
+    });
+
+    assertRealLogUntouched(before);
   });
 
   it('the REAL shipped log: a stale/divered pin is caught by --check (exit 1)', () => {
     // Proves the suite now notices if the shipped log were unpinned, stale, or
-    // diverged — the exact gap the reviewer named. We pin the real log to a
-    // foreign hash and assert --check exits 1 with a divergence message.
-    const repoLog = path.join(process.cwd(), 'KNOWN-LIMITS.md');
-    const restore = fs.readFileSync(repoLog, 'utf8');
+    // diverged: the exact gap the reviewer named. We pin the shipped log, in
+    // an isolated checkout of HEAD, to a foreign hash and assert --check exits
+    // 1 with a divergence message naming both commits.
+    const before = realLogSnapshot();
 
-    try {
-      // Force a stale pin onto the real log.
-      writePin(repoLog, { commit: OTHER_HASH, subject: 'some other tree', date: '2026-08-23' });
+    withIsolatedCheckout(checkout => {
+      const tool = path.join(checkout, 'bin', 'limits-pin.js');
+      const checkoutLog = path.join(checkout, 'KNOWN-LIMITS.md');
+      const srcCommit = execFileSync('git', ['log', '-1', '--format=%H', '--', 'src'], {
+        cwd: checkout, encoding: 'utf8'
+      }).trim();
+
+      // Force a stale pin onto the shipped log in the isolated checkout.
+      writePin(checkoutLog, { commit: OTHER_HASH, subject: 'some other tree', date: '2026-08-23' });
 
       let exitCode = 0;
       let out = '';
       try {
-        out = execFileSync('node', ['bin/limits-pin.js', '--check'], { encoding: 'utf8' });
+        out = execFileSync(process.execPath, [tool, '--check'], { cwd: checkout, encoding: 'utf8' });
       } catch (e) {
         exitCode = e.status ?? 1;
         out = e.stdout ?? '';
       }
       assert.strictEqual(exitCode, 1, '--check must exit 1 on a diverged real log');
       assert.ok(/reading a description of somewhere else/i.test(out),
+        'diverged real log must say so: ' + out);
+      assert.ok(out.includes(OTHER_HASH) && out.includes(srcCommit),
         'diverged real log must name both commits: ' + out);
-    } finally {
-      fs.writeFileSync(repoLog, restore);
-    }
+    });
+
+    assertRealLogUntouched(before);
   });
 });
