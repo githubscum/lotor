@@ -12,7 +12,7 @@ Outside work is welcome here, and it lands with your name on it. Lotor is a gate
 
 ## Core changes
 
-These paths are the gate itself: `src/gate/`, `src/policy/`, `src/chain/`, `src/store/`, `src/grant/`, and `bin/hook-*`. Changes to them never merge through a pull request. They land in the live install at a signing session, one owner signature per change.
+These paths are the gate itself: all of `bin/`, `src/gate/`, `src/policy/`, `src/chain/`, `src/store/`, `src/grant/`, `src/charter/`, `src/limits/`, `src/publish/`, plus the files `src/home.js`, `src/registration.js` and `package.json`. The authoritative list is `CORE_DIRS` and `CORE_FILES` in `src/grant/core-paths.js`, which is what CI checks against. Changes to them never merge through a pull request. They land in the live install at a signing session, one owner signature per change.
 
 To propose one, add the patch under `proposals/<name>.patch`, generated with `git diff`, never typed by hand, and add a rehearsal test that fails without the patch and passes with it. CI rejects a pull request that edits those paths directly.
 
