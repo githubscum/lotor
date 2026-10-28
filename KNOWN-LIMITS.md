@@ -1,6 +1,6 @@
 <!-- known-limits:pin v1
  This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-26
+ stamped 2026-10-28
  subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
  body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
  Re-stamp after updating this log: npm run limits-pin -- --stamp
@@ -3321,3 +3321,34 @@ platform. Until then the three tests that assert backslash-as-separator
 backslash absolute path into another repository", and
 `test/policy-opaque-exec-extensionless.test.js` "gates the Windows spelling")
 run as `todo` on non-Windows hosts and as ordinary tests on Windows.
+
+## 87. Checkpoints are signed by the chain key, so they bind a history only for someone who kept one
+
+Landed 2026-10-27 with chain checkpoints (PR #89). The key that signs entries
+also signs checkpoints, and it is plaintext at rest (limits 8 and 48). Its
+holder can rewrite the chain, re-seal, and `verifySealed()` passes on the
+result. What catches the rewrite is an earlier checkpoint kept elsewhere:
+`verifyIncremental({ trusted })` reports a fork, and no consistency proof from
+the kept checkpoint exists. A cosigner or witness (C2SP tlog-cosignature) or an
+external anchor would remove the need to keep one; neither is in this patch,
+and OpenTimestamps anchoring is out of scope until the notary is back.
+
+## 88. Incremental verify does not read sealed segments
+
+Landed 2026-10-27 with PR #89. From the newest checkpoint, an edit inside an
+older sealed segment is out of sight until a full read (`verifySealed()` or
+`store.verify()`). That is the trade that makes it incremental, and the
+rehearsal pins it as documented behavior.
+
+## 89. Nothing seals automatically
+
+Landed 2026-10-27 with PR #89. No hook or CLI calls `store.seal()`. Until one
+does (the session-end hook, which is core, or `pap-export`, which is not), a
+chain has checkpoints only when something asks for them. Sealing inside the
+append path was rejected: it would add work and a new failure mode to the
+unattended hook path. Not limits, recorded so nobody rediscovers them: sealing
+refuses a chain line that does not parse, where `loadChain` silently drops it,
+so a chain with an inserted garbage line can pass `store.verify()` and still
+refuse to seal; and re-sealing from scratch yields byte-identical notes
+(Ed25519 is deterministic and the note text is fixed by size and root), so
+losing the sidecar loses nothing a stranger kept.
