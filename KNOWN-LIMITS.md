@@ -2,7 +2,7 @@
  This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
  stamped 2026-10-28
  subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ body-sha256: 090de053f428016864bb906cac45674c9c31521a2db53ea867a7cdb9f2b19edd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -539,6 +539,43 @@ a trailing slash (`ls ./src/chain/`) slips, because `normalizePath` strips the
 command's trailing slash before matching, while the file form
 (`.../src/store/x.js`) gates. The over-gate is real for the file form; the
 trailing-slash directory form is an under-gate of the same rule.
+
+**Amended 2026-10-27: the blast radius is wider than the title.** Field reports
+from one session on 2026-10-26 (five self-mod denials on read-only commands,
+all left unsigned) and a re-read of the policy source show three more shapes of
+the same over-gate. No new number; the cause is the one above, a matcher that
+reads path text and does not know where the Lotor install lives.
+
+1. **A protected bare filename matches anywhere on the machine.** The fragment
+   list in the self-mod matcher includes the npm manifest (`package.json`) with
+   no directory. Any command naming that filename gates, in any project: a
+   `node -e "require('./node_modules/<pkg>/package.json')"` in a folder with no
+   relation to Lotor was stopped as self-mod. The source comment there says this
+   is deliberate (an execution manifest is worth a signature everywhere, since
+   the matcher cannot resolve which repo's manifest it is), so this part is an
+   accepted cost, now disclosed here rather than only in a code comment.
+2. **Core-shaped relative paths match outside the install.** `bin/*.js` (any
+   name, via the bin regex on both the Bash and file-tool paths) and the
+   `src/<core>/` fragments match wherever they sit. In a fresh temp clone of
+   this repo, `node bin/pap-boot.js` was stopped as self-mod, so running a
+   Lotor checkout that is not the install still costs signatures.
+3. **The file tools over-gate the same way.** A Write or Edit to an npm
+   manifest in an unrelated project was blocked, not only Bash commands.
+
+One report did not hold up against the source: no self-mod fragment matches
+`.claude.json` on its own (the protected settings fragment is
+`.claude/settings.json`); the command that tripped on it also named the npm
+manifest, which is the likelier match. Unconfirmed from the receipt.
+
+Observation, not a new limit: the same file can gate or not by spelling.
+`npm run pap:boot -- ...` ran the script that `node bin/pap-boot.js` could not,
+because the matcher sees the command string, not what it executes (limit 26's
+class). Here that lands in the over-gate's favour by luck.
+
+Fix shape, unchanged and still not wired: scope directory fragments, the bin
+regex, and bare filenames to the resolved Lotor install root, which core-paths
+already knows how to find. Until then, every item above is the cheap failure
+of limit 21, and its cost is paid in signatures on unrelated work.
 
 ## 24. The destructive allowlist exempts real directories named tmp/temp/scratchpad/mktemp
 
