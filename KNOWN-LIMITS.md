@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
+ This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
  stamped 2026-10-28
- subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: f76f17ec251b1e2430ba44d046a17ff40bf35e12be2a6aa317fcf351a687fd7b
+ subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
+ body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3322,7 +3322,7 @@ backslash absolute path into another repository", and
 `test/policy-opaque-exec-extensionless.test.js` "gates the Windows spelling")
 run as `todo` on non-Windows hosts and as ordinary tests on Windows.
 
-## 87. Checkpoints are signed by the chain key, so they bind a history only for someone who kept one
+## 84. Checkpoints are signed by the chain key, so they bind a history only for someone who kept one
 
 Landed 2026-10-27 with chain checkpoints (PR #89). The key that signs entries
 also signs checkpoints, and it is plaintext at rest (limits 8 and 48). Its
@@ -3333,14 +3333,14 @@ the kept checkpoint exists. A cosigner or witness (C2SP tlog-cosignature) or an
 external anchor would remove the need to keep one; neither is in this patch,
 and OpenTimestamps anchoring is out of scope until the notary is back.
 
-## 88. Incremental verify does not read sealed segments
+## 85. Incremental verify does not read sealed segments
 
 Landed 2026-10-27 with PR #89. From the newest checkpoint, an edit inside an
 older sealed segment is out of sight until a full read (`verifySealed()` or
 `store.verify()`). That is the trade that makes it incremental, and the
 rehearsal pins it as documented behavior.
 
-## 89. Nothing seals automatically
+## 86. Nothing seals automatically
 
 Landed 2026-10-27 with PR #89. No hook or CLI calls `store.seal()`. Until one
 does (the session-end hook, which is core, or `pap-export`, which is not), a
