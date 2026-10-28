@@ -2,7 +2,7 @@
  This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
  stamped 2026-10-28
  subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ body-sha256: 090de053f428016864bb906cac45674c9c31521a2db53ea867a7cdb9f2b19edd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
