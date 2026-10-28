@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createStore } from '../store/index.js';
 import { claudeUserText } from '../views/chapters.js';
+import { THINK_TAG } from './think-tag.js';
+export { THINK_TAG };
 
 /**
  * src/reasoning/index.js
@@ -117,7 +119,6 @@ const HEAD_BYTES = 4096;        // rewrite detection: digest of the file head
 const MAX_UNCLAIMED = 512;      // segments seen but not yet claimed by a hook
 const MAX_CLAIMED = 4096;       // ids already recorded, so a reset never doubles
 const MAX_DIGEST_ROWS = 64;     // per receipt; segmentDigest still covers all
-const THINK_TAG = /<\/?think>/i;
 
 function sha256(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
