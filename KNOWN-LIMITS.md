@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
+ This file describes commit 60c5406d7e362bb1d794ac9c26ff8a625116fb1d
  stamped 2026-10-28
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ subject: Merge main (22ae903, PR 89 landed) into the l79 branch; pin header conflict only
+ body-sha256: 1c252b58db946798a21a4c134101cb40ab335bdffd50af2a9617ab9312643d81
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
