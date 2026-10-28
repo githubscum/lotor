@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createChain, verifyChain, generateKeyPair, GENESIS_PREV_HASH } from '../chain/index.js';
 import { withLock } from './lock.js';
+import * as checkpoints from './checkpoints.js';
 
 /**
  * src/store/index.js
@@ -467,6 +468,52 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
       // Import public key from PEM for verification
       const publicKey = crypto.createPublicKey(keyPair.publicKey);
       return verifyChain(materialize(), publicKey);
+    },
+
+    /**
+     * Seal every complete segment of the chain into a signed C2SP
+     * checkpoint. Writes receipts/checkpoints.jsonl only; chain.jsonl is
+     * never rewritten. On a chain with no checkpoints this is the
+     * migration. See src/store/checkpoints.js.
+     * @param {Object} [options] - { segmentSize, maxSegments }
+     * @returns {Object} { sealed, size }
+     */
+    seal(options) {
+      return checkpoints.sealCheckpoints(baseDir, keyPair, options);
+    },
+
+    /**
+     * Verify forward from the newest checkpoint, or from one the caller
+     * trusts ({ trusted: <signed note> }), reading only what came after it.
+     * @returns {Object} { ok, mode, from, size } or { ok: false, reason }
+     */
+    verifyIncremental(options) {
+      return checkpoints.verifyIncremental(baseDir, keyPair.publicKey, options);
+    },
+
+    /**
+     * Verify the whole chain and every checkpoint from genesis.
+     * @returns {Object} { ok, mode, from, size, checkpoints } or { ok: false, reason }
+     */
+    verifySealed() {
+      return checkpoints.verifySealed(baseDir, keyPair.publicKey);
+    },
+
+    /**
+     * RFC 9162 inclusion proof for the entry at seq, against the newest
+     * checkpoint (or { size }). Verify it with verifyInclusionProof() from
+     * src/chain/checkpoint.js, which needs only the proof and the public key.
+     */
+    proveInclusion(seq, options) {
+      return checkpoints.proveInclusion(baseDir, keyPair.publicKey, seq, options);
+    },
+
+    /**
+     * RFC 9162 consistency proof that the newest checkpoint (or { to })
+     * extends the one at fromSize.
+     */
+    proveConsistency(fromSize, options) {
+      return checkpoints.proveConsistency(baseDir, keyPair.publicKey, fromSize, options);
     }
   };
 }
