@@ -1,0 +1,1236 @@
+diff --git a/src/chain/checkpoint.js b/src/chain/checkpoint.js
+new file mode 100644
+--- /dev/null
++++ b/src/chain/checkpoint.js
+@@ -0,0 +1,285 @@
++import crypto from 'node:crypto';
++import { leafHash, verifyInclusion, verifyConsistency } from './merkle.js';
++
++/**
++ * src/chain/checkpoint.js
++ *
++ * Signed checkpoints for the receipt chain, in the published formats, not a
++ * new one:
++ *
++ *   - C2SP signed-note (c2sp.org/signed-note): note text, a blank line, then
++ *     signature lines "<U+2014> <key name> base64(keyID4 || signature)".
++ *     Ed25519, signature type 0x01, key ID = SHA-256(name || 0x0A || 0x01 ||
++ *     pubkey32)[:4].
++ *   - C2SP tlog-checkpoint (c2sp.org/tlog-checkpoint): note text is exactly
++ *     three lines, origin, tree size, base64 RFC 6962 root. No extension
++ *     lines are written (the spec does not recommend them).
++ *
++ * The signature-line marker is U+2014, which this repository otherwise bans
++ * from its text. It is built with String.fromCharCode below so that the ban
++ * stays checkable by a byte grep and the spec stays exact.
++ *
++ * Leaves are the chain's own entry hashes (32 raw bytes each, the SHA-256 of
++ * the canonical entry). The entry hash already commits to seq, timestamp,
++ * nonce, prevHash and payload, so a verifier needs no JSON canonicalisation
++ * to check a proof, and a cartridge can cite a receipt by its hash alone.
++ *
++ * Everything here is pure: no file I/O, no clock. A stranger needs only a
++ * proof object and the chain's raw 32-byte Ed25519 public key.
++ */
++
++const SIGNATURE_MARK = String.fromCharCode(0x2014);
++const NL = String.fromCharCode(10);
++const SIG_TYPE_ED25519 = 0x01;
++const ORIGIN_PREFIX = 'lotor.local/chain/';
++
++/** SPKI DER prefix for a raw Ed25519 public key (RFC 8410). */
++const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
++
++function rawPublicKey(key) {
++  if (Buffer.isBuffer(key) && key.length === 32) return key;
++  const obj = crypto.createPublicKey(key);
++  return obj.export({ format: 'der', type: 'spki' }).subarray(-32);
++}
++
++function publicKeyObject(raw32) {
++  return crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw32]), format: 'der', type: 'spki' });
++}
++
++/** The log origin (and key name) for a chain key: fixed, derived, offline. */
++function originFor(publicKey) {
++  const raw = rawPublicKey(publicKey);
++  return ORIGIN_PREFIX + crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
++}
++
++function keyId(name, raw32) {
++  return crypto.createHash('sha256')
++    .update(Buffer.from(name, 'utf8'))
++    .update(Buffer.from([0x0a, SIG_TYPE_ED25519]))
++    .update(raw32)
++    .digest()
++    .subarray(0, 4);
++}
++
++/** C2SP verifier key string: name+hex(keyID)+base64(0x01 || pubkey). */
++function vkey(name, publicKey) {
++  const raw = rawPublicKey(publicKey);
++  return `${name}+${keyId(name, raw).toString('hex')}+${Buffer.concat([Buffer.from([SIG_TYPE_ED25519]), raw]).toString('base64')}`;
++}
++
++/** Parse a C2SP vkey into { name, keyId, publicKeyRaw }. Throws on anything else. */
++function parseVkey(s) {
++  const parts = String(s).split('+');
++  if (parts.length !== 3) throw new Error('vkey must have three +-separated parts');
++  const [name, idHex, b64] = parts;
++  const material = decodeCanonicalBase64(b64);
++  if (material === null || material.length !== 33 || material[0] !== SIG_TYPE_ED25519) {
++    throw new Error('vkey is not an Ed25519 (type 0x01) key');
++  }
++  const raw = material.subarray(1);
++  if (keyId(name, raw).toString('hex') !== idHex) throw new Error('vkey key ID does not match its name and key');
++  return { name, keyId: Buffer.from(idHex, 'hex'), publicKeyRaw: Buffer.from(raw) };
++}
++
++function decodeCanonicalBase64(s) {
++  if (typeof s !== 'string' || s.length === 0 || s.length % 4 !== 0) return null;
++  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) return null;
++  const buf = Buffer.from(s, 'base64');
++  return buf.toString('base64') === s ? buf : null;
++}
++
++function isValidKeyName(name) {
++  return typeof name === 'string' && name.length > 0 && !/[\s+]/u.test(name);
++}
++
++/**
++ * Sign note text (which must end in a newline) as a C2SP signed note.
++ * @param {string} text
++ * @param {string} name - key name
++ * @param {crypto.KeyObject|string} privateKey - Ed25519 private key
++ * @param {crypto.KeyObject|string|Buffer} publicKey - matching public key
++ */
++function signNote(text, name, privateKey, publicKey) {
++  if (typeof text !== 'string' || !text.endsWith(NL)) throw new Error('note text must end in a newline');
++  if (!isValidKeyName(name)) throw new Error(`invalid key name: ${name}`);
++  const raw = rawPublicKey(publicKey);
++  const sig = crypto.sign(null, Buffer.from(text, 'utf8'), privateKey);
++  const blob = Buffer.concat([keyId(name, raw), sig]).toString('base64');
++  return `${text}${NL}${SIGNATURE_MARK} ${name} ${blob}${NL}`;
++}
++
++/**
++ * Split a signed note into its text and signature lines. Returns null for
++ * anything that is not a well-formed note.
++ */
++function parseNote(note) {
++  if (typeof note !== 'string' || !note.endsWith(NL)) return null;
++  for (let i = 0; i < note.length; i++) {
++    const c = note.charCodeAt(i);
++    if (c < 0x20 && c !== 0x0a) return null;
++  }
++  const sep = note.lastIndexOf(NL + NL);
++  if (sep < 0) return null;
++  const text = note.slice(0, sep + 1);
++  const sigLines = note.slice(sep + 2).split(NL);
++  sigLines.pop(); // the note ends in a newline, so the last split part is ''
++  if (sigLines.length === 0) return null;
++  const signatures = [];
++  for (const line of sigLines) {
++    const prefix = SIGNATURE_MARK + ' ';
++    if (!line.startsWith(prefix)) return null;
++    const rest = line.slice(prefix.length);
++    const space = rest.lastIndexOf(' ');
++    if (space <= 0) return null;
++    const name = rest.slice(0, space);
++    const blob = decodeCanonicalBase64(rest.slice(space + 1));
++    if (!isValidKeyName(name) || blob === null || blob.length < 5) return null;
++    signatures.push({ name, keyId: blob.subarray(0, 4), signature: blob.subarray(4) });
++  }
++  return { text, signatures };
++}
++
++/**
++ * Verify a signed note against one known Ed25519 key. Per the spec, signatures
++ * from unknown keys are ignored, a known key whose signature fails rejects the
++ * note, and a note with no verified known signature is rejected.
++ * @returns {{ ok: true, text: string } | { ok: false, reason: string }}
++ */
++function verifyNote(note, name, publicKey) {
++  const parsed = parseNote(note);
++  if (parsed === null) return { ok: false, reason: 'not a well-formed signed note' };
++  let raw;
++  try {
++    raw = rawPublicKey(publicKey);
++  } catch (e) {
++    return { ok: false, reason: 'unusable public key' };
++  }
++  const id = keyId(name, raw);
++  const keyObj = publicKeyObject(raw);
++  let verified = false;
++  for (const s of parsed.signatures) {
++    if (s.name !== name || !s.keyId.equals(id)) continue;
++    const ok = s.signature.length === 64 &&
++      crypto.verify(null, Buffer.from(parsed.text, 'utf8'), keyObj, s.signature);
++    if (!ok) return { ok: false, reason: `signature by ${name} does not verify` };
++    verified = true;
++  }
++  if (!verified) return { ok: false, reason: `no signature by ${name} (key ${id.toString('hex')})` };
++  return { ok: true, text: parsed.text };
++}
++
++/** Checkpoint note text (unsigned) for a tree. */
++function checkpointText(origin, size, root) {
++  if (!Number.isSafeInteger(size) || size < 0) throw new Error(`tree size must be a non-negative safe integer, got ${size}`);
++  if (!Buffer.isBuffer(root) || root.length !== 32) throw new Error('root must be 32 bytes');
++  return `${origin}${NL}${size}${NL}${root.toString('base64')}${NL}`;
++}
++
++/** Parse verified checkpoint text into { origin, size, root }. Null if malformed. */
++function parseCheckpointText(text) {
++  const lines = text.split(NL);
++  lines.pop();
++  if (lines.length < 3) return null;
++  const [origin, sizeStr, rootB64, ...extensions] = lines;
++  if (!origin || !/^(0|[1-9][0-9]*)$/.test(sizeStr)) return null;
++  const size = Number(sizeStr);
++  if (!Number.isSafeInteger(size)) return null;
++  const root = decodeCanonicalBase64(rootB64);
++  if (root === null || root.length !== 32) return null;
++  if (extensions.some((l) => l.length === 0)) return null;
++  return { origin, size, root, extensions };
++}
++
++/** Sign a checkpoint for a chain key. Key name = origin, per the spec. */
++function signCheckpoint({ size, root }, privateKey, publicKey) {
++  const origin = originFor(publicKey);
++  return signNote(checkpointText(origin, size, root), origin, privateKey, publicKey);
++}
++
++/**
++ * Verify a checkpoint against a chain public key.
++ * @returns {{ ok: true, origin, size, root } | { ok: false, reason }}
++ */
++function verifyCheckpoint(note, publicKey) {
++  let origin;
++  try {
++    origin = originFor(publicKey);
++  } catch (e) {
++    return { ok: false, reason: 'unusable public key' };
++  }
++  const v = verifyNote(note, origin, publicKey);
++  if (!v.ok) return v;
++  const cp = parseCheckpointText(v.text);
++  if (cp === null) return { ok: false, reason: 'checkpoint text is malformed' };
++  if (cp.origin !== origin) return { ok: false, reason: `checkpoint origin ${cp.origin} is not this chain (${origin})` };
++  if (cp.extensions.length !== 0) return { ok: false, reason: 'checkpoint carries extension lines; Lotor writes none' };
++  return { ok: true, origin: cp.origin, size: cp.size, root: cp.root };
++}
++
++const HEX64 = /^[0-9a-f]{64}$/;
++
++function hexList(list) {
++  if (!Array.isArray(list)) return null;
++  const out = [];
++  for (const h of list) {
++    if (typeof h !== 'string' || !HEX64.test(h)) return null;
++    out.push(Buffer.from(h, 'hex'));
++  }
++  return out;
++}
++
++/**
++ * Verify an inclusion proof as produced by the store's proveInclusion():
++ *   { leaf: <entry hash hex>, index: <seq>, size, path: [hex...], checkpoint: <signed note> }
++ * Needs only the proof and the chain's public key.
++ * @returns {{ ok: true, index, size, root } | { ok: false, reason }}
++ */
++function verifyInclusionProof(proof, publicKey) {
++  if (proof === null || typeof proof !== 'object') return { ok: false, reason: 'proof is not an object' };
++  const cp = verifyCheckpoint(proof.checkpoint, publicKey);
++  if (!cp.ok) return { ok: false, reason: `checkpoint: ${cp.reason}` };
++  if (proof.size !== cp.size) return { ok: false, reason: `proof is for tree size ${proof.size}, checkpoint is size ${cp.size}` };
++  if (typeof proof.leaf !== 'string' || !HEX64.test(proof.leaf)) return { ok: false, reason: 'leaf must be a 64-hex entry hash' };
++  const path = hexList(proof.path);
++  if (path === null) return { ok: false, reason: 'path must be a list of 64-hex hashes' };
++  const ok = verifyInclusion(proof.index, cp.size, leafHash(Buffer.from(proof.leaf, 'hex')), path, cp.root);
++  if (!ok) return { ok: false, reason: `entry ${proof.leaf} is not at index ${proof.index} of the tree this checkpoint signs` };
++  return { ok: true, index: proof.index, size: cp.size, root: cp.root };
++}
++
++/**
++ * Verify that a newer checkpoint extends an older one:
++ *   { from: <signed note>, to: <signed note>, path: [hex...] }
++ * @returns {{ ok: true, from, to } | { ok: false, reason }}
++ */
++function verifyConsistencyProof(proof, publicKey) {
++  if (proof === null || typeof proof !== 'object') return { ok: false, reason: 'proof is not an object' };
++  const a = verifyCheckpoint(proof.from, publicKey);
++  if (!a.ok) return { ok: false, reason: `older checkpoint: ${a.reason}` };
++  const b = verifyCheckpoint(proof.to, publicKey);
++  if (!b.ok) return { ok: false, reason: `newer checkpoint: ${b.reason}` };
++  const path = hexList(proof.path);
++  if (path === null) return { ok: false, reason: 'path must be a list of 64-hex hashes' };
++  if (!verifyConsistency(a.size, b.size, a.root, b.root, path)) {
++    return { ok: false, reason: `the size-${b.size} tree does not extend the size-${a.size} tree` };
++  }
++  return { ok: true, from: a.size, to: b.size };
++}
++
++export {
++  SIGNATURE_MARK,
++  originFor,
++  keyId,
++  vkey,
++  parseVkey,
++  signNote,
++  parseNote,
++  verifyNote,
++  checkpointText,
++  parseCheckpointText,
++  signCheckpoint,
++  verifyCheckpoint,
++  verifyInclusionProof,
++  verifyConsistencyProof,
++  rawPublicKey
++};
+diff --git a/src/chain/index.js b/src/chain/index.js
+--- a/src/chain/index.js
++++ b/src/chain/index.js
+@@ -100,16 +100,44 @@ function verifyChain(entries, publicKey) {
+     return { ok: true };
+   }
+ 
++  return verifyRange(entries, publicKey, { startSeq: 0, prevHash: GENESIS_PREV_HASH });
++}
++
++/**
++ * Verify a contiguous range of entries: the first carries seq startSeq and
++ * links to prevHash (the hash of entry startSeq - 1, or the genesis constant
++ * when startSeq is 0). Same checks, same order and same reasons as a full
++ * verifyChain; entry numbers in brokenAt and in the reasons are absolute seqs,
++ * so from startSeq 0 the result is exactly what verifyChain returned before
++ * this function existed. A caller that already trusts the chain up to
++ * startSeq (a verified checkpoint, src/store/checkpoints.js) verifies only
++ * what came after it.
++ * @param {Array} entries - Array of entry objects, in seq order
++ * @param {crypto.KeyObject} publicKey - Ed25519 public key
++ * @param {Object} [from] - { startSeq = 0, prevHash = GENESIS_PREV_HASH }
++ * @returns {Object} { ok: boolean, brokenAt?: number, reason?: string }
++ */
++function verifyRange(entries, publicKey, from = {}) {
++  const startSeq = from.startSeq === undefined ? 0 : from.startSeq;
++  const startPrevHash = from.prevHash === undefined ? GENESIS_PREV_HASH : from.prevHash;
++  if (!Number.isSafeInteger(startSeq) || startSeq < 0) {
++    throw new Error(`verifyRange: startSeq must be a non-negative safe integer, got ${startSeq}`);
++  }
++  if (!entries || entries.length === 0) {
++    return { ok: true };
++  }
++
+   for (let i = 0; i < entries.length; i++) {
+     const entry = entries[i];
++    const at = startSeq + i;
+ 
+     // Verify hash recomputation
+     const expectedHash = computeHash(entry);
+     if (expectedHash !== entry.hash) {
+       return {
+         ok: false,
+-        brokenAt: i,
+-        reason: `hash mismatch at entry ${i}: expected ${expectedHash}, got ${entry.hash}`
++        brokenAt: at,
++        reason: `hash mismatch at entry ${at}: expected ${expectedHash}, got ${entry.hash}`
+       };
+     }
+ 
+@@ -121,39 +149,40 @@ function verifyChain(entries, publicKey) {
+     if (!sigOk) {
+       return {
+         ok: false,
+-        brokenAt: i,
+-        reason: `signature verification failed at entry ${i}`
++        brokenAt: at,
++        reason: `signature verification failed at entry ${at}`
+       };
+     }
+ 
+-    // Verify seq continuity. verifyChain already requires a full chain from
+-    // genesis, so entry i must carry seq i. The hash covers seq, so a wrong seq
+-    // can only be signed in at write time; this is where it is caught.
+-    if (!Number.isSafeInteger(entry.seq) || entry.seq !== i) {
++    // Verify seq continuity. Entry i of a range that starts at startSeq must
++    // carry seq startSeq + i (seq i for a full chain from genesis). The hash
++    // covers seq, so a wrong seq can only be signed in at write time; this is
++    // where it is caught.
++    if (!Number.isSafeInteger(entry.seq) || entry.seq !== at) {
+       return {
+         ok: false,
+-        brokenAt: i,
+-        reason: `seq discontinuity at entry ${i}: expected ${i}, got ${JSON.stringify(entry.seq)}`
++        brokenAt: at,
++        reason: `seq discontinuity at entry ${at}: expected ${at}, got ${JSON.stringify(entry.seq)}`
+       };
+     }
+ 
+     // Verify prevHash linkage
+-    if (i === 0) {
++    if (at === 0) {
+       // Genesis entry: prevHash must be genesis constant
+       if (entry.prevHash !== GENESIS_PREV_HASH) {
+         return {
+           ok: false,
+-          brokenAt: i,
+-          reason: `genesis entry prevHash mismatch at entry ${i}: expected ${GENESIS_PREV_HASH}, got ${entry.prevHash}`
++          brokenAt: at,
++          reason: `genesis entry prevHash mismatch at entry ${at}: expected ${GENESIS_PREV_HASH}, got ${entry.prevHash}`
+         };
+       }
+     } else {
+-      const prevEntry = entries[i - 1];
+-      if (entry.prevHash !== prevEntry.hash) {
++      const expectedPrev = i > 0 ? entries[i - 1].hash : startPrevHash;
++      if (entry.prevHash !== expectedPrev) {
+         return {
+           ok: false,
+-          brokenAt: i,
+-          reason: `prevHash link broken at entry ${i}: expected ${prevEntry.hash}, got ${entry.prevHash}`
++          brokenAt: at,
++          reason: `prevHash link broken at entry ${at}: expected ${expectedPrev}, got ${entry.prevHash}`
+         };
+       }
+     }
+@@ -161,7 +190,6 @@ function verifyChain(entries, publicKey) {
+ 
+   return { ok: true };
+ }
+-
+ /**
+  * Generate an Ed25519 keypair for chain signing.
+  * @returns {Object} { publicKey: KeyObject, privateKey: KeyObject }
+@@ -176,6 +204,7 @@ function generateKeyPair() {
+ export {
+   createChain,
+   verifyChain,
++  verifyRange,
+   generateKeyPair,
+   GENESIS_PREV_HASH
+ };
+diff --git a/src/chain/merkle.js b/src/chain/merkle.js
+new file mode 100644
+--- /dev/null
++++ b/src/chain/merkle.js
+@@ -0,0 +1,263 @@
++import crypto from 'node:crypto';
++
++/**
++ * src/chain/merkle.js
++ *
++ * RFC 9162 (Certificate Transparency v2) section 2.1 Merkle tree hashing, the
++ * same tree as RFC 6962 and the one C2SP tlog-checkpoint names for its root
++ * hash. Node builtins only.
++ *
++ *   leaf hash  = SHA-256(0x00 || leaf data)
++ *   node hash  = SHA-256(0x01 || left || right)
++ *   MTH({})    = SHA-256() of the empty string
++ *   MTH(D[n])  = node(MTH(D[0:k]), MTH(D[k:n])), k the largest power of two
++ *                strictly less than n
++ *
++ * Every function here takes and returns 32-byte Buffers. Tree sizes and
++ * indexes are plain non-negative safe integers; halving uses Math.floor, not
++ * the 32-bit bit operators, so sizes above 2^31 stay correct.
++ *
++ * Why no dependency: the algorithms are ~150 lines of RFC text, the npm
++ * candidates found on 2026-10-26 (ctjs, last published 2018, plus several
++ * release-candidate packages from 2026) are unmaintained or unproven, and this
++ * file lands in protected core, where a dependency is a supply-chain surface
++ * the gate cannot see. The RFC 6962 reference roots are pinned in the tests.
++ */
++
++const LEAF_PREFIX = Buffer.from([0x00]);
++const NODE_PREFIX = Buffer.from([0x01]);
++
++function sha256(...parts) {
++  const h = crypto.createHash('sha256');
++  for (const p of parts) h.update(p);
++  return h.digest();
++}
++
++/** MTH of the empty tree. */
++const EMPTY_ROOT = sha256(Buffer.alloc(0));
++
++function leafHash(data) {
++  return sha256(LEAF_PREFIX, data);
++}
++
++function nodeHash(left, right) {
++  return sha256(NODE_PREFIX, left, right);
++}
++
++function isOdd(n) {
++  return n % 2 === 1;
++}
++
++function half(n) {
++  return Math.floor(n / 2);
++}
++
++/** Largest power of two strictly less than n (n >= 2). */
++function splitPoint(n) {
++  let k = 1;
++  while (k * 2 < n) k *= 2;
++  return k;
++}
++
++function requireSize(n, name) {
++  if (!Number.isSafeInteger(n) || n < 0) {
++    throw new Error(`${name} must be a non-negative safe integer, got ${n}`);
++  }
++}
++
++/**
++ * MTH over leaf hashes[start:end].
++ * @param {Buffer[]} hashes - leaf hashes (already leafHash()ed)
++ */
++function rootFromLeafHashes(hashes, start = 0, end = hashes.length) {
++  const n = end - start;
++  if (n === 0) return EMPTY_ROOT;
++  if (n === 1) return hashes[start];
++  const k = splitPoint(n);
++  return nodeHash(rootFromLeafHashes(hashes, start, start + k), rootFromLeafHashes(hashes, start + k, end));
++}
++
++/**
++ * RFC 9162 2.1.3.1 PATH(m, D[n]), leaf-to-root order.
++ * @param {number} m - leaf index, 0 <= m < n
++ * @param {Buffer[]} hashes - all n leaf hashes of the tree
++ */
++function inclusionPath(m, hashes, start = 0, end = hashes.length) {
++  const n = end - start;
++  if (!(m >= 0 && m < n)) {
++    throw new Error(`leaf index ${m} out of range for tree size ${n}`);
++  }
++  if (n === 1) return [];
++  const k = splitPoint(n);
++  if (m < k) {
++    return [...inclusionPath(m, hashes, start, start + k), rootFromLeafHashes(hashes, start + k, end)];
++  }
++  return [...inclusionPath(m - k, hashes, start + k, end), rootFromLeafHashes(hashes, start, start + k)];
++}
++
++/**
++ * RFC 9162 2.1.3.2: verify an inclusion proof. Pure; returns a boolean and
++ * never throws on hostile input.
++ */
++function verifyInclusion(leafIndex, treeSize, leaf, path, root) {
++  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(treeSize)) return false;
++  if (leafIndex < 0 || leafIndex >= treeSize) return false;
++  if (!Array.isArray(path) || !Buffer.isBuffer(leaf) || !Buffer.isBuffer(root)) return false;
++  let fn = leafIndex;
++  let sn = treeSize - 1;
++  let r = leaf;
++  for (const p of path) {
++    if (!Buffer.isBuffer(p) || p.length !== 32) return false;
++    if (sn === 0) return false;
++    if (isOdd(fn) || fn === sn) {
++      r = nodeHash(p, r);
++      if (!isOdd(fn)) {
++        while (!isOdd(fn) && fn !== 0) {
++          fn = half(fn);
++          sn = half(sn);
++        }
++      }
++    } else {
++      r = nodeHash(r, p);
++    }
++    fn = half(fn);
++    sn = half(sn);
++  }
++  return sn === 0 && r.equals(root);
++}
++
++/**
++ * RFC 9162 2.1.4.1 SUBPROOF(m, D[n], b).
++ */
++function subproof(m, hashes, start, end, b) {
++  const n = end - start;
++  if (m === n) {
++    return b ? [] : [rootFromLeafHashes(hashes, start, end)];
++  }
++  const k = splitPoint(n);
++  if (m <= k) {
++    return [...subproof(m, hashes, start, start + k, b), rootFromLeafHashes(hashes, start + k, end)];
++  }
++  return [...subproof(m - k, hashes, start + k, end, false), rootFromLeafHashes(hashes, start, start + k)];
++}
++
++/**
++ * RFC 9162 2.1.4.1 PROOF(m, D[n]): consistency proof that the tree of the
++ * first m leaves is a prefix of the tree of all n leaves. Empty when m is 0
++ * or m equals n.
++ */
++function consistencyProof(m, hashes) {
++  const n = hashes.length;
++  requireSize(m, 'old tree size');
++  if (m > n) throw new Error(`old tree size ${m} exceeds new tree size ${n}`);
++  if (m === 0 || m === n) return [];
++  return subproof(m, hashes, 0, n, true);
++}
++
++/**
++ * RFC 9162 2.1.4.2: verify a consistency proof. Pure; returns a boolean.
++ */
++function verifyConsistency(first, second, firstHash, secondHash, proof) {
++  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(second)) return false;
++  if (first < 0 || first > second) return false;
++  if (!Array.isArray(proof) || !Buffer.isBuffer(firstHash) || !Buffer.isBuffer(secondHash)) return false;
++  for (const p of proof) {
++    if (!Buffer.isBuffer(p) || p.length !== 32) return false;
++  }
++  if (first === second) return proof.length === 0 && firstHash.equals(secondHash);
++  if (first === 0) return proof.length === 0;
++  if (proof.length === 0) return false;
++
++  const path = isPowerOfTwo(first) ? [firstHash, ...proof] : proof.slice();
++  let fn = first - 1;
++  let sn = second - 1;
++  while (isOdd(fn)) {
++    fn = half(fn);
++    sn = half(sn);
++  }
++  let fr = path[0];
++  let sr = path[0];
++  for (let i = 1; i < path.length; i++) {
++    const c = path[i];
++    if (sn === 0) return false;
++    if (isOdd(fn) || fn === sn) {
++      fr = nodeHash(c, fr);
++      sr = nodeHash(c, sr);
++      if (!isOdd(fn)) {
++        while (!isOdd(fn) && fn !== 0) {
++          fn = half(fn);
++          sn = half(sn);
++        }
++      }
++    } else {
++      sr = nodeHash(sr, c);
++    }
++    fn = half(fn);
++    sn = half(sn);
++  }
++  return sn === 0 && fr.equals(firstHash) && sr.equals(secondHash);
++}
++
++function isPowerOfTwo(n) {
++  if (n < 1) return false;
++  let x = n;
++  while (x > 1) {
++    if (isOdd(x)) return false;
++    x = half(x);
++  }
++  return true;
++}
++
++/**
++ * Compact range ("frontier") of a tree: the roots of the perfect subtrees
++ * that make up its first `size` leaves, one per set bit of size, left to
++ * right. It is enough to extend the tree leaf by leaf and to compute the
++ * root, without the leaves themselves. Folding it right to left gives
++ * exactly MTH for every size, because MTH's split point is always the
++ * largest perfect subtree on the left.
++ */
++function frontierAppend(frontier, size, leaf) {
++  const f = frontier.slice();
++  let carry = leaf;
++  let s = size;
++  while (isOdd(s)) {
++    carry = nodeHash(f.pop(), carry);
++    s = half(s);
++  }
++  f.push(carry);
++  return f;
++}
++
++function frontierRoot(frontier) {
++  if (frontier.length === 0) return EMPTY_ROOT;
++  let r = frontier[frontier.length - 1];
++  for (let i = frontier.length - 2; i >= 0; i--) {
++    r = nodeHash(frontier[i], r);
++  }
++  return r;
++}
++
++/** Number of set bits: the frontier length a tree of `size` must have. */
++function popcount(size) {
++  let c = 0;
++  let s = size;
++  while (s > 0) {
++    if (isOdd(s)) c++;
++    s = half(s);
++  }
++  return c;
++}
++
++export {
++  EMPTY_ROOT,
++  leafHash,
++  nodeHash,
++  rootFromLeafHashes,
++  inclusionPath,
++  verifyInclusion,
++  consistencyProof,
++  verifyConsistency,
++  frontierAppend,
++  frontierRoot,
++  popcount
++};
+diff --git a/src/store/checkpoints.js b/src/store/checkpoints.js
+new file mode 100644
+--- /dev/null
++++ b/src/store/checkpoints.js
+@@ -0,0 +1,487 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import { verifyRange, GENESIS_PREV_HASH } from '../chain/index.js';
++import {
++  leafHash,
++  rootFromLeafHashes,
++  inclusionPath,
++  verifyInclusion,
++  consistencyProof,
++  frontierAppend,
++  frontierRoot,
++  popcount
++} from '../chain/merkle.js';
++import { signCheckpoint, verifyCheckpoint, verifyInclusionProof, verifyConsistencyProof } from '../chain/checkpoint.js';
++import { withLock } from './lock.js';
++
++/**
++ * src/store/checkpoints.js
++ *
++ * Chain segments, signed checkpoints and inclusion proofs (WO-CARTRIDGE-SEAL
++ * part B). chain.jsonl is never rewritten: every checkpoint lives in a
++ * sidecar, receipts/checkpoints.jsonl, one JSON record per line:
++ *
++ *   { v: 1, size, offset, lastHash, lastPath: [hex], frontier: [hex],
++ *     segmentRoot, note }
++ *
++ *   size        entries covered (seq 0 .. size-1); a multiple of the segment
++ *               size, except a checkpoint sealed at the head on demand
++ *               ({ atHead: true }), after which the next segment seal fills
++ *               up to the next multiple again
++ *   offset      byte offset in chain.jsonl just past entry size-1's newline
++ *   lastHash    entry size-1's hash; prevHash of entry `size` must equal it
++ *   lastPath    RFC 9162 inclusion path of lastHash at index size-1. For the
++ *               last leaf this is the frontier of size-1, reversed.
++ *   frontier    the compact range of the tree at `size`: enough to extend it
++ *               without reading the entries before `size`
++ *   segmentRoot MTH of the leaves this record's segment added (informational:
++ *               it is signed only through the cumulative root)
++ *   note        the C2SP tlog-checkpoint signed note for (origin, size, root)
++ *
++ * Only `note` is signed. Everything else is a cache that the readers below
++ * check against the signed root before using it (frontier folds to the root;
++ * lastHash is proven into it by lastPath), so a tampered sidecar fails closed
++ * instead of being trusted.
++ *
++ * Locking: each segment is sealed under its own withLock() acquisition, never
++ * a whole migration under one, because the lock is considered stale after 30
++ * s (src/store/lock.js) and appends give up after 5 s (KNOWN-LIMITS 7). One
++ * segment of 1024 entries verifies in about 80 ms (measured 2026-10-26).
++ *
++ * Signing uses the chain key (KNOWN-LIMITS 8 and 48 apply unchanged): a
++ * checkpoint shows that the key holder committed to a history. It catches a
++ * later rewrite only for someone who kept an earlier checkpoint, because the
++ * same key can sign a fresh set for a rewritten chain.
++ */
++
++/** Entries per sealed segment. Power of two: see proposals/chain-checkpoints.md for the measurement. */
++const SEGMENT_SIZE = 1024;
++
++const SIDECAR_NAME = 'checkpoints.jsonl';
++const RECORD_VERSION = 1;
++const HEX64 = /^[0-9a-f]{64}$/;
++
++function sidecarPath(baseDir) {
++  return path.join(baseDir, 'receipts', SIDECAR_NAME);
++}
++
++function chainPath(baseDir) {
++  return path.join(baseDir, 'receipts', 'chain.jsonl');
++}
++
++function toPublicKeyObject(publicKey) {
++  return crypto.createPublicKey(publicKey);
++}
++
++function hexes(list) {
++  return list.map((b) => b.toString('hex'));
++}
++
++function buffers(list, what) {
++  if (!Array.isArray(list)) throw new Error(`${what} is not a list`);
++  return list.map((h) => {
++    if (typeof h !== 'string' || !HEX64.test(h)) throw new Error(`${what} holds a value that is not a 64-hex hash`);
++    return Buffer.from(h, 'hex');
++  });
++}
++
++/**
++ * Read the sidecar. A missing file is no checkpoints. A line that does not
++ * parse is an error, not a skip: silently dropping a checkpoint would let a
++ * reader start from an older one without knowing.
++ */
++function readCheckpointRecords(baseDir) {
++  const file = sidecarPath(baseDir);
++  if (!fs.existsSync(file)) return [];
++  const lines = fs.readFileSync(file, 'utf8').split('\n');
++  const records = [];
++  for (let i = 0; i < lines.length; i++) {
++    if (lines[i].trim() === '') continue;
++    let rec;
++    try {
++      rec = JSON.parse(lines[i]);
++    } catch {
++      throw new Error(`lotor: ${SIDECAR_NAME} line ${i + 1} is not valid JSON`);
++    }
++    if (rec === null || typeof rec !== 'object' || rec.v !== RECORD_VERSION) {
++      throw new Error(`lotor: ${SIDECAR_NAME} line ${i + 1} is not a v${RECORD_VERSION} checkpoint record`);
++    }
++    records.push(rec);
++  }
++  for (let i = 1; i < records.length; i++) {
++    if (!(records[i].size > records[i - 1].size)) {
++      throw new Error(`lotor: ${SIDECAR_NAME} sizes do not increase at record ${i + 1}`);
++    }
++  }
++  return records;
++}
++
++/**
++ * Read complete entry lines from chain.jsonl starting at a byte offset.
++ * Stops after maxEntries entries, or at the last complete line (a torn tail
++ * with no newline is left for later). Blank lines are skipped, as loadChain
++ * skips them. A line that does not parse is an error here, where loadChain
++ * would drop it: a checkpoint must never cover a line nobody could read.
++ *
++ * @returns {{ entries: Array<{ entry: Object, end: number }>, fileSize: number }}
++ */
++function readEntriesFrom(baseDir, offset, maxEntries = Infinity) {
++  const file = chainPath(baseDir);
++  let fd;
++  try {
++    fd = fs.openSync(file, 'r');
++  } catch (err) {
++    if (err.code === 'ENOENT') {
++      if (offset !== 0) throw new Error(`lotor: chain.jsonl is missing but a checkpoint covers it up to byte ${offset}`);
++      return { entries: [], fileSize: 0 };
++    }
++    throw err;
++  }
++  try {
++    const fileSize = fs.fstatSync(fd).size;
++    if (offset > fileSize) {
++      throw new Error(`lotor: chain.jsonl is ${fileSize} bytes but a checkpoint covers it up to byte ${offset} (truncated)`);
++    }
++    const entries = [];
++    const CHUNK = 1024 * 1024;
++    let pos = offset;
++    let carry = Buffer.alloc(0);
++    let carryStart = offset;
++    while (pos < fileSize && entries.length < maxEntries) {
++      const len = Math.min(CHUNK, fileSize - pos);
++      const buf = Buffer.allocUnsafe(len);
++      let got = 0;
++      while (got < len) {
++        const n = fs.readSync(fd, buf, got, len - got, pos + got);
++        if (n === 0) throw new Error('lotor: chain file shrank while it was being read');
++        got += n;
++      }
++      pos += len;
++      const data = carry.length ? Buffer.concat([carry, buf]) : buf;
++      let lineStart = 0;
++      for (;;) {
++        if (entries.length >= maxEntries) break;
++        const nl = data.indexOf(0x0a, lineStart);
++        if (nl < 0) break;
++        const line = data.toString('utf8', lineStart, nl);
++        const end = carryStart + nl + 1;
++        if (line.trim() !== '') {
++          let entry;
++          try {
++            entry = JSON.parse(line);
++          } catch {
++            throw new Error(`lotor: chain.jsonl has an unparseable line ending at byte ${end}`);
++          }
++          entries.push({ entry, end });
++        }
++        lineStart = nl + 1;
++      }
++      carry = data.subarray(lineStart);
++      carryStart += lineStart;
++    }
++    return { entries, fileSize };
++  } finally {
++    fs.closeSync(fd);
++  }
++}
++
++/**
++ * Check a record's caches against its own signed note. Returns the state a
++ * reader may extend from, or throws with the reason.
++ */
++function trustedStateFrom(record, publicKey) {
++  const cp = verifyCheckpoint(record.note, publicKey);
++  if (!cp.ok) throw new Error(`checkpoint at size ${record.size}: ${cp.reason}`);
++  if (cp.size !== record.size) throw new Error(`checkpoint record says size ${record.size} but its note signs size ${cp.size}`);
++  if (!Number.isSafeInteger(record.offset) || record.offset < 0) throw new Error(`checkpoint at size ${cp.size} has no usable byte offset`);
++  const frontier = buffers(record.frontier, `checkpoint ${cp.size} frontier`);
++  if (frontier.length !== popcount(cp.size) || !frontierRoot(frontier).equals(cp.root)) {
++    throw new Error(`checkpoint at size ${cp.size}: cached frontier does not fold to the signed root`);
++  }
++  let lastHash = GENESIS_PREV_HASH;
++  if (cp.size > 0) {
++    if (typeof record.lastHash !== 'string' || !HEX64.test(record.lastHash)) {
++      throw new Error(`checkpoint at size ${cp.size} has no usable lastHash`);
++    }
++    const lastPath = buffers(record.lastPath, `checkpoint ${cp.size} lastPath`);
++    if (!verifyInclusion(cp.size - 1, cp.size, leafHash(Buffer.from(record.lastHash, 'hex')), lastPath, cp.root)) {
++      throw new Error(`checkpoint at size ${cp.size}: lastHash is not leaf ${cp.size - 1} of the signed tree`);
++    }
++    lastHash = record.lastHash;
++  }
++  return { size: cp.size, root: cp.root, frontier, offset: record.offset, lastHash, note: record.note };
++}
++
++const GENESIS_STATE = Object.freeze({ size: 0, root: null, frontier: [], offset: 0, lastHash: GENESIS_PREV_HASH, note: null });
++
++/**
++ * Walk entries forward from a trusted state: verify them as a chain range,
++ * extend the tree, and check every later checkpoint record against the tree
++ * this walk computes. Read-only.
++ */
++function walkFrom(state, items, laterRecords, publicKeyObj, publicKey) {
++  const entries = items.map((x) => x.entry);
++  const range = verifyRange(entries, publicKeyObj, { startSeq: state.size, prevHash: state.lastHash });
++  if (!range.ok) return range;
++
++  let frontier = state.frontier;
++  let size = state.size;
++  let ri = 0;
++  let segmentLeaves = [];
++  for (let i = 0; i < items.length; i++) {
++    const leaf = leafHash(Buffer.from(entries[i].hash, 'hex'));
++    frontier = frontierAppend(frontier, size, leaf);
++    size++;
++    segmentLeaves.push(leaf);
++    while (ri < laterRecords.length && laterRecords[ri].size === size) {
++      const rec = laterRecords[ri];
++      const cp = verifyCheckpoint(rec.note, publicKey);
++      if (!cp.ok) return { ok: false, brokenAt: size - 1, reason: `checkpoint at size ${size}: ${cp.reason}` };
++      if (cp.size !== size) return { ok: false, brokenAt: size - 1, reason: `checkpoint record at size ${size} signs size ${cp.size}` };
++      if (!frontierRoot(frontier).equals(cp.root)) {
++        return { ok: false, brokenAt: size - 1, reason: `entries 0..${size - 1} do not hash to the root the size-${size} checkpoint signs` };
++      }
++      if (rec.offset !== items[i].end || rec.lastHash !== entries[i].hash) {
++        return { ok: false, brokenAt: size - 1, reason: `checkpoint record at size ${size} has a stale offset or lastHash` };
++      }
++      if (rec.segmentRoot !== rootFromLeafHashes(segmentLeaves).toString('hex')) {
++        return { ok: false, brokenAt: size - 1, reason: `checkpoint record at size ${size} has a segmentRoot its entries do not produce` };
++      }
++      segmentLeaves = [];
++      ri++;
++    }
++  }
++  if (ri < laterRecords.length) {
++    return { ok: false, brokenAt: size, reason: `a checkpoint covers ${laterRecords[ri].size} entries but the chain has ${size} (truncated or rewritten)` };
++  }
++  return { ok: true, size };
++}
++
++/**
++ * Seal every complete segment not yet sealed. Never rewrites chain.jsonl;
++ * appends records to the sidecar. On a chain with no sidecar this is the
++ * migration: the first checkpoint covers seq 0 .. segmentSize-1 of the file
++ * as it already is.
++ *
++ * Refuses (throws) when the entries to be sealed do not verify, or when the
++ * last record does not check out against its own signature: it never signs
++ * over a history it could not verify.
++ *
++ * options.atHead: after the complete segments, also seal whatever is left
++ *   at the head (a partial segment), so the newest receipt can be proven now
++ *   rather than after the segment fills. A prediction signed before its
++ *   outcome needs this.
++ *
++ * @returns {{ sealed: number, size: number }} checkpoints written, and the
++ *   size the newest checkpoint covers
++ */
++function sealCheckpoints(baseDir, keyPair, options = {}) {
++  const segmentSize = options.segmentSize === undefined ? SEGMENT_SIZE : options.segmentSize;
++  if (!Number.isSafeInteger(segmentSize) || segmentSize < 1) throw new Error(`segmentSize must be a positive integer, got ${segmentSize}`);
++  const maxSegments = options.maxSegments === undefined ? Infinity : options.maxSegments;
++  const publicKeyObj = toPublicKeyObject(keyPair.publicKey);
++  let sealed = 0;
++  let size = null;
++  const step = (atHead) => {
++    const rec = withLock(baseDir, () => sealOneSegment(baseDir, keyPair, publicKeyObj, segmentSize, atHead));
++    if (rec === null) return false;
++    sealed++;
++    size = rec.size;
++    return true;
++  };
++  while (sealed < maxSegments && step(false)) { /* one segment per lock */ }
++  if (options.atHead === true && sealed < maxSegments) step(true);
++  if (size === null) {
++    const records = readCheckpointRecords(baseDir);
++    size = records.length ? records[records.length - 1].size : 0;
++  }
++  return { sealed, size };
++}
++
++function sealOneSegment(baseDir, keyPair, publicKeyObj, segmentSize, atHead) {
++  const records = readCheckpointRecords(baseDir);
++  const state = records.length ? trustedStateFrom(records[records.length - 1], keyPair.publicKey) : GENESIS_STATE;
++  // Segments end on multiples of segmentSize, so a head checkpoint taken on
++  // demand does not shift the boundaries of the ones after it.
++  const want = (Math.floor(state.size / segmentSize) + 1) * segmentSize - state.size;
++  const { entries: items } = readEntriesFrom(baseDir, state.offset, want);
++  if (items.length === 0 || (items.length < want && !atHead)) return null;
++
++  const entries = items.map((x) => x.entry);
++  const range = verifyRange(entries, publicKeyObj, { startSeq: state.size, prevHash: state.lastHash });
++  if (!range.ok) throw new Error(`lotor: refusing to seal: ${range.reason}`);
++
++  let frontier = state.frontier;
++  let size = state.size;
++  let lastPath = [];
++  const segmentLeaves = [];
++  for (const e of entries) {
++    const leaf = leafHash(Buffer.from(e.hash, 'hex'));
++    lastPath = frontier.slice().reverse();
++    frontier = frontierAppend(frontier, size, leaf);
++    size++;
++    segmentLeaves.push(leaf);
++  }
++  const root = frontierRoot(frontier);
++  const note = signCheckpoint({ size, root }, keyPair.privateKey, keyPair.publicKey);
++  const record = {
++    v: RECORD_VERSION,
++    size,
++    offset: items[items.length - 1].end,
++    lastHash: entries[entries.length - 1].hash,
++    lastPath: hexes(lastPath),
++    frontier: hexes(frontier),
++    segmentRoot: rootFromLeafHashes(segmentLeaves).toString('hex'),
++    note
++  };
++  const file = sidecarPath(baseDir);
++  if (!fs.existsSync(file)) fs.writeFileSync(file, '', { mode: 0o600 });
++  fs.appendFileSync(file, JSON.stringify(record) + '\n');
++  return record;
++}
++
++/**
++ * Verify starting from a trusted checkpoint instead of genesis. Read-only.
++ *
++ * options.trusted: a checkpoint note the caller already trusts (one they kept,
++ *   or one a cartridge carried). The sidecar must hold a record for the same
++ *   size with the same signed root, or the result is a fork. Omitted: the
++ *   newest sidecar record is the starting point.
++ *
++ * Reads only the entries after the starting checkpoint. With no checkpoint at
++ * all it reads from genesis, which is the full verify.
++ *
++ * @returns {{ ok: true, mode, from, size } | { ok: false, reason, brokenAt? }}
++ */
++function verifyIncremental(baseDir, publicKey, options = {}) {
++  const publicKeyObj = toPublicKeyObject(publicKey);
++  let records;
++  try {
++    records = readCheckpointRecords(baseDir);
++  } catch (e) {
++    return { ok: false, reason: e.message };
++  }
++
++  let startIndex = records.length - 1;
++  if (options.trusted !== undefined) {
++    const t = verifyCheckpoint(options.trusted, publicKey);
++    if (!t.ok) return { ok: false, reason: `trusted checkpoint: ${t.reason}` };
++    startIndex = records.findIndex((r) => r.size === t.size);
++    if (startIndex < 0) return { ok: false, reason: `no sealed checkpoint at size ${t.size}: this chain does not contain the checkpoint you trust` };
++    const mine = verifyCheckpoint(records[startIndex].note, publicKey);
++    if (!mine.ok || !mine.root.equals(t.root)) {
++      return { ok: false, reason: `fork: the size-${t.size} checkpoint on disk does not sign the root you trust` };
++    }
++  }
++
++  let state = GENESIS_STATE;
++  if (startIndex >= 0) {
++    try {
++      state = trustedStateFrom(records[startIndex], publicKey);
++    } catch (e) {
++      return { ok: false, reason: e.message };
++    }
++  }
++  let items;
++  try {
++    ({ entries: items } = readEntriesFrom(baseDir, state.offset));
++  } catch (e) {
++    return { ok: false, reason: e.message };
++  }
++  const result = walkFrom(state, items, records.slice(startIndex + 1), publicKeyObj, publicKey);
++  if (!result.ok) return result;
++  return { ok: true, mode: startIndex >= 0 ? 'incremental' : 'full', from: state.size, size: result.size };
++}
++
++/**
++ * Full verify of the chain AND every checkpoint, from genesis. Read-only.
++ * The plain chain verify (store.verify) is unchanged and still available.
++ */
++function verifySealed(baseDir, publicKey) {
++  const publicKeyObj = toPublicKeyObject(publicKey);
++  let records;
++  let items;
++  try {
++    records = readCheckpointRecords(baseDir);
++    ({ entries: items } = readEntriesFrom(baseDir, 0));
++  } catch (e) {
++    return { ok: false, reason: e.message };
++  }
++  const result = walkFrom(GENESIS_STATE, items, records, publicKeyObj, publicKey);
++  if (!result.ok) return result;
++  return { ok: true, mode: 'full', from: 0, size: result.size, checkpoints: records.length };
++}
++
++function recordForSize(records, size) {
++  if (records.length === 0) throw new Error('lotor: no sealed checkpoint yet; run seal first');
++  if (size === undefined) return records[records.length - 1];
++  const rec = records.find((r) => r.size === size);
++  if (!rec) throw new Error(`lotor: no sealed checkpoint at size ${size}`);
++  return rec;
++}
++
++function leafHashesUpTo(baseDir, size) {
++  const { entries: items } = readEntriesFrom(baseDir, 0, size);
++  if (items.length < size) throw new Error(`lotor: chain has ${items.length} entries, checkpoint needs ${size}`);
++  return items.map((x) => x.entry);
++}
++
++/**
++ * Inclusion proof for the entry at `seq` against a sealed checkpoint (the
++ * newest by default, or options.size). Reads the entries the checkpoint
++ * covers. The proof is checked before it is returned, so a chain that no
++ * longer matches its checkpoint throws here instead of handing out a proof
++ * that will fail somewhere else.
++ *
++ * @returns {{ leaf, index, size, path: string[], checkpoint: string }}
++ */
++function proveInclusion(baseDir, publicKey, seq, options = {}) {
++  const rec = recordForSize(readCheckpointRecords(baseDir), options.size);
++  if (!Number.isSafeInteger(seq) || seq < 0 || seq >= rec.size) {
++    throw new Error(`lotor: seq ${seq} is not covered by the size-${rec.size} checkpoint (it covers 0..${rec.size - 1}); seal first`);
++  }
++  const entries = leafHashesUpTo(baseDir, rec.size);
++  const leaves = entries.map((e) => leafHash(Buffer.from(e.hash, 'hex')));
++  const proof = {
++    leaf: entries[seq].hash,
++    index: seq,
++    size: rec.size,
++    path: hexes(inclusionPath(seq, leaves)),
++    checkpoint: rec.note
++  };
++  const check = verifyInclusionProof(proof, publicKey);
++  if (!check.ok) throw new Error(`lotor: chain does not match its own checkpoint: ${check.reason}`);
++  return proof;
++}
++
++/**
++ * Consistency proof that the checkpoint at options.to (newest by default)
++ * extends the one at `fromSize`. Checked before it is returned.
++ *
++ * @returns {{ from: string, to: string, path: string[] }}
++ */
++function proveConsistency(baseDir, publicKey, fromSize, options = {}) {
++  const records = readCheckpointRecords(baseDir);
++  const a = recordForSize(records, fromSize);
++  const b = recordForSize(records, options.to);
++  if (a.size > b.size) throw new Error(`lotor: checkpoint ${a.size} is newer than ${b.size}`);
++  const entries = leafHashesUpTo(baseDir, b.size);
++  const leaves = entries.map((e) => leafHash(Buffer.from(e.hash, 'hex')));
++  const proof = { from: a.note, to: b.note, path: hexes(consistencyProof(a.size, leaves)) };
++  const check = verifyConsistencyProof(proof, publicKey);
++  if (!check.ok) throw new Error(`lotor: checkpoints are not consistent: ${check.reason}`);
++  return proof;
++}
++
++export {
++  SEGMENT_SIZE,
++  SIDECAR_NAME,
++  readCheckpointRecords,
++  readEntriesFrom,
++  sealCheckpoints,
++  verifyIncremental,
++  verifySealed,
++  proveInclusion,
++  proveConsistency
++};
+diff --git a/src/store/index.js b/src/store/index.js
+--- a/src/store/index.js
++++ b/src/store/index.js
+@@ -3,6 +3,7 @@ import path from 'node:path';
+ import crypto from 'node:crypto';
+ import { createChain, verifyChain, generateKeyPair, GENESIS_PREV_HASH } from '../chain/index.js';
+ import { withLock } from './lock.js';
++import * as checkpoints from './checkpoints.js';
+ 
+ /**
+  * src/store/index.js
+@@ -467,6 +468,52 @@ function createStore(baseDir = DEFAULT_BASE_DIR) {
+       // Import public key from PEM for verification
+       const publicKey = crypto.createPublicKey(keyPair.publicKey);
+       return verifyChain(materialize(), publicKey);
++    },
++
++    /**
++     * Seal every complete segment of the chain into a signed C2SP
++     * checkpoint. Writes receipts/checkpoints.jsonl only; chain.jsonl is
++     * never rewritten. On a chain with no checkpoints this is the
++     * migration. See src/store/checkpoints.js.
++     * @param {Object} [options] - { segmentSize, maxSegments }
++     * @returns {Object} { sealed, size }
++     */
++    seal(options) {
++      return checkpoints.sealCheckpoints(baseDir, keyPair, options);
++    },
++
++    /**
++     * Verify forward from the newest checkpoint, or from one the caller
++     * trusts ({ trusted: <signed note> }), reading only what came after it.
++     * @returns {Object} { ok, mode, from, size } or { ok: false, reason }
++     */
++    verifyIncremental(options) {
++      return checkpoints.verifyIncremental(baseDir, keyPair.publicKey, options);
++    },
++
++    /**
++     * Verify the whole chain and every checkpoint from genesis.
++     * @returns {Object} { ok, mode, from, size, checkpoints } or { ok: false, reason }
++     */
++    verifySealed() {
++      return checkpoints.verifySealed(baseDir, keyPair.publicKey);
++    },
++
++    /**
++     * RFC 9162 inclusion proof for the entry at seq, against the newest
++     * checkpoint (or { size }). Verify it with verifyInclusionProof() from
++     * src/chain/checkpoint.js, which needs only the proof and the public key.
++     */
++    proveInclusion(seq, options) {
++      return checkpoints.proveInclusion(baseDir, keyPair.publicKey, seq, options);
++    },
++
++    /**
++     * RFC 9162 consistency proof that the newest checkpoint (or { to })
++     * extends the one at fromSize.
++     */
++    proveConsistency(fromSize, options) {
++      return checkpoints.proveConsistency(baseDir, keyPair.publicKey, fromSize, options);
+     }
+   };
+ }
