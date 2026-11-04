@@ -133,7 +133,6 @@ export function sinceReport(entries, opts = {}) {
         s.toolCalls = (s.toolCalls ?? 0) + (c.toolCalls ?? 0);
         s.failures = (s.failures ?? 0) + (c.failures ?? 0);
         if (Array.isArray(p.touched)) {
-          s.touchedCount = (s.touchedCount ?? 0) + p.touched.length;
           // Keep the paths, not just the count. A count narrows the search to
           // a handful of sessions; a path answers the question outright, which
           // is the difference between "go and look" and "here it is". This is
@@ -153,6 +152,9 @@ export function sinceReport(entries, opts = {}) {
               s.refusedPaths.splice(s.refusedPaths.indexOf(pth), 1);
             }
           }
+          // DISTINCT paths for the session, for the same reason as below: a
+          // per-receipt sum counted one file once per SessionEnd firing.
+          s.touchedCount = s.touched.length;
           // DISTINCT refused paths for the session, not a per-receipt sum.
           // Every subsession receipt re-parses the whole transcript
           // (src/ingest), so one refused write in a session with three

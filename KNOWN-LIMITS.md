@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
- stamped 2026-10-28
+ stamped 2026-11-04
  subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ body-sha256: 127eb0c7805201dc585d8cf3ea1db1f54d42116f40c512352889aea5e55ddefd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3058,10 +3058,12 @@ unmerged.
 
 ## 76. A refused write was listed as touched, so an attempt read as a change
 
-**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
-Closed for the parser, the since-view, the text receipt and the live view.
-Still OPEN for retcon's charter reconciliation (core) and three smaller
-readers; see "Still open" below.** The parser
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`;
+narrowed 2026-11-04, branch `lotor-lane/l76-readers`. Closed for the parser,
+the since-view, the text receipt, the live view, MCP `query_receipts` and the
+chapters view on Claude Code transcripts. Still OPEN for retcon's charter
+reconciliation (core), Codex chapters, and a count this work found; see "Still
+open" below.** The parser
 now records an Edit/Write attempt and settles it against the tool_result that
 answers it. A touched entry from an attempt carries `outcome`: `ok` when the
 harness answered with a success, `error` when it answered with an error
@@ -3087,13 +3089,32 @@ this change carry no `outcome` and render exactly as they did.
   items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
   and `bin/` is wholesale core, so it waits for a signing sitting.
   `reconcile.js` itself cannot fix it: it never sees the outcome.
-- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
-  report `touchedCount: p.touched.length`, refused attempts included.
-- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
-  straight from the transcript's tool_use and never joins the tool_result.
-- **`touchedCount` in the since-view** is still summed per receipt, so with
-  subsessions "N files touched" overcounts in the same way `touchedRefused`
-  did. That predates this limit and is left for its own change.
+- **Codex chapters.** `chaptersFromCodexRollout` does not settle `apply_patch`
+  attempts against their output, so a refused patch still reads as a file.
+- **`turns`, `toolCalls` and `failures` in the since-view are summed across
+  receipts, and the receipts are cumulative.** Found 2026-11-04 fixing
+  `touchedCount`, which had the same fault. Every subsession receipt re-parses
+  the whole transcript (`src/ingest/index.js`), so a session with three
+  SessionEnd firings reports each of those counts about three times over. A
+  comment at the sum says accumulating prevents under-reporting; that holds
+  only if a receipt counted just its own stretch, which it does not. Not fixed
+  here: taking the largest value would be right for one transcript and wrong
+  for a session continued in a new one, and that case was not measured.
+  `test/known-limits-76-readers.test.js` s3 pins the wrong number as a tripwire.
+
+**What the 2026-11-04 narrowing added.** MCP session rows now carry
+`touchedRefused`, omitted when no item on the receipt has an `outcome`, because
+then the number is unrecorded rather than zero. `touchedCount` still counts
+attempts. In the chapters view a chapter gains a `refused` list when it has a
+refused path, settled per chapter: a path refused in one chapter and landed in
+a later one is refused in the first and not in the second. The since-view's
+`touchedCount` is now distinct paths per session. **What to doubt in this part.**
+`refused` is left out of the chapters/1 digest on purpose, because digests
+already on the chain were taken without it, so the marks are bound only through
+the transcript hash and a reader checking the chapter digest alone learns
+nothing about them. Distinct paths in the since-view compare strings as the
+receipts wrote them, and a receipt from before limit 75's fix can still list one
+file under two spellings.
 
 Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
 own hook files was refused. Seq 36204 is that session's receipt, and it lists
