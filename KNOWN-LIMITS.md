@@ -1,7 +1,7 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
+ This file describes commit f419f11870919ba3a5099ba156d8479172d87bc8
  stamped 2026-11-04
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
+ subject: KNOWN-LIMITS 76: MCP rows, Claude chapters and since-view stop reading a refused write as touched
  body-sha256: 127eb0c7805201dc585d8cf3ea1db1f54d42116f40c512352889aea5e55ddefd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
