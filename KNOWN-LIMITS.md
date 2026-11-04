@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
  This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
- stamped 2026-10-28
+ stamped 2026-11-04
  subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ body-sha256: ffe45b9b192fb4dce69af55d372dc6edf0c69d6bf7e9936a9d1a690c988a8cdc
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -966,6 +966,15 @@ run verified the log's *structure* against the tree; it did not read 61 entries
 for *truth* against `dc1910b`. Stamping on the strength of a numbering check
 would be a smaller lie than stamping on nothing, and it would still be one. The
 stamp remains owed by whoever verifies.
+
+**Amended 2026-11-04: the automation exists.** "That CI wiring is still not built" is out of
+date. CI has run `--check` since 2026-10-26 (`3f0f763`), and
+`test/known-limits-committed-pin.test.js` reads the committed pin. **What this did not fix is
+the entry's real subject, and this amendment is the proof.** On 2026-11-03 a read of the log
+against the code found limits 29, 65, 66, 70 and 77 still describing fixes as missing after
+they had landed, some for over a week, with CI green throughout. The pin check proves the
+log is the one that was stamped. It does not prove the log is true, and it cannot notice a
+closure that happened in the code and never reached the record.
 
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
@@ -2594,9 +2603,18 @@ carries no digest; re-stamping is a separate act on `main`, as limit 29
 intended, and nothing in `npm test` runs `--check` yet (the "nothing runs the
 check" paragraph above stays true).
 
+**Amended 2026-11-04: that paragraph is no longer true.** CI landed on 2026-10-26 (`3f0f763`)
+and runs `npm run limits-pin -- --check` on every pull request, on Ubuntu and on Windows,
+next to `npm test` (`.github/workflows/ci.yml`). "Nothing runs the check" and "this
+repository has no CI at all" are history. The pin at the top of this file carries a digest
+now. The residual stands: a digest binds the text, not its truth.
+
 ---
 
 ## 66. Subagent tool use is outside the witness entirely
+
+**Status, amended 2026-11-04: the headline below is no longer true on the current
+harness. Partly closed.** See the amendment at the end of this entry before quoting it.
 
 **Found 2026-09-02**, on a real dispatch: one parent session, three concurrent
 children, chain rows counted across the window.
@@ -2634,6 +2652,19 @@ gate was armed on 2026-07-23.** The upgrade is duller and stronger than "the gat
 can be bypassed": **the bypass does not require intent, and it is the normal
 case.** 519 is a floor rather than a point estimate, and the same-command
 asymmetry it exposes is filed separately as limit 70.
+
+**Amended 2026-11-04: the harness changed, the hooks caught up, and the sentence "the gate
+cannot see, record, or stop anything a subagent does" is now false here.** The harness fires
+the same hooks for a tool call made inside a subagent, carrying the parent's `session_id`
+plus `agent_id` and `agent_type`. Both hooks read those fields since the 2026-10-26 signing
+sitting (`1c3e9f2`), and write them onto the row. A count on 2026-11-03 found 6,614 rows on
+this machine's chain with a non-empty `agentId`, and a probe on 2026-10-22 stopped a
+subagent's read of the chain at the self-mod gate (request `db8790d9`). The 2026-09-02
+measurement and the 519 replayed calls above were true of the harness of that date, and they
+stand as history. **What remains open:** Lotor cannot tell which harness version it runs
+under, so on a harness that does not route subagent tool events through hooks this entry
+still holds in full, and nothing on the chain says which case a reader is in. A missing
+`agentId` means a parent call or an older harness, and the row alone cannot separate them.
 
 **Related.** Limit 67 is the same dispatch reporting numbers that do not match
 its own transcripts. Limit 44 is the other enforcement gap found by probing
@@ -2744,6 +2775,10 @@ stamp.
 
 ## 70. The protected-path rules are enforced against the parent and structurally unenforced against a child
 
+**Status, amended 2026-11-04: narrowed, not closed.** On the current harness the same
+command is gated whether the parent or a child runs it. See the amendment at the end of
+this entry and the one on limit 66.
+
 **Found 2026-09-02**, by replaying six weeks of real dispatches through the
 matcher rather than by staging a probe.
 
@@ -2779,6 +2814,11 @@ this machine runs LOOSE, so nothing was being stopped anyway. Under a herded
 configuration these 519 are an enforcement hole; today they are 519 missing rows.
 The replay tool lives outside this repository, so a reader of this log cannot
 re-run it from here.
+
+**Amended 2026-11-04.** "A subagent's calls never reach it" is false on the current harness:
+they reach the hook and are attributed (limit 66's amendment). The asymmetry measured on
+2026-09-02 survives only on a harness version that does not route subagent tool events
+through hooks. Lotor cannot tell which version it runs under, so the entry stays, narrowed.
 
 **Related.** Limit 66 is the same blindness stated as a recording gap rather than
 an enforcement one. Limit 62 is the other way a protected path escapes the
@@ -3119,6 +3159,9 @@ core and is not touched here.
 
 ## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
 
+**Status: CLOSED 2026-10-26 at the signing sitting (`1c3e9f2`), schema `matcher/3`.** The
+queued patch below landed. See the closing note at the end of this entry.
+
 `matcherVersionHash()` digests `Function.prototype.toString()` of the rule
 functions, and `toString()` returns the source text as loaded, line endings
 included. A Windows clone with `core.autocrlf=true` checks out CRLF, so the
@@ -3157,6 +3200,14 @@ tripwire to guard. `test/policy-matcher-stamp-eol-patch.test.js` rehearses it on
 temp copies: patched LF equals patched CRLF, the patched LF stamp equals the
 unpatched LF stamp, and the unpatched control still differs. Until it lands,
 the limit stands as written above.
+
+**CLOSED 2026-10-26.** The fold is in `matcherHashInputs()`, the schema is `matcher/3`,
+`test/policy-matcher-stamp-eol.test.js` guards it, and the patch rehearsals now skip with a
+message saying the patch landed. This entry kept reading "not landed" for nine days after
+it did, which is limit 29's failure again. **Still open, and the entry already said so:**
+how the receipts written before the change are read. Every CRLF-era stamp on this machine's
+chain still differs from the LF stamp of the same commit, and `src/views/matcher-history.js`
+is what tells them apart.
 
 ## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
 
@@ -3352,3 +3403,30 @@ so a chain with an inserted garbage line can pass `store.verify()` and still
 refuse to seal; and re-sealing from scratch yields byte-identical notes
 (Ed25519 is deterministic and the note text is fixed by size and root), so
 losing the sidecar loses nothing a stranger kept.
+
+## 87. The scheduling rules read commands, and a harness can schedule through a tool
+
+**Found 2026-10-22 by reading the policy source; probed 2026-11-04 by running it.** Limit 44
+closed the shell forms of scheduling. A harness can also schedule through a tool call with
+no shell in it. With all nine rules set to `gate`, the shipped `evaluate()` returned no rule
+for each of these, each given a prompt that would run a remote script:
+
+| call | rule |
+|---|---|
+| `Bash`, `schtasks /create ...` (control) | scope-escalation |
+| `Bash`, `crontab -e` (control) | scope-escalation |
+| `CronCreate` | none |
+| `ScheduleWakeup` | none |
+| `RemoteTrigger` | none |
+| `mcp__scheduled-tasks__create_scheduled_task` | none |
+| `mcp__scheduled-tasks__update_scheduled_task` | none |
+
+The act is the same as the controls and the door is different: every command rule asks
+whether the input has a `command` string, these have none, and the artifact half of limit 44
+looks only at `Write`, `Edit` and `NotebookEdit`. This is the same family as limit 31, which
+says the rule set has no concept of actions scheduled for later. It is not a statement about
+what a harness does with such a call, or whether a row is recorded for it; that depends on
+how the hooks are registered, and it was not measured here. The input shapes in the probe
+are this author's, and a list of tool names would only move the hole, so the fix is a
+question for the policy's design rather than a rule to add. Any fix is a change to
+`src/policy` (non-delegable core), and it waits for a signing sitting.
