@@ -9,8 +9,8 @@
  *   MCP: `query_receipts` session rows carry `touchedRefused`, omitted when
  *   no item on the receipt has an `outcome` (absent is not zero).
  *   Since-view: `touchedCount` is distinct paths per session, not a sum.
- *   s3 is a deliberate tripwire: it pins a known wrong number so a fix has
- *   to come and update the limit beside it.
+ *   Since-view: turns, toolCalls and failures are the largest value across
+ *   a session's receipts, not a sum (s3, s4).
  */
 
 import { describe, it } from 'node:test';
@@ -201,15 +201,9 @@ describe('KNOWN-LIMITS 76 narrowing: the since-view counts touched paths once pe
     assert.strictEqual(s.touchedCount, 3);
   });
 
-  it('s3. tripwire: turns, toolCalls and failures still sum across cumulative receipts (limit 76, still open)', () => {
-    // This asserts a known wrong number ON PURPOSE. Every subsession receipt
-    // re-parses the whole transcript (src/ingest), so a session with two
-    // SessionEnd firings reports each of these counts about twice over, and
-    // the since-view still sums them. Summing is wrong for cumulative
-    // receipts; the honest fix needs a decision this change did not make.
-    // A fix must come and update this test together with KNOWN-LIMITS 76's
-    // "Still open" list; if this test starts failing instead, the number
-    // moved and the limit must be revisited, not the test deleted.
+  it('s3. turns, toolCalls and failures are not summed across cumulative receipts (limit 76)', () => {
+    // Every subsession receipt re-parses the whole transcript (src/ingest),
+    // so two receipts with the same counts are one stretch of work.
     const entries = [
       open('l76-s3'),
       at(1, 2000, {
@@ -224,8 +218,32 @@ describe('KNOWN-LIMITS 76 narrowing: the since-view counts touched paths once pe
       })
     ];
     const s = sinceReport(entries).sessions[0];
-    assert.strictEqual(s.turns, 10, 'WRONG ON PURPOSE: 5 turns happened, 10 are reported');
-    assert.strictEqual(s.toolCalls, 8, 'WRONG ON PURPOSE: 4 tool calls happened, 8 are reported');
-    assert.strictEqual(s.failures, 2, 'WRONG ON PURPOSE: 1 failure happened, 2 are reported');
+    assert.strictEqual(s.turns, 5);
+    assert.strictEqual(s.toolCalls, 4);
+    assert.strictEqual(s.failures, 1);
+  });
+
+  it('s4. a growing session reads as its largest receipt, and a counts-free receipt does not lower it', () => {
+    const entries = [
+      open('l76-s4'),
+      at(1, 2000, {
+        session: { id: 'l76-s4', model: 'test-model', subsession: 0 },
+        counts: { turns: 3, toolCalls: 2, failures: 0 },
+        touched: []
+      }),
+      at(2, 3000, {
+        session: { id: 'l76-s4', model: 'test-model', subsession: 1 },
+        counts: { turns: 7, toolCalls: 6, failures: 2 },
+        touched: []
+      }),
+      at(3, 4000, {
+        session: { id: 'l76-s4', model: 'test-model', subsession: 2 },
+        touched: []
+      })
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.strictEqual(s.turns, 7);
+    assert.strictEqual(s.toolCalls, 6);
+    assert.strictEqual(s.failures, 2);
   });
 });

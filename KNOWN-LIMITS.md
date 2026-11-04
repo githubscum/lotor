@@ -3091,16 +3091,6 @@ this change carry no `outcome` and render exactly as they did.
   `reconcile.js` itself cannot fix it: it never sees the outcome.
 - **Codex chapters.** `chaptersFromCodexRollout` does not settle `apply_patch`
   attempts against their output, so a refused patch still reads as a file.
-- **`turns`, `toolCalls` and `failures` in the since-view are summed across
-  receipts, and the receipts are cumulative.** Found 2026-11-04 fixing
-  `touchedCount`, which had the same fault. Every subsession receipt re-parses
-  the whole transcript (`src/ingest/index.js`), so a session with three
-  SessionEnd firings reports each of those counts about three times over. A
-  comment at the sum says accumulating prevents under-reporting; that holds
-  only if a receipt counted just its own stretch, which it does not. Not fixed
-  here: taking the largest value would be right for one transcript and wrong
-  for a session continued in a new one, and that case was not measured.
-  `test/known-limits-76-readers.test.js` s3 pins the wrong number as a tripwire.
 
 **What the 2026-11-04 narrowing added.** MCP session rows now carry
 `touchedRefused`, omitted when no item on the receipt has an `outcome`, because
@@ -3115,6 +3105,28 @@ the transcript hash and a reader checking the chapter digest alone learns
 nothing about them. Distinct paths in the since-view compare strings as the
 receipts wrote them, and a receipt from before limit 75's fix can still list one
 file under two spellings.
+
+**The since-view's other counts, the same day.** `turns`, `toolCalls` and
+`failures` were summed across a session's receipts, and the receipts are
+cumulative, so a session with three SessionEnd firings reported each of them
+about three times over. They are now the largest value across the session's
+receipts. Measured on this machine's chain before choosing, 4,110 sessions: 252
+wrote more than one receipt (589 receipts). In none of the 252 did any of the
+three counts fall from one receipt to the next, and the largest always equalled
+the last. Across the whole chain the sum reported 140,148 tool calls where the
+largest reports 124,769, 12.3% over; inside the 252 the median sum was double
+the largest and the worst was 5.32 times. Today's traffic barely shows it: in
+the seven days measured, 3 of 227 sessions had more than one receipt.
+**What to doubt in this part.** The largest value is wrong for a session id
+continued in a new transcript: it would under-report, and nothing here detects
+that. It was not seen. `session.startedAt` was constant on all 252 except one
+placeholder `unknown` id with zero counts, but that is one machine's harness
+behaviour, not a promise from it, and a harness that reuses an id would break
+this silently. Unexplained and left alone: one session's `touched` list shrank
+between receipts (39 paths to 32, 17 gone, none a respelling), so "each receipt
+is a superset" held for the counts and not for that one list. The window is
+unchanged: a receipt inside the window still reports work done before the
+window opened.
 
 Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
 own hook files was refused. Seq 36204 is that session's receipt, and it lists

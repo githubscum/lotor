@@ -127,11 +127,14 @@ export function sinceReport(entries, opts = {}) {
         s.receiptSeq = e.seq;
         s.model = p.session?.model ?? s.model;
         const c = p.counts || {};
-        // A session may write several receipts (subsessions). Accumulate rather
-        // than overwrite, or the rollup under-reports the busiest sessions.
-        s.turns = (s.turns ?? 0) + (c.turns ?? 0);
-        s.toolCalls = (s.toolCalls ?? 0) + (c.toolCalls ?? 0);
-        s.failures = (s.failures ?? 0) + (c.failures ?? 0);
+        // A session may write several receipts (subsessions), and each one
+        // re-parses the whole transcript (src/ingest), so these counts are
+        // cumulative. A sum counts the same work once per SessionEnd firing.
+        // Take the largest. KNOWN-LIMITS 76 has the measurement and what this
+        // would get wrong: a session id continued in a new transcript.
+        s.turns = Math.max(s.turns ?? 0, c.turns ?? 0);
+        s.toolCalls = Math.max(s.toolCalls ?? 0, c.toolCalls ?? 0);
+        s.failures = Math.max(s.failures ?? 0, c.failures ?? 0);
         if (Array.isArray(p.touched)) {
           // Keep the paths, not just the count. A count narrows the search to
           // a handful of sessions; a path answers the question outright, which

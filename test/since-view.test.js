@@ -101,15 +101,16 @@ test('the render always states what it cannot tell you', () => {
   assert.match(out, /no session id/);
 });
 
-test('subsession receipts accumulate rather than overwrite', () => {
-  // A session can write several receipts. Taking the last one under-reports
-  // exactly the busiest sessions, which are the ones worth finding.
+test('subsession receipts: counts are cumulative, touched paths accumulate', () => {
+  // A session can write several receipts, each carrying the whole session so
+  // far. Summing their counts reports the same work once per receipt.
   const entries = [
     at(1000, { type: 'session-open', sessionId: 'A' }, 1),
     at(1100, { session: { id: 'A' }, counts: { toolCalls: 5, turns: 5 }, touched: [{ path: '/a' }] }, 2),
     at(1200, { session: { id: 'A' }, counts: { toolCalls: 9, turns: 9 }, touched: [{ path: '/b' }] }, 3)
   ];
   const r = sinceReport(entries);
-  assert.equal(r.sessions[0].toolCalls, 14);
+  assert.equal(r.sessions[0].toolCalls, 9);
+  assert.equal(r.sessions[0].turns, 9);
   assert.deepEqual(r.sessions[0].touched, ['/a', '/b']);
 });
