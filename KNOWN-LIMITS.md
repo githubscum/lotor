@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit f419f11870919ba3a5099ba156d8479172d87bc8
+ This file describes commit 9c7189f73e03beae96e8b37a14afe3da7a72edf3
  stamped 2026-11-04
- subject: KNOWN-LIMITS 76: MCP rows, Claude chapters and since-view stop reading a refused write as touched
- body-sha256: 127eb0c7805201dc585d8cf3ea1db1f54d42116f40c512352889aea5e55ddefd
+ subject: KNOWN-LIMITS 76: since-view takes the largest count, not a sum across cumulative receipts
+ body-sha256: cd4ef930f885f8fad547ec4670fb7e2848ec5cea1a9a9d6f7e66fb258303e4f9
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
