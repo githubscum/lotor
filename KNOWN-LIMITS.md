@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
- stamped 2026-10-28
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ This file describes commit 317de6a6fc7ccc8f87d1342efbd37c9e5cedddd7
+ stamped 2026-11-05
+ subject: since view: attribute gate rows that state a session id (limit 74)
+ body-sha256: 7865fae8e044e0d80deb43f461d775830bcc592fe79fa431a6c24c61d43a18fd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3009,6 +3009,8 @@ session can come back with no gate rows when it had some. The `sessionId`
 parameter's description in the tool listing now says so. That changes the
 `query_receipts` tool definition, so a client that fingerprints tool
 definitions will see it as changed; that is the intended reading.
+
+**Amended 2026-11-05, branch `lotor-lane/since-attribute`: the since-view half is closed.** `src/views/since.js` now lists a `gated-action` or `policy-warn` row under the session its own `sessionId` names, and only then. Key absent, `null`, empty or non-string stays in `unattributed`, and `egress-event` always does; nothing is attributed by timestamp. The id is the hook's self-report (limit 1). A session showing no denials may still own an unattributed row, so the view prints no zero count and its caveat says so. Tested on synthetic rows only; not run against the live chain. The `sessions_since` tool description changed, so a client that fingerprints tool definitions will see it as changed (limit 41). The paragraph below is history as to `since.js`; its `docs/receipt-coverage.md` half is a separate change.
 
 **Open, same class, not fixed here.** `src/views/since.js`, behind
 `sessions_since`, still routes every `gated-action`, `policy-warn` and
