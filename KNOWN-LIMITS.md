@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
- stamped 2026-10-28
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ This file describes commit 317de6a6fc7ccc8f87d1342efbd37c9e5cedddd7
+ stamped 2026-11-05
+ subject: since view: attribute gate rows that state a session id (limit 74)
+ body-sha256: 7865fae8e044e0d80deb43f461d775830bcc592fe79fa431a6c24c61d43a18fd
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
