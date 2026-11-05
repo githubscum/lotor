@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
- stamped 2026-10-28
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ This file describes commit 295dabc232800e8b42e5b1621486cf3e15ba7c4f
+ stamped 2026-11-05
+ subject: KNOWN-LIMITS 76: since view keeps a landed write landed across receipts
+ body-sha256: a6bb3dd04e3d63bade53a165c9d17201c72f723a7633a0d424d5d5221b430b7a
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3058,10 +3058,12 @@ unmerged.
 
 ## 76. A refused write was listed as touched, so an attempt read as a change
 
-**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
-Closed for the parser, the since-view, the text receipt and the live view.
-Still OPEN for retcon's charter reconciliation (core) and three smaller
-readers; see "Still open" below.** The parser
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`;
+narrowed 2026-11-04, branch `lotor-lane/l76-readers`. Closed for the parser,
+the since-view, the text receipt, the live view, MCP `query_receipts` and the
+chapters view on Claude Code transcripts. Still OPEN for retcon's charter
+reconciliation (core), Codex chapters, and a count this work found; see "Still
+open" below.** The parser
 now records an Edit/Write attempt and settles it against the tool_result that
 answers it. A touched entry from an attempt carries `outcome`: `ok` when the
 harness answered with a success, `error` when it answered with an error
@@ -3087,13 +3089,54 @@ this change carry no `outcome` and render exactly as they did.
   items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
   and `bin/` is wholesale core, so it waits for a signing sitting.
   `reconcile.js` itself cannot fix it: it never sees the outcome.
-- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
-  report `touchedCount: p.touched.length`, refused attempts included.
-- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
-  straight from the transcript's tool_use and never joins the tool_result.
-- **`touchedCount` in the since-view** is still summed per receipt, so with
-  subsessions "N files touched" overcounts in the same way `touchedRefused`
-  did. That predates this limit and is left for its own change.
+- **Codex chapters.** `chaptersFromCodexRollout` does not settle `apply_patch`
+  attempts against their output, so a refused patch still reads as a file.
+
+**What the 2026-11-04 narrowing added.** MCP session rows now carry
+`touchedRefused`, omitted when no item on the receipt has an `outcome`, because
+then the number is unrecorded rather than zero. `touchedCount` still counts
+attempts. In the chapters view a chapter gains a `refused` list when it has a
+refused path, settled per chapter: a path refused in one chapter and landed in
+a later one is refused in the first and not in the second. The since-view's
+`touchedCount` is now distinct paths per session. **What to doubt in this part.**
+`refused` is left out of the chapters/1 digest on purpose, because digests
+already on the chain were taken without it, so the marks are bound only through
+the transcript hash and a reader checking the chapter digest alone learns
+nothing about them. Distinct paths in the since-view compare strings as the
+receipts wrote them, and a receipt from before limit 75's fix can still list one
+file under two spellings.
+
+**The since-view's other counts, the same day.** `turns`, `toolCalls` and
+`failures` were summed across a session's receipts, and the receipts are
+cumulative, so a session with three SessionEnd firings reported each of them
+about three times over. They are now the largest value across the session's
+receipts. Measured on this machine's chain before choosing, 4,110 sessions: 252
+wrote more than one receipt (589 receipts). In none of the 252 did any of the
+three counts fall from one receipt to the next, and the largest always equalled
+the last. Across the whole chain the sum reported 140,148 tool calls where the
+largest reports 124,769, 12.3% over; inside the 252 the median sum was double
+the largest and the worst was 5.32 times. Today's traffic barely shows it: in
+the seven days measured, 3 of 227 sessions had more than one receipt.
+**What to doubt in this part.** The largest value is wrong for a session id
+continued in a new transcript: it would under-report, and nothing here detects
+that. It was not seen. `session.startedAt` was constant on all 252 except one
+placeholder `unknown` id with zero counts, but that is one machine's harness
+behaviour, not a promise from it, and a harness that reuses an id would break
+this silently. Unexplained and left alone: one session's `touched` list shrank
+between receipts (39 paths to 32, 17 gone, none a respelling), so "each receipt
+is a superset" held for the counts and not for that one list. The window is
+unchanged: a receipt inside the window still reports work done before the
+window opened.
+
+**Amended 2026-11-05, the since view against receipts that disagree.** The view
+takes `touched` as a union, so a path a later receipt forgets stays listed; the
+shrink above costs that view nothing. It did get one order wrong: a path answered
+`ok` by one receipt and `error` by a later one read as refused, against the
+parser's rule that one landed write is a write. `ok` now holds across receipts,
+and only `ok`: `unknown` then `error` still reads as refused. These orders were
+run against synthetic receipts. No real session was found showing landed then
+refused, and the 39-to-32 session is still not identified or explained, so
+whether this order occurs on a real chain is not known.
 
 Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
 own hook files was refused. Seq 36204 is that session's receipt, and it lists

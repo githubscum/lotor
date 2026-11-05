@@ -98,6 +98,10 @@ export function sinceReport(entries, opts = {}) {
     return sessions.get(id);
   };
 
+  // sessionId -> paths some receipt answered with outcome 'ok'. Kept out of the
+  // session record so it does not reach the report.
+  const landedBySession = new Map();
+
   const denials = [];
   const warns = [];
   const egress = [];
@@ -127,13 +131,15 @@ export function sinceReport(entries, opts = {}) {
         s.receiptSeq = e.seq;
         s.model = p.session?.model ?? s.model;
         const c = p.counts || {};
-        // A session may write several receipts (subsessions). Accumulate rather
-        // than overwrite, or the rollup under-reports the busiest sessions.
-        s.turns = (s.turns ?? 0) + (c.turns ?? 0);
-        s.toolCalls = (s.toolCalls ?? 0) + (c.toolCalls ?? 0);
-        s.failures = (s.failures ?? 0) + (c.failures ?? 0);
+        // A session may write several receipts (subsessions), and each one
+        // re-parses the whole transcript (src/ingest), so these counts are
+        // cumulative. A sum counts the same work once per SessionEnd firing.
+        // Take the largest. KNOWN-LIMITS 76 has the measurement and what this
+        // would get wrong: a session id continued in a new transcript.
+        s.turns = Math.max(s.turns ?? 0, c.turns ?? 0);
+        s.toolCalls = Math.max(s.toolCalls ?? 0, c.toolCalls ?? 0);
+        s.failures = Math.max(s.failures ?? 0, c.failures ?? 0);
         if (Array.isArray(p.touched)) {
-          s.touchedCount = (s.touchedCount ?? 0) + p.touched.length;
           // Keep the paths, not just the count. A count narrows the search to
           // a handful of sessions; a path answers the question outright, which
           // is the difference between "go and look" and "here it is". This is
@@ -141,11 +147,19 @@ export function sinceReport(entries, opts = {}) {
           for (const t of p.touched) {
             const pth = typeof t === 'string' ? t : t?.path;
             if (pth && !s.touched.includes(pth)) s.touched.push(pth);
+            // 'ok' is sticky across receipts, the same rule the parser keeps
+            // inside one transcript. Only 'ok': an 'unknown' attempt has no
+            // answer yet, and a later receipt may rightly answer it 'error'.
+            if (pth && typeof t === 'object' && t?.outcome === 'ok') {
+              if (!landedBySession.has(id)) landedBySession.set(id, new Set());
+              landedBySession.get(id).add(pth);
+            }
             // The receipt's own word (limit 76): outcome 'error' means the
             // harness returned an error for that attempt. Old receipts carry
             // no outcome key and refuse nothing a reader can see.
             if (pth && typeof t === 'object' && t?.outcome === 'error') {
-              if (!s.refusedPaths.includes(pth)) s.refusedPaths.push(pth);
+              const landed = landedBySession.get(id)?.has(pth) === true;
+              if (!landed && !s.refusedPaths.includes(pth)) s.refusedPaths.push(pth);
             } else if (pth && s.refusedPaths.includes(pth)) {
               // A later receipt answering the same path with a landed write
               // (any outcome other than 'error', including none) un-refuses
@@ -153,6 +167,9 @@ export function sinceReport(entries, opts = {}) {
               s.refusedPaths.splice(s.refusedPaths.indexOf(pth), 1);
             }
           }
+          // DISTINCT paths for the session, for the same reason as below: a
+          // per-receipt sum counted one file once per SessionEnd firing.
+          s.touchedCount = s.touched.length;
           // DISTINCT refused paths for the session, not a per-receipt sum.
           // Every subsession receipt re-parses the whole transcript
           // (src/ingest), so one refused write in a session with three
