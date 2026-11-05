@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 9c7189f73e03beae96e8b37a14afe3da7a72edf3
- stamped 2026-11-04
- subject: KNOWN-LIMITS 76: since-view takes the largest count, not a sum across cumulative receipts
- body-sha256: cd4ef930f885f8fad547ec4670fb7e2848ec5cea1a9a9d6f7e66fb258303e4f9
+ This file describes commit 295dabc232800e8b42e5b1621486cf3e15ba7c4f
+ stamped 2026-11-05
+ subject: KNOWN-LIMITS 76: since view keeps a landed write landed across receipts
+ body-sha256: a6bb3dd04e3d63bade53a165c9d17201c72f723a7633a0d424d5d5221b430b7a
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
