@@ -3010,6 +3010,8 @@ parameter's description in the tool listing now says so. That changes the
 `query_receipts` tool definition, so a client that fingerprints tool
 definitions will see it as changed; that is the intended reading.
 
+**Amended 2026-11-05, branch `lotor-lane/since-attribute`: the since-view half is closed.** `src/views/since.js` now lists a `gated-action` or `policy-warn` row under the session its own `sessionId` names, and only then. Key absent, `null`, empty or non-string stays in `unattributed`, and `egress-event` always does; nothing is attributed by timestamp. The id is the hook's self-report (limit 1). A session showing no denials may still own an unattributed row, so the view prints no zero count and its caveat says so. Tested on synthetic rows only; not run against the live chain. The `sessions_since` tool description changed, so a client that fingerprints tool definitions will see it as changed (limit 41). The paragraph below is history as to `since.js`; its `docs/receipt-coverage.md` half is a separate change.
+
 **Open, same class, not fixed here.** `src/views/since.js`, behind
 `sessions_since`, still routes every `gated-action`, `policy-warn` and
 `egress-event` row into its `unattributed` lists and prints the caveat "Gate

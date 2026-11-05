@@ -21,10 +21,10 @@
  *   2. Capture is self-attested. A clean since-view is not proof another
  *      session did nothing; it is proof nothing was recorded. Silence is not
  *      safety.
- *   3. `gated-action` payloads carry NO session id. Denials therefore cannot be
- *      attributed to a session, and with concurrent sessions running they must
- *      not be guessed at from timestamps. They are reported as an unattributed
- *      timeline, deliberately separate from the per-session rollup.
+ *   3. Gate rows written since 2026-09-07 carry the session id the hook passed,
+ *      self-reported (limit 1), and are listed under that session; older rows,
+ *      rows with a null id, and egress rows are an unattributed timeline and
+ *      are never guessed at from timestamps.
  */
 
 import { loadChain } from '../store/index.js';
@@ -39,6 +39,13 @@ import { loadChain } from '../store/index.js';
 export function typeOf(payload) {
   return payload?.type ?? payload?.kind ?? (payload?.session ? 'session' : 'unknown');
 }
+
+/**
+ * The owner of a gate row, read the way limit 74 draws it: a row is attributed
+ * only when its own payload states a non-empty string `sessionId`. Key absent,
+ * `null`, empty, or any non-string means no owner, and no other spelling counts.
+ */
+const ownerOf = p => (typeof p.sessionId === 'string' && p.sessionId !== '') ? p.sessionId : null;
 
 /**
  * Resolve a `since` argument into a millisecond timestamp.
@@ -92,6 +99,14 @@ export function sinceReport(entries, opts = {}) {
         // Paths whose receipt item carried outcome 'error', kept beside the
         // bare path list so the render can mark the refusal in place.
         refusedPaths: [],
+        // Gate rows the row's own `sessionId` attributes to this session
+        // (written since 2026-09-07, limit 35; the split is limit 74).
+        // firstGateAt is the timestamp of its first attributed gate row, null
+        // when none: the sort key for a session with no open and no close.
+        denials: [],
+        approvals: [],
+        warns: [],
+        firstGateAt: null,
         receiptSeq: null
       });
     }
@@ -163,20 +178,53 @@ export function sinceReport(entries, opts = {}) {
         break;
       }
 
-      // No session id on this payload. Attributing it by timestamp would be a
-      // guess, and with concurrent sessions a guess is wrong often enough to be
-      // worse than an honest gap.
-      case 'gated-action':
+      // A gate row written since 2026-09-07 carries the session id the hook
+      // passed (self-reported, limit 1), and is listed under that session.
+      // A row with no id — all rows older than that, and some since — stays
+      // in the unattributed timeline. Attributing by timestamp would be a
+      // guess, and with concurrent sessions a guess is wrong often enough to
+      // be worse than an honest gap. Only camelCase `sessionId` counts: a
+      // snake_case `session_id` is a different spelling, not an owner.
+      case 'gated-action': {
+        const ownerId = ownerOf(p);
+        if (ownerId) {
+          const s = ensure(ownerId);
+          if (s.firstGateAt === null) s.firstGateAt = e.timestamp;
+          if ((p.decision ?? null) === 'denied') {
+            s.denials.push({
+              seq: e.seq, timestamp: e.timestamp,
+              action: p.action ?? null, reason: p.reason ?? null
+            });
+          } else {
+            s.approvals.push({
+              seq: e.seq, timestamp: e.timestamp,
+              decision: p.decision ?? null, action: p.action ?? null
+            });
+          }
+          break;
+        }
         denials.push({
           seq: e.seq, timestamp: e.timestamp,
           decision: p.decision ?? null, action: p.action ?? null, reason: p.reason ?? null
         });
         break;
+      }
 
-      case 'policy-warn':
+      case 'policy-warn': {
+        // Same split as `gated-action`, on the payload's own id.
+        const ownerId = ownerOf(p);
+        if (ownerId) {
+          const s = ensure(ownerId);
+          if (s.firstGateAt === null) s.firstGateAt = e.timestamp;
+          s.warns.push({ seq: e.seq, timestamp: e.timestamp, ruleId: p.ruleId ?? null });
+          break;
+        }
         warns.push({ seq: e.seq, timestamp: e.timestamp, ruleId: p.ruleId ?? null });
         break;
+      }
 
+      // Egress rows carry no session id in either spelling. One present on
+      // the payload is not read as an owner: this row type is never attributed.
       case 'egress-event':
         egress.push({ seq: e.seq, timestamp: e.timestamp, ruleId: p.ruleId ?? null });
         break;
@@ -190,7 +238,8 @@ export function sinceReport(entries, opts = {}) {
   if (opts.excludeSessionId) {
     list = list.filter(s => s.sessionId !== opts.excludeSessionId);
   }
-  list.sort((a, b) => (a.opened ?? a.closed ?? 0) - (b.opened ?? b.closed ?? 0));
+  list.sort((a, b) => (a.opened ?? a.closed ?? a.firstGateAt ?? 0) -
+                      (b.opened ?? b.closed ?? b.firstGateAt ?? 0));
 
   // Most sessions open and do nothing. A single day produced 107 of them, and
   // listing all 107 in full buries the two or three that actually built
@@ -201,7 +250,11 @@ export function sinceReport(entries, opts = {}) {
   // session can close having done nothing, and a session can do work and die
   // before writing its receipt. The second kind must stay visible, because an
   // unclosed session that ran tools is the case KNOWN-LIMITS 14 is about.
-  const didWork = s => (s.toolCalls ?? 0) > 0 || (s.touchedCount ?? 0) > 0;
+  // A session whose only record is a gate row — a denial with no receipt
+  // written, no open row seen — is evidence of work the same way an unclosed
+  // session that ran tools is, and stays listed for the same reason.
+  const didWork = s => (s.toolCalls ?? 0) > 0 || (s.touchedCount ?? 0) > 0
+    || s.denials.length > 0 || s.approvals.length > 0 || s.warns.length > 0;
   const active = list.filter(didWork);
   const quiet = list.filter(s => !didWork(s));
 
@@ -224,7 +277,7 @@ export function sinceReport(entries, opts = {}) {
     caveats: [
       'Receipts carry which named tools ran and a digest of their parameters. They never carry intent.',
       'Capture is self-attested. An empty report means nothing was recorded, not that nothing happened.',
-      'Gate decisions carry no session id and are listed unattributed rather than guessed at by time.',
+      'A gate decision is listed under a session only when its row states that session\'s id, and that id is self-reported by the hook. Rows with no session id (all written before 2026-09-07, and some since) are listed unattributed rather than guessed at by time, so a session showing no denials may still own one of those.',
       'A touched path is a write the transcript recorded an attempt at; a path marked refused means the harness returned an error for every attempt.'
     ]
   };
@@ -237,6 +290,20 @@ const stamp = ms =>
 export function renderSince(report) {
   const L = [];
   const w = report.window;
+
+  // One tally, two readers: the per-session gate line and the unattributed
+  // block both count rows by the action the gate was asked for.
+  const tallyByAction = rows => {
+    // Counted on a Map: a plain object inherits `constructor` from the
+    // prototype and swallows `__proto__` into its setter, so action names that
+    // collide with Object members misreported or vanished (WO-SINCE-ATTRIBUTE-2).
+    const byAction = new Map();
+    for (const d of rows) {
+      const a = d.action ?? '?';
+      byAction.set(a, (byAction.get(a) ?? 0) + 1);
+    }
+    return [...byAction.entries()].map(([a, n]) => `${a} x${n}`);
+  };
 
   L.push('');
   L.push('WHAT HAPPENED WHILE YOU WERE NOT LOOKING');
@@ -271,6 +338,17 @@ export function renderSince(report) {
           : `${s.touchedCount} files touched`);
       }
       L.push(`    work        ${bits.length ? bits.join(', ') : 'no close receipt, so no counts'}`);
+      // Gate rows the session's own id claimed. Only non-zero parts print, so
+      // a session with no attributed row gets no line at all — it may still
+      // own a row in the unattributed list, and a "0 denied" would read as a
+      // denial count when the report itself refuses to make one.
+      const gateParts = [];
+      if (s.denials?.length) {
+        gateParts.push(`${s.denials.length} denied (${tallyByAction(s.denials).join(', ')})`);
+      }
+      if (s.approvals?.length) gateParts.push(`${s.approvals.length} approved`);
+      if (s.warns?.length) gateParts.push(`${s.warns.length} warnings`);
+      if (gateParts.length) L.push(`    gate        ${gateParts.join(', ')}`);
       if (s.touched && s.touched.length) {
         // Mark the refusal on the path itself (limit 76): a reader scanning
         // the paths must not have to cross-check the count line.
@@ -287,13 +365,10 @@ export function renderSince(report) {
   }
 
   const u = report.unattributed;
-  if (u.denials.length || u.warns.length || u.egress.length) {
+  if (u.denials.length || u.approvals.length || u.warns.length || u.egress.length) {
     L.push('  UNATTRIBUTED — these carry no session id and are not guessed at');
     if (u.denials.length) {
-      const byAction = {};
-      for (const d of u.denials) byAction[d.action ?? '?'] = (byAction[d.action ?? '?'] ?? 0) + 1;
-      const parts = Object.entries(byAction).map(([a, n]) => `${a} x${n}`);
-      L.push(`    denied      ${u.denials.length}  (${parts.join(', ')})`);
+      L.push(`    denied      ${u.denials.length}  (${tallyByAction(u.denials).join(', ')})`);
     }
     if (u.approvals.length) L.push(`    approved    ${u.approvals.length}`);
     if (u.warns.length) L.push(`    warnings    ${u.warns.length}`);
