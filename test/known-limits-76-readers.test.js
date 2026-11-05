@@ -246,4 +246,65 @@ describe('KNOWN-LIMITS 76 narrowing: the since-view counts touched paths once pe
     assert.strictEqual(s.toolCalls, 6);
     assert.strictEqual(s.failures, 2);
   });
+
+  // Receipts that disagree about a path. Inside one transcript the parser keeps
+  // 'ok' sticky; these pin the same answer across receipts, whatever the order.
+  const said = (id, sub, items) => ({
+    session: { id, model: 'test-model', subsession: sub },
+    counts: { turns: 1, toolCalls: 1, failures: 0 },
+    touched: items.map(([p, outcome]) => ({ path: p, via: 'write', outcome }))
+  });
+
+  it('s5. a path a later receipt forgets stays touched: the view is a union', () => {
+    const entries = [
+      open('l76-s5'),
+      at(1, 2000, said('l76-s5', 0, [['/a.js', 'ok'], ['/b.js', 'ok']])),
+      at(2, 3000, said('l76-s5', 1, [['/a.js', 'ok']]))
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.deepStrictEqual(s.touched, ['/a.js', '/b.js']);
+    assert.strictEqual(s.touchedCount, 2);
+  });
+
+  it('s6. landed then refused reads as landed: one landed write is a write', () => {
+    const entries = [
+      open('l76-s6'),
+      at(1, 2000, said('l76-s6', 0, [['/a.js', 'ok']])),
+      at(2, 3000, said('l76-s6', 1, [['/a.js', 'error']]))
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.deepStrictEqual(s.refusedPaths, []);
+    assert.strictEqual(s.touchedRefused, 0);
+  });
+
+  it('s7. refused then landed reads as landed', () => {
+    const entries = [
+      open('l76-s7'),
+      at(1, 2000, said('l76-s7', 0, [['/a.js', 'error']])),
+      at(2, 3000, said('l76-s7', 1, [['/a.js', 'ok']]))
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.deepStrictEqual(s.refusedPaths, []);
+    assert.strictEqual(s.touchedRefused, 0);
+  });
+
+  it('s8. unknown then refused stays refused: an unanswered attempt never landed', () => {
+    const entries = [
+      open('l76-s8'),
+      at(1, 2000, said('l76-s8', 0, [['/a.js', 'unknown']])),
+      at(2, 3000, said('l76-s8', 1, [['/a.js', 'error']]))
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.deepStrictEqual(s.refusedPaths, ['/a.js']);
+    assert.strictEqual(s.touchedRefused, 1);
+  });
+
+  it('s9. the landed bookkeeping does not reach the session record', () => {
+    const entries = [
+      open('l76-s9'),
+      at(1, 2000, said('l76-s9', 0, [['/a.js', 'ok']]))
+    ];
+    const s = sinceReport(entries).sessions[0];
+    assert.strictEqual(Object.keys(s).some(k => /landed/i.test(k)), false);
+  });
 });

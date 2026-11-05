@@ -98,6 +98,10 @@ export function sinceReport(entries, opts = {}) {
     return sessions.get(id);
   };
 
+  // sessionId -> paths some receipt answered with outcome 'ok'. Kept out of the
+  // session record so it does not reach the report.
+  const landedBySession = new Map();
+
   const denials = [];
   const warns = [];
   const egress = [];
@@ -143,11 +147,19 @@ export function sinceReport(entries, opts = {}) {
           for (const t of p.touched) {
             const pth = typeof t === 'string' ? t : t?.path;
             if (pth && !s.touched.includes(pth)) s.touched.push(pth);
+            // 'ok' is sticky across receipts, the same rule the parser keeps
+            // inside one transcript. Only 'ok': an 'unknown' attempt has no
+            // answer yet, and a later receipt may rightly answer it 'error'.
+            if (pth && typeof t === 'object' && t?.outcome === 'ok') {
+              if (!landedBySession.has(id)) landedBySession.set(id, new Set());
+              landedBySession.get(id).add(pth);
+            }
             // The receipt's own word (limit 76): outcome 'error' means the
             // harness returned an error for that attempt. Old receipts carry
             // no outcome key and refuse nothing a reader can see.
             if (pth && typeof t === 'object' && t?.outcome === 'error') {
-              if (!s.refusedPaths.includes(pth)) s.refusedPaths.push(pth);
+              const landed = landedBySession.get(id)?.has(pth) === true;
+              if (!landed && !s.refusedPaths.includes(pth)) s.refusedPaths.push(pth);
             } else if (pth && s.refusedPaths.includes(pth)) {
               // A later receipt answering the same path with a landed write
               // (any outcome other than 'error', including none) un-refuses

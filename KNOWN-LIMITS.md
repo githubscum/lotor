@@ -3128,6 +3128,16 @@ is a superset" held for the counts and not for that one list. The window is
 unchanged: a receipt inside the window still reports work done before the
 window opened.
 
+**Amended 2026-11-05, the since view against receipts that disagree.** The view
+takes `touched` as a union, so a path a later receipt forgets stays listed; the
+shrink above costs that view nothing. It did get one order wrong: a path answered
+`ok` by one receipt and `error` by a later one read as refused, against the
+parser's rule that one landed write is a write. `ok` now holds across receipts,
+and only `ok`: `unknown` then `error` still reads as refused. These orders were
+run against synthetic receipts. No real session was found showing landed then
+refused, and the 39-to-32 session is still not identified or explained, so
+whether this order occurs on a real chain is not known.
+
 Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
 own hook files was refused. Seq 36204 is that session's receipt, and it lists
 the hook file under `touched`. The file was unchanged on disk. The reader of
