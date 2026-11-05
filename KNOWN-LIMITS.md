@@ -3020,6 +3020,8 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
 
+**Amended 2026-11-05.** `docs/receipt-coverage.md` no longer makes the stale claim named above; that half is closed. `src/views/since.js` still prints it, and that half stays open.
+
 ## 75. One edited file was listed twice in `touched`, once absolute and once relative
 
 **Status: CLOSED 2026-10-19, branch `lotor-lane/touched-path-identity`.**
@@ -3352,3 +3354,41 @@ so a chain with an inserted garbage line can pass `store.verify()` and still
 refuse to seal; and re-sealing from scratch yields byte-identical notes
 (Ed25519 is deterministic and the note text is fixed by size and root), so
 losing the sidecar loses nothing a stranger kept.
+
+## 87. A session receipt holds network targets in plaintext, including the start of Bash commands
+
+Found 2026-11-05 re-deriving `docs/receipt-coverage.md`; the doc had never
+listed this field as readable text. Every session receipt carries a `sent`
+array, and `src/parser/index.js` fills it through two functions,
+`isNetworkTool` and `extractTarget`. A WebFetch call puts its full URL in
+`sent.items[].target`, a WebSearch call puts its full query there, and a
+Bash command puts the first 100 characters of the command there. Nothing
+redacts any of it, and ingest passes the field through to the chain
+unchanged.
+
+The Bash test is a bare substring over network verbs, so it fires wider than
+the name suggests. The verb list is matched with `includes` against the
+lowercased command, not parsed as a command line, so `mapping` qualifies
+through the `ping` it contains and a filename containing `scp` qualifies.
+A command with no network verb anywhere in its text does not.
+
+The consequence is that readable text lands on the chain: a credential in a
+`curl` header, an API key in a fetched URL's query string, or a private
+search query arrives in the receipt exactly as typed. The chain is
+append-only and hash-linked, so removing the row later breaks verification,
+and `npm run export` carries it off the machine with the rest of the chain.
+
+Limit 18 discloses authorised command strings in plaintext on grant rows.
+This is a different writer: the parser puts the target on the chain as part
+of every session receipt, and it needs no grant to do it.
+
+`test/known-limits-87-sent-plaintext.test.js` is a tripwire over a synthetic
+transcript with fake values. It pins today's behaviour; it is not an
+endorsement of it.
+
+Not measured on a real chain, on purpose. Looking would mean searching the
+operator's own record for secrets, which is the operator's call.
+
+Not fixed. Digesting the target would remove the only readable account of
+where a session reached out, so this is a trade for the owner to make, not
+a one-line fix.
