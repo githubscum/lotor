@@ -102,6 +102,19 @@ function asWritten(p, key) {
 }
 
 /**
+ * KNOWN-LIMITS 76. `touchedCount` counts attempts. This says how many of them
+ * the harness answered with an error. A receipt written before 2026-10-19
+ * carries no `outcome` on any item, and for that receipt the number is
+ * unrecorded rather than zero, so the field is omitted. Absent is not zero.
+ */
+function touchedRefusedField(touched) {
+  if (!Array.isArray(touched)) return {};
+  const items = touched.filter(t => t && typeof t === 'object');
+  if (!items.some(t => Object.hasOwn(t, 'outcome'))) return {};
+  return { touchedRefused: items.filter(t => t.outcome === 'error').length };
+}
+
+/**
  * The chain holds several kinds of entry and they do not share a shape.
  *
  *   (untyped)      the original session receipt. No `type` field, because it
@@ -156,7 +169,8 @@ function summarizeEntry(entry) {
         ...(typeof c.failures === 'number' ? { failures: c.failures } : {}),
         ...(typeof c.transcriptEntries === 'number'
           ? { transcriptEntries: c.transcriptEntries } : {}),
-        ...(Array.isArray(p.touched) ? { touchedCount: p.touched.length } : {})
+        ...(Array.isArray(p.touched) ? { touchedCount: p.touched.length } : {}),
+        ...touchedRefusedField(p.touched)
       };
     }
 
