@@ -218,3 +218,157 @@ test('sudo over a non-patch, and a bare env, are not patch applications', () => 
   assert.equal(run('sudo ls'), null);
   assert.equal(run('env'), null);
 });
+
+// WO-L82-03: fail-open holes — commands that DO apply a patch but used to return null.
+
+test('shell keywords before the verb no longer hide it', () => {
+  const r = run('if true; then git apply x.patch; fi');
+  assert.ok(r);
+  assert.equal(r.failClosed, false);
+  assert.ok(r.targets.includes('src/chain/index.js'));
+});
+
+test('a standalone & separates commands like ; does', () => {
+  const r = run('true & git apply x.patch');
+  assert.ok(r);
+  assert.equal(r.failClosed, false);
+  assert.ok(r.targets.includes('src/chain/index.js'));
+});
+
+test('a brace group applies, and a trailing } segment breaks nothing', () => {
+  const r = run('{ git apply x.patch; }');
+  assert.ok(r);
+  assert.equal(r.failClosed, false);
+  assert.ok(r.targets.includes('src/chain/index.js'));
+});
+
+test('negation ! no longer hides the verb', () => {
+  const r = run('! git apply x.patch');
+  assert.ok(r);
+  assert.equal(r.failClosed, false);
+  assert.ok(r.targets.includes('src/chain/index.js'));
+});
+
+test('env value flags swallow one value, not the verb', () => {
+  for (const cmd of [
+    'env -u FOO git apply x.patch',
+    'env --unset FOO git apply x.patch',
+    'env -C . git apply x.patch',
+    'env --chdir /tmp git apply x.patch',
+  ]) {
+    const r = run(cmd);
+    assert.ok(r, cmd);
+    assert.equal(r.failClosed, false, cmd);
+    assert.ok(r.targets.includes('src/chain/index.js'), cmd);
+  }
+});
+
+test('env -S scans its split string like a shell -c body', () => {
+  for (const cmd of [
+    'env -S "git apply x.patch"',
+    'env --split-string "git apply x.patch"',
+    'env -S"git apply x.patch"',
+  ]) {
+    const r = run(cmd);
+    assert.ok(r, cmd);
+    assert.equal(r.failClosed, false, cmd);
+    assert.ok(r.targets.includes('src/chain/index.js'), cmd);
+  }
+});
+
+test('git global options with a value and self-contained flags are parsed away', () => {
+  for (const cmd of [
+    'git --git-dir x apply x.patch',
+    'git --work-tree w apply x.patch',
+    'git --git-dir=/x apply x.patch',
+    'git --namespace n apply x.patch',
+    'git -P apply x.patch',
+    'git --paginate apply x.patch',
+    'git --bare apply x.patch',
+    'git --no-optional-locks apply x.patch',
+  ]) {
+    const r = run(cmd);
+    assert.ok(r, cmd);
+    assert.equal(r.failClosed, false, cmd);
+    assert.ok(r.targets.includes('src/chain/index.js'), cmd);
+  }
+});
+
+test('stdin spellings fail closed without calling the reader', () => {
+  const seen = [];
+  const guarded = (p) => {
+    seen.push(p);
+    return readFile(p);
+  };
+  for (const cmd of [
+    'git apply /dev/stdin',
+    'git apply -',
+    'patch -i /dev/stdin',
+    'git apply /dev/fd/0',
+    'git apply /proc/self/fd/0',
+  ]) {
+    seen.length = 0;
+    const r = patchApplyTargets(cmd, '/repo', guarded);
+    assert.ok(r, cmd);
+    assert.equal(r.failClosed, true, cmd);
+    assert.deepEqual(seen, [], cmd);
+  }
+});
+
+test('separators, redirections and shell noise still read as one quiet segment', () => {
+  assert.equal(run('git apply --check x.patch'), null);
+  assert.equal(run('echo a && echo b'), null);
+  assert.equal(run('ls 2>&1 | grep x'), null);
+  assert.equal(run('git status &> out.txt'), null);
+});
+
+// WO-L82-04: round two — fail-opens the orchestrator's probe found after WO-L82-03.
+
+test('|& pipes stdout and stderr, so the verb still reads its patch from stdin', () => {
+  const r = run('cat x.patch |& git apply');
+  assert.ok(r);
+  assert.equal(r.failClosed, true);
+});
+
+test('coproc no longer hides the verb', () => {
+  const r = run('coproc git apply x.patch');
+  assert.ok(r);
+  assert.equal(r.failClosed, false);
+  assert.ok(r.targets.includes('src/chain/index.js'));
+});
+
+test('a case arm no longer hides the verb, and a lone ) is not a patch source', () => {
+  const arm = run('case a in a) git apply x.patch;; esac');
+  assert.ok(arm);
+  assert.equal(arm.failClosed, false);
+  assert.ok(arm.targets.includes('src/chain/index.js'));
+
+  const subshell = run('( git apply x.patch )');
+  assert.ok(subshell);
+  assert.equal(subshell.failClosed, false);
+  assert.ok(subshell.targets.includes('src/chain/index.js'));
+});
+
+test('bare --exec-path takes no value, so it never swallows the verb', () => {
+  const bare = run('git --exec-path apply x.patch');
+  assert.ok(bare);
+  assert.equal(bare.failClosed, false);
+  assert.ok(bare.targets.includes('src/chain/index.js'));
+
+  const eq = run('git --exec-path=/x apply x.patch');
+  assert.ok(eq);
+  assert.equal(eq.failClosed, false);
+  assert.ok(eq.targets.includes('src/chain/index.js'));
+});
+
+test('WO-L82-04 must-stay-null commands still return null', () => {
+  for (const cmd of [
+    'echo a & echo b',
+    'ls >&2',
+    'git status &>/dev/null',
+    'git apply --check x.patch',
+    'echo "a)" ; ls',
+  ]) {
+    assert.equal(run(cmd), null, cmd);
+  }
+});
