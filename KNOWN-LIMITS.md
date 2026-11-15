@@ -2,7 +2,7 @@
  This file describes commit 24facb3f7f57dc0740cbf89c4c79eb5a8d74c870
  stamped 2026-11-15
  subject: Merge branch 'pr98' into integrate
- body-sha256: 942161f1466d3d87695e665f6598e7b4a47d0020a9e605790947a7ef300bb175
+ body-sha256: e6b1589e9185fa1148fec237ce533e6e75e4cb09c345e2160945be60a77e8bec
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
