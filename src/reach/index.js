@@ -17,6 +17,8 @@
  */
 
 import crypto from 'node:crypto';
+import { THINK_TAG } from '../reasoning/think-tag.js';
+export { THINK_TAG };
 
 export const RUNG_ORDER = Object.freeze(['R0', 'R1', 'R3', 'R4']);
 
@@ -35,9 +37,6 @@ function isNonWhitespaceString(value) {
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
-
-// Matches src/reasoning's THINK_TAG so the two witnesses agree.
-const THINK_TAG = /<\/?think>/i;
 
 // A top_logprobs element that is not an object (null, a number, a string)
 // is malformed. It hashes as null, so the digest still moves if it changes,

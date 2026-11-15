@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 1c3e9f2480ae8929a6dc84b644e0ed12a0e99bd3
- stamped 2026-10-27
- subject: Signing sitting 2026-10-26: land agent-id, l77 and seq-continuity core under signature
- body-sha256: c320a4e344de9238176908d2b6d44ef75cd39123ee8c3c2c91e2bd3ed7930c52
+ This file describes commit 24facb3f7f57dc0740cbf89c4c79eb5a8d74c870
+ stamped 2026-11-15
+ subject: Merge branch 'pr98' into integrate
+ body-sha256: 942161f1466d3d87695e665f6598e7b4a47d0020a9e605790947a7ef300bb175
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -540,6 +540,43 @@ command's trailing slash before matching, while the file form
 (`.../src/store/x.js`) gates. The over-gate is real for the file form; the
 trailing-slash directory form is an under-gate of the same rule.
 
+**Amended 2026-10-27: the blast radius is wider than the title.** Field reports
+from one session on 2026-10-26 (five self-mod denials on read-only commands,
+all left unsigned) and a re-read of the policy source show three more shapes of
+the same over-gate. No new number; the cause is the one above, a matcher that
+reads path text and does not know where the Lotor install lives.
+
+1. **A protected bare filename matches anywhere on the machine.** The fragment
+   list in the self-mod matcher includes the npm manifest (`package.json`) with
+   no directory. Any command naming that filename gates, in any project: a
+   `node -e "require('./node_modules/<pkg>/package.json')"` in a folder with no
+   relation to Lotor was stopped as self-mod. The source comment there says this
+   is deliberate (an execution manifest is worth a signature everywhere, since
+   the matcher cannot resolve which repo's manifest it is), so this part is an
+   accepted cost, now disclosed here rather than only in a code comment.
+2. **Core-shaped relative paths match outside the install.** `bin/*.js` (any
+   name, via the bin regex on both the Bash and file-tool paths) and the
+   `src/<core>/` fragments match wherever they sit. In a fresh temp clone of
+   this repo, `node bin/pap-boot.js` was stopped as self-mod, so running a
+   Lotor checkout that is not the install still costs signatures.
+3. **The file tools over-gate the same way.** A Write or Edit to an npm
+   manifest in an unrelated project was blocked, not only Bash commands.
+
+One report did not hold up against the source: no self-mod fragment matches
+`.claude.json` on its own (the protected settings fragment is
+`.claude/settings.json`); the command that tripped on it also named the npm
+manifest, which is the likelier match. Unconfirmed from the receipt.
+
+Observation, not a new limit: the same file can gate or not by spelling.
+`npm run pap:boot -- ...` ran the script that `node bin/pap-boot.js` could not,
+because the matcher sees the command string, not what it executes (limit 26's
+class). Here that lands in the over-gate's favour by luck.
+
+Fix shape, unchanged and still not wired: scope directory fragments, the bin
+regex, and bare filenames to the resolved Lotor install root, which core-paths
+already knows how to find. Until then, every item above is the cheap failure
+of limit 21, and its cost is paid in signatures on unrelated work.
+
 ## 24. The destructive allowlist exempts real directories named tmp/temp/scratchpad/mktemp
 
 `destructiveAllowlisted` exempts an `rm -rf` / `Remove-Item` whose resolved path
@@ -966,6 +1003,15 @@ run verified the log's *structure* against the tree; it did not read 61 entries
 for *truth* against `dc1910b`. Stamping on the strength of a numbering check
 would be a smaller lie than stamping on nothing, and it would still be one. The
 stamp remains owed by whoever verifies.
+
+**Amended 2026-11-04: the automation exists.** "That CI wiring is still not built" is out of
+date. CI has run `--check` since 2026-10-26 (`3f0f763`), and
+`test/known-limits-committed-pin.test.js` reads the committed pin. **What this did not fix is
+the entry's real subject, and this amendment is the proof.** On 2026-11-03 a read of the log
+against the code found limits 29, 65, 66, 70 and 77 still describing fixes as missing after
+they had landed, some for over a week, with CI green throughout. The pin check proves the
+log is the one that was stamped. It does not prove the log is true, and it cannot notice a
+closure that happened in the code and never reached the record.
 
 ## 30. Edit tokens are fungible per file, so signing twice builds a grant by hand
 
@@ -2594,9 +2640,18 @@ carries no digest; re-stamping is a separate act on `main`, as limit 29
 intended, and nothing in `npm test` runs `--check` yet (the "nothing runs the
 check" paragraph above stays true).
 
+**Amended 2026-11-04: that paragraph is no longer true.** CI landed on 2026-10-26 (`3f0f763`)
+and runs `npm run limits-pin -- --check` on every pull request, on Ubuntu and on Windows,
+next to `npm test` (`.github/workflows/ci.yml`). "Nothing runs the check" and "this
+repository has no CI at all" are history. The pin at the top of this file carries a digest
+now. The residual stands: a digest binds the text, not its truth.
+
 ---
 
 ## 66. Subagent tool use is outside the witness entirely
+
+**Status, amended 2026-11-04: the headline below is no longer true on the current
+harness. Partly closed.** See the amendment at the end of this entry before quoting it.
 
 **Found 2026-09-02**, on a real dispatch: one parent session, three concurrent
 children, chain rows counted across the window.
@@ -2634,6 +2689,19 @@ gate was armed on 2026-07-23.** The upgrade is duller and stronger than "the gat
 can be bypassed": **the bypass does not require intent, and it is the normal
 case.** 519 is a floor rather than a point estimate, and the same-command
 asymmetry it exposes is filed separately as limit 70.
+
+**Amended 2026-11-04: the harness changed, the hooks caught up, and the sentence "the gate
+cannot see, record, or stop anything a subagent does" is now false here.** The harness fires
+the same hooks for a tool call made inside a subagent, carrying the parent's `session_id`
+plus `agent_id` and `agent_type`. Both hooks read those fields since the 2026-10-26 signing
+sitting (`1c3e9f2`), and write them onto the row. A count on 2026-11-03 found 6,614 rows on
+this machine's chain with a non-empty `agentId`, and a probe on 2026-10-22 stopped a
+subagent's read of the chain at the self-mod gate (request `db8790d9`). The 2026-09-02
+measurement and the 519 replayed calls above were true of the harness of that date, and they
+stand as history. **What remains open:** Lotor cannot tell which harness version it runs
+under, so on a harness that does not route subagent tool events through hooks this entry
+still holds in full, and nothing on the chain says which case a reader is in. A missing
+`agentId` means a parent call or an older harness, and the row alone cannot separate them.
 
 **Related.** Limit 67 is the same dispatch reporting numbers that do not match
 its own transcripts. Limit 44 is the other enforcement gap found by probing
@@ -2744,6 +2812,10 @@ stamp.
 
 ## 70. The protected-path rules are enforced against the parent and structurally unenforced against a child
 
+**Status, amended 2026-11-04: narrowed, not closed.** On the current harness the same
+command is gated whether the parent or a child runs it. See the amendment at the end of
+this entry and the one on limit 66.
+
 **Found 2026-09-02**, by replaying six weeks of real dispatches through the
 matcher rather than by staging a probe.
 
@@ -2779,6 +2851,11 @@ this machine runs LOOSE, so nothing was being stopped anyway. Under a herded
 configuration these 519 are an enforcement hole; today they are 519 missing rows.
 The replay tool lives outside this repository, so a reader of this log cannot
 re-run it from here.
+
+**Amended 2026-11-04.** "A subagent's calls never reach it" is false on the current harness:
+they reach the hook and are attributed (limit 66's amendment). The asymmetry measured on
+2026-09-02 survives only on a harness version that does not route subagent tool events
+through hooks. Lotor cannot tell which version it runs under, so the entry stays, narrowed.
 
 **Related.** Limit 66 is the same blindness stated as a recording gap rather than
 an enforcement one. Limit 62 is the other way a protected path escapes the
@@ -3010,6 +3087,8 @@ parameter's description in the tool listing now says so. That changes the
 `query_receipts` tool definition, so a client that fingerprints tool
 definitions will see it as changed; that is the intended reading.
 
+**Amended 2026-11-05, branch `lotor-lane/since-attribute`: the since-view half is closed.** `src/views/since.js` now lists a `gated-action` or `policy-warn` row under the session its own `sessionId` names, and only then. Key absent, `null`, empty or non-string stays in `unattributed`, and `egress-event` always does; nothing is attributed by timestamp. The id is the hook's self-report (limit 1). A session showing no denials may still own an unattributed row, so the view prints no zero count and its caveat says so. Tested on synthetic rows only; not run against the live chain. The `sessions_since` tool description changed, so a client that fingerprints tool definitions will see it as changed (limit 41). The paragraph below is history as to `since.js`; its `docs/receipt-coverage.md` half is a separate change.
+
 **Open, same class, not fixed here.** `src/views/since.js`, behind
 `sessions_since`, still routes every `gated-action`, `policy-warn` and
 `egress-event` row into its `unattributed` lists and prints the caveat "Gate
@@ -3019,6 +3098,8 @@ rows that carry an id, and keep listing the pre-2026-09-07 rows unattributed.
 `docs/receipt-coverage.md`, under "Session attribution for gate decisions",
 makes the same stale claim. Both are non-core and are left for their own change
 so this one stays reviewable.
+
+**Amended 2026-11-05.** `docs/receipt-coverage.md` no longer makes the stale claim named above; that half is closed. `src/views/since.js` still prints it, and that half stays open.
 
 ## 75. One edited file was listed twice in `touched`, once absolute and once relative
 
@@ -3058,10 +3139,12 @@ unmerged.
 
 ## 76. A refused write was listed as touched, so an attempt read as a change
 
-**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`.
-Closed for the parser, the since-view, the text receipt and the live view.
-Still OPEN for retcon's charter reconciliation (core) and three smaller
-readers; see "Still open" below.** The parser
+**Status: PARTLY CLOSED 2026-10-19, branch `lotor-lane/touched-outcome`;
+narrowed 2026-11-04, branch `lotor-lane/l76-readers`. Closed for the parser,
+the since-view, the text receipt, the live view, MCP `query_receipts` and the
+chapters view on Claude Code transcripts. Still OPEN for retcon's charter
+reconciliation (core), Codex chapters, and a count this work found; see "Still
+open" below.** The parser
 now records an Edit/Write attempt and settles it against the tool_result that
 answers it. A touched entry from an attempt carries `outcome`: `ok` when the
 harness answered with a success, `error` when it answered with an error
@@ -3087,13 +3170,54 @@ this change carry no `outcome` and render exactly as they did.
   items whose `outcome` is `'error'`, keeping ok-is-sticky across receipts),
   and `bin/` is wholesale core, so it waits for a signing sitting.
   `reconcile.js` itself cannot fix it: it never sees the outcome.
-- **MCP `query_receipts` rows** (`src/mcp/server.js`, `summarizeEntry`)
-  report `touchedCount: p.touched.length`, refused attempts included.
-- **The chapters view** (`src/views/chapters.js`) reads Edit/Write paths
-  straight from the transcript's tool_use and never joins the tool_result.
-- **`touchedCount` in the since-view** is still summed per receipt, so with
-  subsessions "N files touched" overcounts in the same way `touchedRefused`
-  did. That predates this limit and is left for its own change.
+- **Codex chapters.** `chaptersFromCodexRollout` does not settle `apply_patch`
+  attempts against their output, so a refused patch still reads as a file.
+
+**What the 2026-11-04 narrowing added.** MCP session rows now carry
+`touchedRefused`, omitted when no item on the receipt has an `outcome`, because
+then the number is unrecorded rather than zero. `touchedCount` still counts
+attempts. In the chapters view a chapter gains a `refused` list when it has a
+refused path, settled per chapter: a path refused in one chapter and landed in
+a later one is refused in the first and not in the second. The since-view's
+`touchedCount` is now distinct paths per session. **What to doubt in this part.**
+`refused` is left out of the chapters/1 digest on purpose, because digests
+already on the chain were taken without it, so the marks are bound only through
+the transcript hash and a reader checking the chapter digest alone learns
+nothing about them. Distinct paths in the since-view compare strings as the
+receipts wrote them, and a receipt from before limit 75's fix can still list one
+file under two spellings.
+
+**The since-view's other counts, the same day.** `turns`, `toolCalls` and
+`failures` were summed across a session's receipts, and the receipts are
+cumulative, so a session with three SessionEnd firings reported each of them
+about three times over. They are now the largest value across the session's
+receipts. Measured on this machine's chain before choosing, 4,110 sessions: 252
+wrote more than one receipt (589 receipts). In none of the 252 did any of the
+three counts fall from one receipt to the next, and the largest always equalled
+the last. Across the whole chain the sum reported 140,148 tool calls where the
+largest reports 124,769, 12.3% over; inside the 252 the median sum was double
+the largest and the worst was 5.32 times. Today's traffic barely shows it: in
+the seven days measured, 3 of 227 sessions had more than one receipt.
+**What to doubt in this part.** The largest value is wrong for a session id
+continued in a new transcript: it would under-report, and nothing here detects
+that. It was not seen. `session.startedAt` was constant on all 252 except one
+placeholder `unknown` id with zero counts, but that is one machine's harness
+behaviour, not a promise from it, and a harness that reuses an id would break
+this silently. Unexplained and left alone: one session's `touched` list shrank
+between receipts (39 paths to 32, 17 gone, none a respelling), so "each receipt
+is a superset" held for the counts and not for that one list. The window is
+unchanged: a receipt inside the window still reports work done before the
+window opened.
+
+**Amended 2026-11-05, the since view against receipts that disagree.** The view
+takes `touched` as a union, so a path a later receipt forgets stays listed; the
+shrink above costs that view nothing. It did get one order wrong: a path answered
+`ok` by one receipt and `error` by a later one read as refused, against the
+parser's rule that one landed write is a write. `ok` now holds across receipts,
+and only `ok`: `unknown` then `error` still reads as refused. These orders were
+run against synthetic receipts. No real session was found showing landed then
+refused, and the 39-to-32 session is still not identified or explained, so
+whether this order occurs on a real chain is not known.
 
 Found 2026-10-19. Seq 36203 is a gate denial: a session's write to one of its
 own hook files was refused. Seq 36204 is that session's receipt, and it lists
@@ -3118,6 +3242,9 @@ src/parser/ and src/views/ are not on the protected list; the retcon half is
 core and is not touched here.
 
 ## 77. `matcherHash` depends on the checkout's line endings, so one commit has two stamps
+
+**Status: CLOSED 2026-10-26 at the signing sitting (`1c3e9f2`), schema `matcher/3`.** The
+queued patch below landed. See the closing note at the end of this entry.
 
 `matcherVersionHash()` digests `Function.prototype.toString()` of the rule
 functions, and `toString()` returns the source text as loaded, line endings
@@ -3157,6 +3284,14 @@ tripwire to guard. `test/policy-matcher-stamp-eol-patch.test.js` rehearses it on
 temp copies: patched LF equals patched CRLF, the patched LF stamp equals the
 unpatched LF stamp, and the unpatched control still differs. Until it lands,
 the limit stands as written above.
+
+**CLOSED 2026-10-26.** The fold is in `matcherHashInputs()`, the schema is `matcher/3`,
+`test/policy-matcher-stamp-eol.test.js` guards it, and the patch rehearsals now skip with a
+message saying the patch landed. This entry kept reading "not landed" for nine days after
+it did, which is limit 29's failure again. **Still open, and the entry already said so:**
+how the receipts written before the change are read. Every CRLF-era stamp on this machine's
+chain still differs from the LF stamp of the same commit, and `src/views/matcher-history.js`
+is what tells them apart.
 
 ## 78. The R2 tool I/O digest covers only the calls the post-tool-use hook already writes, and a guessable response can be recovered from it
 
@@ -3248,9 +3383,15 @@ Before this change, `observeRungs` found content markers with two case-sensitive
 regex, so content ending in an upper- or mixed-case closing think tag was inline
 reasoning to one witness and not R3 to the other. Reach now uses the same regex,
 and `test/reach-glm-leak-fixtures.test.js` pins agreement on eight probes plus six
-real glm-5.3-flash bodies where `think:false` still leaked a closing tag. What
-remains: the two regexes are two copies, not one import, so they can drift again;
-the probe table is the only tripwire. Separately, the `ollama launch claude`
+real glm-5.3-flash bodies where `think:false` still leaked a closing tag. The
+two copies are now one: `src/reasoning/think-tag.js` defines `THINK_TAG`, both
+witnesses import and re-export it, and `test/think-tag-one-source.test.js` pins
+object identity, the `i` flag, a match table, and a source scan that fails if
+either witness file defines its own `const THINK_TAG` again (closed 2026-10-27,
+branch `lotor-lane/l79-think-tag-one-source`). What remains: the scan keys on
+that one spelling, so a copy under another name would pass it; identity is the
+real check, and it only holds while both witnesses read the shared binding.
+Separately, the `ollama launch claude`
 executor channel drops lowercase think tags (glm) and mangles backslash escapes
 (minimax), so test sources on this lane build the less-than sign with
 `String.fromCharCode(60)`. That is a property of the authoring channel, not of
@@ -3322,7 +3463,103 @@ backslash absolute path into another repository", and
 `test/policy-opaque-exec-extensionless.test.js` "gates the Windows spelling")
 run as `todo` on non-Windows hosts and as ordinary tests on Windows.
 
-## 84. The matcher stamp still misses helpers its hashed rules call
+## 84. Checkpoints are signed by the chain key, so they bind a history only for someone who kept one
+
+Landed 2026-10-27 with chain checkpoints (PR #89). The key that signs entries
+also signs checkpoints, and it is plaintext at rest (limits 8 and 48). Its
+holder can rewrite the chain, re-seal, and `verifySealed()` passes on the
+result. What catches the rewrite is an earlier checkpoint kept elsewhere:
+`verifyIncremental({ trusted })` reports a fork, and no consistency proof from
+the kept checkpoint exists. A cosigner or witness (C2SP tlog-cosignature) or an
+external anchor would remove the need to keep one; neither is in this patch,
+and OpenTimestamps anchoring is out of scope until the notary is back.
+
+## 85. Incremental verify does not read sealed segments
+
+Landed 2026-10-27 with PR #89. From the newest checkpoint, an edit inside an
+older sealed segment is out of sight until a full read (`verifySealed()` or
+`store.verify()`). That is the trade that makes it incremental, and the
+rehearsal pins it as documented behavior.
+
+## 86. Nothing seals automatically
+
+Landed 2026-10-27 with PR #89. No hook or CLI calls `store.seal()`. Until one
+does (the session-end hook, which is core, or `pap-export`, which is not), a
+chain has checkpoints only when something asks for them. Sealing inside the
+append path was rejected: it would add work and a new failure mode to the
+unattended hook path. Not limits, recorded so nobody rediscovers them: sealing
+refuses a chain line that does not parse, where `loadChain` silently drops it,
+so a chain with an inserted garbage line can pass `store.verify()` and still
+refuse to seal; and re-sealing from scratch yields byte-identical notes
+(Ed25519 is deterministic and the note text is fixed by size and root), so
+losing the sidecar loses nothing a stranger kept.
+
+## 87. The scheduling rules read commands, and a harness can schedule through a tool
+
+**Found 2026-10-22 by reading the policy source; probed 2026-11-04 by running it.** Limit 44
+closed the shell forms of scheduling. A harness can also schedule through a tool call with
+no shell in it. With all nine rules set to `gate`, the shipped `evaluate()` returned no rule
+for each of these, each given a prompt that would run a remote script:
+
+| call | rule |
+|---|---|
+| `Bash`, `schtasks /create ...` (control) | scope-escalation |
+| `Bash`, `crontab -e` (control) | scope-escalation |
+| `CronCreate` | none |
+| `ScheduleWakeup` | none |
+| `RemoteTrigger` | none |
+| `mcp__scheduled-tasks__create_scheduled_task` | none |
+| `mcp__scheduled-tasks__update_scheduled_task` | none |
+
+The act is the same as the controls and the door is different: every command rule asks
+whether the input has a `command` string, these have none, and the artifact half of limit 44
+looks only at `Write`, `Edit` and `NotebookEdit`. This is the same family as limit 31, which
+says the rule set has no concept of actions scheduled for later. It is not a statement about
+what a harness does with such a call, or whether a row is recorded for it; that depends on
+how the hooks are registered, and it was not measured here. The input shapes in the probe
+are this author's, and a list of tool names would only move the hole, so the fix is a
+question for the policy's design rather than a rule to add. Any fix is a change to
+`src/policy` (non-delegable core), and it waits for a signing sitting.
+
+## 88. A session receipt holds network targets in plaintext, including the start of Bash commands
+
+Found 2026-11-05 re-deriving `docs/receipt-coverage.md`; the doc had never
+listed this field as readable text. Every session receipt carries a `sent`
+array, and `src/parser/index.js` fills it through two functions,
+`isNetworkTool` and `extractTarget`. A WebFetch call puts its full URL in
+`sent.items[].target`, a WebSearch call puts its full query there, and a
+Bash command puts the first 100 characters of the command there. Nothing
+redacts any of it, and ingest passes the field through to the chain
+unchanged.
+
+The Bash test is a bare substring over network verbs, so it fires wider than
+the name suggests. The verb list is matched with `includes` against the
+lowercased command, not parsed as a command line, so `mapping` qualifies
+through the `ping` it contains and a filename containing `scp` qualifies.
+A command with no network verb anywhere in its text does not.
+
+The consequence is that readable text lands on the chain: a credential in a
+`curl` header, an API key in a fetched URL's query string, or a private
+search query arrives in the receipt exactly as typed. The chain is
+append-only and hash-linked, so removing the row later breaks verification,
+and `npm run export` carries it off the machine with the rest of the chain.
+
+Limit 18 discloses authorised command strings in plaintext on grant rows.
+This is a different writer: the parser puts the target on the chain as part
+of every session receipt, and it needs no grant to do it.
+
+`test/known-limits-87-sent-plaintext.test.js` is a tripwire over a synthetic
+transcript with fake values. It pins today's behaviour; it is not an
+endorsement of it.
+
+Not measured on a real chain, on purpose. Looking would mean searching the
+operator's own record for secrets, which is the operator's call.
+
+Not fixed. Digesting the target would remove the only readable account of
+where a session reached out, so this is a trade for the owner to make, not
+a one-line fix.
+
+## 89. The matcher stamp still misses helpers its hashed rules call
 
 Limit 63 closed by naming the self-mod deciders in `matcherHashInputs()`, and
 its residual says only that code outside the policy module is unstamped. A

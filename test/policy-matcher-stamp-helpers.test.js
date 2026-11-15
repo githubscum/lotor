@@ -1,7 +1,7 @@
 /**
  * test/policy-matcher-stamp-helpers.test.js
  *
- * TRIPWIRE, not a regression test. Found 2026-10-27 (KNOWN-LIMITS 84).
+ * TRIPWIRE, not a regression test. Found 2026-10-27 (KNOWN-LIMITS 89).
  *
  * `matcherHashInputs()` (src/policy/index.js, the `parts` array) is the exact
  * text the matcher version stamp digests. It is built from
@@ -33,7 +33,7 @@
  * is to add the helpers to `parts` in `matcherHashInputs()` (a src/policy
  * change, therefore non-delegable core, and it queues for a signing sitting),
  * bump MATCHER_SCHEMA (the hashing METHOD changes, which is exactly what that
- * marker is for), invert the assertions below, and amend KNOWN-LIMITS 84 in
+ * marker is for), invert the assertions below, and amend KNOWN-LIMITS 89 in
  * the same change. Do NOT delete the file: a confession that can be closed by
  * deleting its evidence is not a confession.
  */
@@ -68,7 +68,7 @@ function regexLiteralOf(name) {
 }
 
 // The 18 top-level helper functions the hashed rules call but whose source
-// text is not in the hashed inputs (KNOWN-LIMITS 84).
+// text is not in the hashed inputs (KNOWN-LIMITS 89).
 const UNHASHED_FUNCTIONS = [
   'matchableCommand',
   'escapeRegExp',
@@ -100,7 +100,7 @@ const UNHASHED_REGEX_CONSTANTS = [
   'SCRIPT_EXT'
 ];
 
-describe('matcher stamp helper coverage (KNOWN-LIMITS 84, open 2026-10-27)', () => {
+describe('matcher stamp helper coverage (KNOWN-LIMITS 89, open 2026-10-27)', () => {
   it('CONTROL: the hashed text is alive and holds the hashed deciders', () => {
     // If a rename or a bad import empties `hashedText`, these fail first and
     // the absence assertions below cannot pass vacuously.
@@ -130,12 +130,12 @@ describe('matcher stamp helper coverage (KNOWN-LIMITS 84, open 2026-10-27)', () 
   // --- the defect: the helper bodies are outside the stamp ---
 
   for (const name of UNHASHED_FUNCTIONS) {
-    it('UNHASHED (defect, limit 84): ' + name, () => {
+    it('UNHASHED (defect, limit 89): ' + name, () => {
       assert.equal(
         hashedText.includes('function ' + name + '('),
         false,
         name + ' body is now in the hashed text: invert this assertion, ' +
-          'bump MATCHER_SCHEMA, and close KNOWN-LIMITS 84'
+          'bump MATCHER_SCHEMA, and close KNOWN-LIMITS 89'
       );
     });
   }
@@ -143,7 +143,7 @@ describe('matcher stamp helper coverage (KNOWN-LIMITS 84, open 2026-10-27)', () 
   // --- the defect: the regex constants are referenced but not defined in the stamp ---
 
   for (const name of UNHASHED_REGEX_CONSTANTS) {
-    it('REFERENCED-BUT-UNDEFINED regex constant (defect, limit 84): ' + name, () => {
+    it('REFERENCED-BUT-UNDEFINED regex constant (defect, limit 89): ' + name, () => {
       const literal = regexLiteralOf(name);
       // CONTROL: the extracted literal is a real regex literal, at least
       // `/x/y` shaped, so the absence assertion below cannot be vacuous.
@@ -162,7 +162,7 @@ describe('matcher stamp helper coverage (KNOWN-LIMITS 84, open 2026-10-27)', () 
         hashedText.includes(literal),
         false,
         name + ' definition is now in the hashed text: invert this ' +
-          'assertion, bump MATCHER_SCHEMA, and close KNOWN-LIMITS 84'
+          'assertion, bump MATCHER_SCHEMA, and close KNOWN-LIMITS 89'
       );
     });
   }

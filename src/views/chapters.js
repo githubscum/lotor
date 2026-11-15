@@ -144,6 +144,7 @@ function makeBook() {
       const c = ensure(ts);
       if (p && !c.touched.includes(p)) c.touched.push(p);
       touch(ts);
+      return c;
     },
     fail(ts) { const c = ensure(ts); c.failures++; touch(ts); }
   };
@@ -197,12 +198,31 @@ const FILE_TOOLS = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'noteb
  */
 export function chaptersFromClaudeTranscript(jsonlText) {
   const book = makeBook();
+  // Limit 76. A file tool's tool_use is an attempt, and the tool_result that
+  // answers it says how it went. attempts: tool_use id -> { chapter, path }.
+  // settled: chapter -> Map(path -> 'ok' | 'error'). `ok` is sticky within a
+  // chapter, the same rule the parser applies: one landed write is a write.
+  const attempts = new Map();
+  const settled = new Map();
+  const settle = (id, isError) => {
+    const a = attempts.get(id);
+    if (!a) return;
+    if (!settled.has(a.chapter)) settled.set(a.chapter, new Map());
+    const m = settled.get(a.chapter);
+    if (!isError) m.set(a.path, 'ok');
+    else if (m.get(a.path) !== 'ok') m.set(a.path, 'error');
+  };
   for (const e of parseLines(jsonlText)) {
     const msg = e?.message;
     if (!msg) continue;
     const ts = CLAUDE_TS(e);
 
     if (msg.role === 'user') {
+      if (Array.isArray(msg.content)) {
+        for (const item of msg.content) {
+          if (item?.type === 'tool_result') settle(item.tool_use_id, item.is_error === true);
+        }
+      }
       if (e.isSidechain !== true) {
         const text = claudeUserText(e);
         if (text !== null) { book.open(ts, makeTitle(text)); continue; }
@@ -223,9 +243,18 @@ export function chaptersFromClaudeTranscript(jsonlText) {
         book.call(ts, item.name);
         const key = FILE_TOOLS[item.name];
         const p = key ? item.input?.[key] : undefined;
-        if (typeof p === 'string' && p) book.path(ts, p);
+        if (typeof p === 'string' && p) {
+          const chapter = book.path(ts, p);
+          if (item.id) attempts.set(item.id, { chapter, path: p });
+        }
       }
     }
+  }
+  // `refused` appears only on a chapter that has one, so a chapter with no
+  // refused write keeps exactly the shape it has always had.
+  for (const [chapter, m] of settled) {
+    const refused = chapter.touched.filter(p => m.get(p) === 'error');
+    if (refused.length) chapter.refused = refused;
   }
   return book.chapters;
 }
@@ -355,10 +384,15 @@ function canonicalize(value) {
  * title removed, keys sorted at every depth, arrays in order. Titles are
  * operator words and never enter the chain; everything else in a chapter
  * is counts, timestamps and paths, which `touched` already puts there.
+ *
+ * `refused` is removed too. chapters/1 digests are already on the chain and
+ * were taken without it, so including it would make every old receipt with a
+ * refused write read DOES NOT match. The marks are bound only through the
+ * transcript hash, not through this digest.
  */
 export function chaptersCanonical(chapters) {
   const rows = (Array.isArray(chapters) ? chapters : []).map(c => {
-    const { title, ...rest } = c;
+    const { title, refused, ...rest } = c;
     return canonicalize(rest);
   });
   return JSON.stringify(rows);
@@ -536,6 +570,7 @@ export function chaptersReport(entries, opts = {}) {
     sessions: out,
     caveats: [
       'Intent is not recorded. A chapter shows which tools ran and which files were named, never why.',
+      'A file count includes attempts. A refused file is one whose every answered write in that chapter came back as an error; Claude Code transcripts only, Codex rollouts are not settled.',
       'A chapter title is the operator\'s own words, quoted. It is not a claim about what was done.',
       'Chapters come from transcripts on disk, not from the chain. The chain witnesses the session receipt, not this list.',
       'Codex sessions are not on the chain at all. Their chapters are unattested.',
@@ -597,8 +632,9 @@ export function renderChapters(report) {
     } else {
       for (const c of s.chapters) {
         const files = c.touched.length;
+        const refused = c.refused?.length ?? 0;
         const title = c.title === null ? '(no prompt recorded)' : `"${c.title}"`;
-        const tail = `(${c.toolCalls} tool call${c.toolCalls === 1 ? '' : 's'}, ${files} file${files === 1 ? '' : 's'}${c.failures ? `, ${c.failures} failed` : ''})`;
+        const tail = `(${c.toolCalls} tool call${c.toolCalls === 1 ? '' : 's'}, ${files} file${files === 1 ? '' : 's'}${refused ? `, ${refused} refused` : ''}${c.failures ? `, ${c.failures} failed` : ''})`;
         L.push(`    #${String(c.index).padEnd(3)} ${hhmm(c.startedAt)}  ${title}  ${tail}`);
       }
     }

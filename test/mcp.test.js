@@ -151,7 +151,7 @@ describe('MCP tool handlers', () => {
         'seq', 'timestamp', 'hash', 'type',
         // session receipts
         'sessionId', 'model', 'subsession',
-        'turns', 'toolCalls', 'failures', 'transcriptEntries', 'touchedCount',
+        'turns', 'toolCalls', 'failures', 'transcriptEntries', 'touchedCount', 'touchedRefused',
         // session-open
         'source', 'cwd',
         // gated-action

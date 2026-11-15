@@ -100,16 +100,44 @@ function verifyChain(entries, publicKey) {
     return { ok: true };
   }
 
+  return verifyRange(entries, publicKey, { startSeq: 0, prevHash: GENESIS_PREV_HASH });
+}
+
+/**
+ * Verify a contiguous range of entries: the first carries seq startSeq and
+ * links to prevHash (the hash of entry startSeq - 1, or the genesis constant
+ * when startSeq is 0). Same checks, same order and same reasons as a full
+ * verifyChain; entry numbers in brokenAt and in the reasons are absolute seqs,
+ * so from startSeq 0 the result is exactly what verifyChain returned before
+ * this function existed. A caller that already trusts the chain up to
+ * startSeq (a verified checkpoint, src/store/checkpoints.js) verifies only
+ * what came after it.
+ * @param {Array} entries - Array of entry objects, in seq order
+ * @param {crypto.KeyObject} publicKey - Ed25519 public key
+ * @param {Object} [from] - { startSeq = 0, prevHash = GENESIS_PREV_HASH }
+ * @returns {Object} { ok: boolean, brokenAt?: number, reason?: string }
+ */
+function verifyRange(entries, publicKey, from = {}) {
+  const startSeq = from.startSeq === undefined ? 0 : from.startSeq;
+  const startPrevHash = from.prevHash === undefined ? GENESIS_PREV_HASH : from.prevHash;
+  if (!Number.isSafeInteger(startSeq) || startSeq < 0) {
+    throw new Error(`verifyRange: startSeq must be a non-negative safe integer, got ${startSeq}`);
+  }
+  if (!entries || entries.length === 0) {
+    return { ok: true };
+  }
+
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
+    const at = startSeq + i;
 
     // Verify hash recomputation
     const expectedHash = computeHash(entry);
     if (expectedHash !== entry.hash) {
       return {
         ok: false,
-        brokenAt: i,
-        reason: `hash mismatch at entry ${i}: expected ${expectedHash}, got ${entry.hash}`
+        brokenAt: at,
+        reason: `hash mismatch at entry ${at}: expected ${expectedHash}, got ${entry.hash}`
       };
     }
 
@@ -121,39 +149,40 @@ function verifyChain(entries, publicKey) {
     if (!sigOk) {
       return {
         ok: false,
-        brokenAt: i,
-        reason: `signature verification failed at entry ${i}`
+        brokenAt: at,
+        reason: `signature verification failed at entry ${at}`
       };
     }
 
-    // Verify seq continuity. verifyChain already requires a full chain from
-    // genesis, so entry i must carry seq i. The hash covers seq, so a wrong seq
-    // can only be signed in at write time; this is where it is caught.
-    if (!Number.isSafeInteger(entry.seq) || entry.seq !== i) {
+    // Verify seq continuity. Entry i of a range that starts at startSeq must
+    // carry seq startSeq + i (seq i for a full chain from genesis). The hash
+    // covers seq, so a wrong seq can only be signed in at write time; this is
+    // where it is caught.
+    if (!Number.isSafeInteger(entry.seq) || entry.seq !== at) {
       return {
         ok: false,
-        brokenAt: i,
-        reason: `seq discontinuity at entry ${i}: expected ${i}, got ${JSON.stringify(entry.seq)}`
+        brokenAt: at,
+        reason: `seq discontinuity at entry ${at}: expected ${at}, got ${JSON.stringify(entry.seq)}`
       };
     }
 
     // Verify prevHash linkage
-    if (i === 0) {
+    if (at === 0) {
       // Genesis entry: prevHash must be genesis constant
       if (entry.prevHash !== GENESIS_PREV_HASH) {
         return {
           ok: false,
-          brokenAt: i,
-          reason: `genesis entry prevHash mismatch at entry ${i}: expected ${GENESIS_PREV_HASH}, got ${entry.prevHash}`
+          brokenAt: at,
+          reason: `genesis entry prevHash mismatch at entry ${at}: expected ${GENESIS_PREV_HASH}, got ${entry.prevHash}`
         };
       }
     } else {
-      const prevEntry = entries[i - 1];
-      if (entry.prevHash !== prevEntry.hash) {
+      const expectedPrev = i > 0 ? entries[i - 1].hash : startPrevHash;
+      if (entry.prevHash !== expectedPrev) {
         return {
           ok: false,
-          brokenAt: i,
-          reason: `prevHash link broken at entry ${i}: expected ${prevEntry.hash}, got ${entry.prevHash}`
+          brokenAt: at,
+          reason: `prevHash link broken at entry ${at}: expected ${expectedPrev}, got ${entry.prevHash}`
         };
       }
     }
@@ -161,7 +190,6 @@ function verifyChain(entries, publicKey) {
 
   return { ok: true };
 }
-
 /**
  * Generate an Ed25519 keypair for chain signing.
  * @returns {Object} { publicKey: KeyObject, privateKey: KeyObject }
@@ -176,6 +204,7 @@ function generateKeyPair() {
 export {
   createChain,
   verifyChain,
+  verifyRange,
   generateKeyPair,
   GENESIS_PREV_HASH
 };

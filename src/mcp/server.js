@@ -102,6 +102,19 @@ function asWritten(p, key) {
 }
 
 /**
+ * KNOWN-LIMITS 76. `touchedCount` counts attempts. This says how many of them
+ * the harness answered with an error. A receipt written before 2026-10-19
+ * carries no `outcome` on any item, and for that receipt the number is
+ * unrecorded rather than zero, so the field is omitted. Absent is not zero.
+ */
+function touchedRefusedField(touched) {
+  if (!Array.isArray(touched)) return {};
+  const items = touched.filter(t => t && typeof t === 'object');
+  if (!items.some(t => Object.hasOwn(t, 'outcome'))) return {};
+  return { touchedRefused: items.filter(t => t.outcome === 'error').length };
+}
+
+/**
  * The chain holds several kinds of entry and they do not share a shape.
  *
  *   (untyped)      the original session receipt. No `type` field, because it
@@ -156,7 +169,8 @@ function summarizeEntry(entry) {
         ...(typeof c.failures === 'number' ? { failures: c.failures } : {}),
         ...(typeof c.transcriptEntries === 'number'
           ? { transcriptEntries: c.transcriptEntries } : {}),
-        ...(Array.isArray(p.touched) ? { touchedCount: p.touched.length } : {})
+        ...(Array.isArray(p.touched) ? { touchedCount: p.touched.length } : {}),
+        ...touchedRefusedField(p.touched)
       };
     }
 
@@ -465,7 +479,7 @@ function createMcpServer() {
         },
         {
           name: 'sessions_since',
-          description: 'What happened while you were not looking. Summarises every session recorded in the chain since a point in time, grouped by session, with what each one ran and which files it touched. Use this BEFORE asserting that something does not exist, has not been built, or was never done: concurrent sessions cannot see each other, and the chain is the only place their work is visible. Also worth calling at the start of a session to find out what changed since the last one. Sessions that opened and did nothing are counted rather than listed. Gate decisions carry no session id and are reported unattributed rather than guessed at. Reports what it cannot tell you: receipts carry which tools ran and a digest of their parameters, never intent, and capture is self-attested, so an empty result means nothing was recorded rather than nothing happened.',
+          description: 'What happened while you were not looking. Summarises every session recorded in the chain since a point in time, grouped by session, with what each one ran and which files it touched. Use this BEFORE asserting that something does not exist, has not been built, or was never done: concurrent sessions cannot see each other, and the chain is the only place their work is visible. Also worth calling at the start of a session to find out what changed since the last one. Sessions that opened and did nothing are counted rather than listed. Gate decisions whose row states a session id are listed under that session; rows with no session id, including all written before 2026-09-07, are reported unattributed rather than guessed at. Reports what it cannot tell you: receipts carry which tools ran and a digest of their parameters, never intent, and capture is self-attested, so an empty result means nothing was recorded rather than nothing happened.',
           inputSchema: {
             type: 'object',
             properties: {
