@@ -1,0 +1,221 @@
+#!/usr/bin/env node
+/**
+ * proposals/seal-cli/seal.js
+ *
+ * Keep-able checkpoints: seal the chain, hand the note to someone who is not
+ * the key holder, and let them hold the chain to it later.
+ *
+ * WHY THIS EXISTS (KNOWN-LIMITS 86, KNOWN-LIMITS 84)
+ *   store.seal() existed in core, but nothing outside the code called it, so
+ *   nobody outside could ever make a checkpoint — the workflow the checkpoint
+ *   layer was built for stayed theoretical. And limit 84 says a silent rewrite
+ *   is caught only by someone who kept an EARLIER checkpoint note. This CLI is
+ *   that workflow end to end:
+ *
+ *     operator:  node proposals/seal-cli/seal.js seal --at-head --out note.txt   (hand out note.txt)
+ *     holder:    node proposals/seal-cli/seal.js check note.txt
+ *     anyone:    node proposals/seal-cli/seal.js verify
+ *
+ * WHAT `check` DOES AND DOES NOT SEE
+ *   Both checks run, and CONSISTENT means both passed (WO-L86-02):
+ *
+ *   verifyIncremental, against the kept note: the holder's chain must still
+ *   contain a sealed checkpoint at the note's size signing the SAME root (a
+ *   re-signed sidecar that signs a different root is a fork), and every entry
+ *   after the note must verify forward from it. It never re-reads entries the
+ *   note already covers — that is what "incremental" means
+ *   (test/chain-checkpoints.test.js documents the same line). The covered
+ *   region still owes its certified byte extent: a note's record vouches that
+ *   entries 0..size-1 end at a byte offset, so one fewer byte there is
+ *   reported, not skipped.
+ *
+ *   verifySealed, the full walk from genesis: the incremental note cannot see
+ *   a same-length rewrite of an entry it covers, so `check` walks the whole
+ *   chain from genesis too and reports CONSISTENT only when both verify.
+ *   `--fast` skips the full walk and prints exactly what it does not check
+ *   (KNOWN-LIMITS 85). An INCONSISTENT result says which check failed and why;
+ *   it never claims the covered entries were re-read when the walk was skipped.
+ *
+ * USAGE
+ *   node proposals/seal-cli/seal.js seal [--at-head] [--out <file>]
+ *   node proposals/seal-cli/seal.js check [--fast] <note-file>
+ *   node proposals/seal-cli/seal.js verify
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { resolveHome } from '../../src/home.js';
+import { createStore } from '../../src/store/index.js';
+
+function die(msg, code = 1) {
+  process.stderr.write(`lotor seal: ${msg}\n`);
+  process.exit(code);
+}
+
+function usage() {
+  process.stderr.write(
+    'usage:\n' +
+    '  node proposals/seal-cli/seal.js seal [--at-head] [--out <file>]\n' +
+    '  node proposals/seal-cli/seal.js check [--fast] <note-file>\n' +
+    '  node proposals/seal-cli/seal.js verify\n'
+  );
+  process.exit(1);
+}
+
+// One JSON record per line; each record has `size` and `note` (the signed C2SP
+// checkpoint note text). Missing or empty sidecar: nothing sealed yet.
+function newestRecord(home) {
+  const file = path.join(home, 'receipts', 'checkpoints.jsonl');
+  if (!fs.existsSync(file)) return null;
+  const lines = fs.readFileSync(file, 'utf-8').split('\n').filter((l) => l.trim());
+  if (lines.length === 0) return null;
+  return JSON.parse(lines[lines.length - 1]);
+}
+
+const HONEST_LINE = 'A kept note catches a later rewrite only if the holder is not the key holder (KNOWN-LIMITS 84).';
+
+const FAST_LINE = '--fast skipped the full walk: a same-length rewrite of entries the note covers is not checked (KNOWN-LIMITS 85).\n';
+
+function doSeal(outArg, atHead) {
+  const home = resolveHome();
+  const store = createStore(home);
+  let sealed;
+  try {
+    sealed = store.seal({ atHead });
+  } catch (e) {
+    // The sealer refuses to sign a history that does not verify. That refusal
+    // is an answer, not a crash: report it as one (exit 2, not 1 — the command
+    // was understood; the chain failed it).
+    die(e.message, 2);
+  }
+
+  const newest = newestRecord(home);
+  if (!newest) {
+    process.stdout.write('nothing sealed: the chain has fewer than 1024 unsealed entries; pass --at-head to seal the head now\n');
+    process.stdout.write(`${HONEST_LINE}\n`);
+    process.exit(0);
+  }
+
+  process.stdout.write(`sealed ${sealed.sealed} new checkpoint(s); newest covers ${sealed.size} entries\n`);
+  if (outArg) {
+    fs.writeFileSync(outArg, newest.note, { mode: 0o644 });
+  } else {
+    process.stdout.write('--- checkpoint note (give this to someone who is not you) ---\n');
+    // The C2SP note text carries its own trailing newline, so this prints and
+    // reads back byte-identical and `check` can pass the file content straight
+    // through without trimming.
+    process.stdout.write(newest.note);
+  }
+  process.stdout.write(`${HONEST_LINE}\n`);
+}
+
+function doCheck(args) {
+  // `--fast` keeps the incremental-only walk; it may sit before or after the
+  // note path. Any other extra argument is a usage error.
+  let fast = false;
+  const paths = [];
+  for (const arg of args) {
+    if (arg === '--fast') fast = true;
+    else paths.push(arg);
+  }
+  if (paths.length !== 1) usage();
+  const noteFile = paths[0];
+
+  let trusted;
+  try {
+    // No trim anywhere: the note format ends with a newline, and the signature
+    // covers the text exactly as it was sealed. A trimmed note is a different
+    // note, and its signature would fail.
+    trusted = fs.readFileSync(noteFile, 'utf-8');
+  } catch (e) {
+    die(`cannot read note file: ${e.message}`);
+  }
+
+  const store = createStore(resolveHome());
+  let incremental;
+  try {
+    incremental = store.verifyIncremental({ trusted });
+  } catch (e) {
+    die(e.message, 2);
+  }
+
+  if (!incremental.ok) {
+    process.stdout.write(`INCONSISTENT  ${incremental.reason}\n`);
+    if (incremental.brokenAt !== undefined) {
+      process.stdout.write(`  first bad entry: index ${incremental.brokenAt}\n`);
+    }
+    if (fast) process.stdout.write(FAST_LINE);
+    process.exit(2);
+  }
+
+  if (fast) {
+    // Incremental passed and the walk was skipped: say what --fast does not
+    // check, right next to the CONSISTENT it prints.
+    process.stdout.write(`CONSISTENT  chain still contains the checkpoint you kept (size ${incremental.from}), and verifies forward to ${incremental.size} entries\n`);
+    process.stdout.write(FAST_LINE);
+    process.exit(0);
+  }
+
+  // The incremental note never re-reads entries it covers, so a same-length
+  // rewrite of a covered entry could hide from it. The full walk from genesis
+  // reads all of them; CONSISTENT requires both.
+  let sealed;
+  try {
+    sealed = store.verifySealed();
+  } catch (e) {
+    die(e.message, 2);
+  }
+
+  if (!sealed.ok) {
+    process.stdout.write(`INCONSISTENT  ${sealed.reason}\n`);
+    process.exit(2);
+  }
+
+  process.stdout.write(`CONSISTENT  chain still contains the checkpoint you kept (size ${incremental.from}), verifies forward to ${incremental.size} entries, and every entry from genesis verifies\n`);
+  process.exit(0);
+}
+
+function doVerify() {
+  const store = createStore(resolveHome());
+  let result;
+  try {
+    result = store.verifySealed();
+  } catch (e) {
+    die(e.message, 2);
+  }
+
+  if (result.ok) {
+    process.stdout.write(`VALID  ${result.size} entries, ${result.checkpoints} checkpoint(s), all from genesis\n`);
+    process.exit(0);
+  }
+  process.stdout.write(`INVALID  ${result.reason}\n`);
+  process.exit(2);
+}
+
+const [, , cmd, ...rest] = process.argv;
+
+if (cmd === 'seal') {
+  let atHead = false;
+  let outArg = null;
+  let outValue = false;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--at-head') {
+      atHead = true;
+    } else if (rest[i] === '--out') {
+      outArg = rest[i + 1];
+      outValue = true;
+      i++;
+    } else {
+      die(`unknown argument ${JSON.stringify(rest[i])}`);
+    }
+  }
+  if (outValue && outArg === undefined) die('--out needs a file path');
+  doSeal(outArg, atHead);
+} else if (cmd === 'check') {
+  doCheck(rest);
+} else if (cmd === 'verify') {
+  if (rest.length !== 0) usage();
+  doVerify();
+} else {
+  usage();
+}
