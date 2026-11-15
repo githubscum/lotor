@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bin/seal.js
+ * proposals/seal-cli/seal.js
  *
  * Keep-able checkpoints: seal the chain, hand the note to someone who is not
  * the key holder, and let them hold the chain to it later.
@@ -12,9 +12,9 @@
  *   is caught only by someone who kept an EARLIER checkpoint note. This CLI is
  *   that workflow end to end:
  *
- *     operator:  node bin/seal.js seal --at-head --out note.txt   (hand out note.txt)
- *     holder:    node bin/seal.js check note.txt
- *     anyone:    node bin/seal.js verify
+ *     operator:  node proposals/seal-cli/seal.js seal --at-head --out note.txt   (hand out note.txt)
+ *     holder:    node proposals/seal-cli/seal.js check note.txt
+ *     anyone:    node proposals/seal-cli/seal.js verify
  *
  * WHAT `check` DOES AND DOES NOT SEE
  *   Both checks run, and CONSISTENT means both passed (WO-L86-02):
@@ -37,15 +37,15 @@
  *   it never claims the covered entries were re-read when the walk was skipped.
  *
  * USAGE
- *   node bin/seal.js seal [--at-head] [--out <file>]
- *   node bin/seal.js check [--fast] <note-file>
- *   node bin/seal.js verify
+ *   node proposals/seal-cli/seal.js seal [--at-head] [--out <file>]
+ *   node proposals/seal-cli/seal.js check [--fast] <note-file>
+ *   node proposals/seal-cli/seal.js verify
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveHome } from '../src/home.js';
-import { createStore } from '../src/store/index.js';
+import { resolveHome } from '../../src/home.js';
+import { createStore } from '../../src/store/index.js';
 
 function die(msg, code = 1) {
   process.stderr.write(`lotor seal: ${msg}\n`);
@@ -55,9 +55,9 @@ function die(msg, code = 1) {
 function usage() {
   process.stderr.write(
     'usage:\n' +
-    '  node bin/seal.js seal [--at-head] [--out <file>]\n' +
-    '  node bin/seal.js check [--fast] <note-file>\n' +
-    '  node bin/seal.js verify\n'
+    '  node proposals/seal-cli/seal.js seal [--at-head] [--out <file>]\n' +
+    '  node proposals/seal-cli/seal.js check [--fast] <note-file>\n' +
+    '  node proposals/seal-cli/seal.js verify\n'
   );
   process.exit(1);
 }

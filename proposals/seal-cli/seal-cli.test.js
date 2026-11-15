@@ -1,7 +1,7 @@
 /**
- * test/seal-cli.test.js
+ * proposals/seal-cli/seal-cli.test.js
  *
- * WO-L86-01: bin/seal.js — the checkpoint workflow outside the code. Seal,
+ * WO-L86-01: proposals/seal-cli/seal.js — the checkpoint workflow outside the code. Seal,
  * hand the note to someone who is not the key holder, check the chain against
  * the note later, and verify the sealed chain from genesis.
  *
@@ -28,10 +28,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createStore } from '../src/store/index.js';
+import { createStore } from '../../src/store/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.join(__dirname, '..');
+const REPO = path.join(__dirname, '..', '..');
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-seal-cli-'));
@@ -50,7 +50,7 @@ function sidecarPath(home) {
 }
 
 function runSeal(args, home) {
-  return spawnSync(process.execPath, ['bin/seal.js', ...args], {
+  return spawnSync(process.execPath, ['proposals/seal-cli/seal.js', ...args], {
     cwd: REPO,
     env: { ...process.env, LOTOR_HOME: home },
     encoding: 'utf8'
@@ -74,7 +74,7 @@ function sealAtHead(home, notePath) {
   return r;
 }
 
-describe('bin/seal.js (WO-L86-01)', () => {
+describe('proposals/seal-cli/seal.js (WO-L86-01)', () => {
   it('case 1: a usage error exits 1 with usage on stderr', () => {
     const home = tmpHome();
     try {
