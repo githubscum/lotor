@@ -5,28 +5,20 @@
  * hand the note to someone who is not the key holder, check the chain against
  * the note later, and verify the sealed chain from genesis.
  *
+ * WO-L86-02 (round 2): `check` runs BOTH verifyIncremental against the kept
+ * note (fork detection and the forward walk) AND verifySealed (the full walk
+ * from genesis), and reports CONSISTENT only when both pass. A same-length
+ * rewrite of an entry UNDER a kept checkpoint — the case a kept note exists to
+ * catch — is therefore INCONSISTENT by default: verifyIncremental never re-reads
+ * entries the note covers, but the full walk reads all of them. `check --fast`
+ * keeps the round-1 incremental-only behaviour and prints exactly what it
+ * skipped (KNOWN-LIMITS 85); the flag may sit before or after the note path.
+ *
  * Each test runs the real CLI (child_process.spawnSync) against a fresh
  * LOTOR_HOME, so what is under test is what an operator types, not the store
  * API. Chains are built by importing createStore and appending receipts — the
  * same approach test/chain-checkpoints.test.js uses (appendReceipt through the
  * real store), not a guessed writer.
- *
- * ONE DISCLOSURE, UP FRONT (also in the work-order report):
- *   The work order's case 5 asks for a rewrite INSIDE the first five lines to
- *   come back INCONSISTENT from `check`. From a kept note, verifyIncremental
- *   only reads entries AFTER the trusted checkpoint — that is what "incremental"
- *   means, and test/chain-checkpoints.test.js documents the same line
- *   ("from the NEWEST checkpoint nothing before it is read... that is what
- *   'incremental' means"). A same-length edit under the kept checkpoint is
- *   therefore invisible to `check` BY DESIGN. What the covered region still
- *   owes is its certified byte extent (the sidecar record vouches that entries
- *   0..size-1 end at a byte offset), so the literal case-5 tamper below is a
- *   ONE-BYTE SHRINK of a string value inside the first five lines — the
- *   certified extent fails closed and `check` reports INCONSISTENT. Two
- *   companion cases then pin the honest whole picture: the same-length
- *   substitution under the checkpoint stays CONSISTENT to `check` (and IS
- *   caught by `verify`), and a same-length substitution after the covered
- *   prefix is caught INCONSISTENT by the forward walk.
  */
 
 import { describe, it } from 'node:test';
@@ -152,7 +144,7 @@ describe('bin/seal.js (WO-L86-01)', () => {
       appendMany(store, 3);
       const r = runSeal(['check', notePath], home);
       assert.equal(r.status, 0);
-      assert.match(r.stdout, /CONSISTENT  chain still contains the checkpoint you kept \(size 5\), and verifies forward to 8 entries/);
+      assert.match(r.stdout, /CONSISTENT  chain still contains the checkpoint you kept \(size 5\), verifies forward to 8 entries, and every entry from genesis verifies/);
     } finally {
       cleanup(home);
     }
@@ -183,7 +175,7 @@ describe('bin/seal.js (WO-L86-01)', () => {
     }
   });
 
-  it('case 5 companion (disclosed): a same-length rewrite UNDER the kept checkpoint is invisible to check, and verify catches it', () => {
+  it('case 5 companion, flipped (WO-L86-02): a same-length rewrite UNDER the kept checkpoint is INCONSISTENT from check', () => {
     const home = tmpHome();
     try {
       const store = createStore(home);
@@ -191,22 +183,82 @@ describe('bin/seal.js (WO-L86-01)', () => {
       const notePath = path.join(home, 'note.txt');
       sealAtHead(home, notePath);
 
-      // Same-length substitution inside the covered prefix: from the kept
-      // checkpoint, verifyIncremental never reads entries 0..4, so `check`
-      // stays CONSISTENT — by design, not by accident.
+      // Same-length substitution inside the covered prefix: verifyIncremental
+      // never reads entries 0..4 from the kept checkpoint, so incremental
+      // alone would pass — but check also runs the full walk from genesis,
+      // which reads all of them, and CONSISTENT requires both. This is the
+      // case a kept note exists to catch.
       const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
       assert.ok(lines[2].includes('"tag":"r"'), lines[2]);
       lines[2] = lines[2].replace('"tag":"r"', '"tag":"R"');
       fs.writeFileSync(chainPath(home), lines.join('\n'));
 
       const r = runSeal(['check', notePath], home);
+      assert.equal(r.status, 2);
+      assert.match(r.stdout, /INCONSISTENT/);
+      assert.match(r.stdout, /hash mismatch at entry 2/, `the full walk is what caught it: ${r.stdout}`);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 5 companion (WO-L86-02): check --fast keeps the incremental-only behaviour on that same tamper', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
+      assert.ok(lines[2].includes('"tag":"r"'), lines[2]);
+      lines[2] = lines[2].replace('"tag":"r"', '"tag":"R"');
+      fs.writeFileSync(chainPath(home), lines.join('\n'));
+
+      // --fast before the path: incremental-only, so the covered rewrite stays
+      // unseen — and the output says so.
+      const r = runSeal(['check', '--fast', notePath], home);
       assert.equal(r.status, 0);
       assert.match(r.stdout, /CONSISTENT/);
+      assert.match(r.stdout, /--fast skipped the full walk: a same-length rewrite of entries the note covers is not checked \(KNOWN-LIMITS 85\)\./, r.stdout);
+    } finally {
+      cleanup(home);
+    }
+  });
 
-      // The same tamper IS caught by the full walk from genesis.
-      const sealed = createStore(home).verifySealed();
-      assert.equal(sealed.ok, false);
-      assert.match(sealed.reason, /hash mismatch at entry 2/);
+  it('case 5 companion (WO-L86-02): check <note> --fast (flag after the path) behaves identically', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
+      assert.ok(lines[2].includes('"tag":"r"'), lines[2]);
+      lines[2] = lines[2].replace('"tag":"r"', '"tag":"R"');
+      fs.writeFileSync(chainPath(home), lines.join('\n'));
+
+      const r = runSeal(['check', notePath, '--fast'], home);
+      assert.equal(r.status, 0);
+      assert.match(r.stdout, /CONSISTENT/);
+      assert.match(r.stdout, /--fast skipped the full walk: a same-length rewrite of entries the note covers is not checked \(KNOWN-LIMITS 85\)\./, r.stdout);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 5 companion (WO-L86-02): check with an unknown extra argument is a usage error (exit 1)', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      const r = runSeal(['check', notePath, '--bogus'], home);
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /usage:/);
     } finally {
       cleanup(home);
     }
