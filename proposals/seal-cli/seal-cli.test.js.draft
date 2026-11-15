@@ -1,0 +1,279 @@
+/**
+ * test/seal-cli.test.js
+ *
+ * WO-L86-01: bin/seal.js — the checkpoint workflow outside the code. Seal,
+ * hand the note to someone who is not the key holder, check the chain against
+ * the note later, and verify the sealed chain from genesis.
+ *
+ * Each test runs the real CLI (child_process.spawnSync) against a fresh
+ * LOTOR_HOME, so what is under test is what an operator types, not the store
+ * API. Chains are built by importing createStore and appending receipts — the
+ * same approach test/chain-checkpoints.test.js uses (appendReceipt through the
+ * real store), not a guessed writer.
+ *
+ * ONE DISCLOSURE, UP FRONT (also in the work-order report):
+ *   The work order's case 5 asks for a rewrite INSIDE the first five lines to
+ *   come back INCONSISTENT from `check`. From a kept note, verifyIncremental
+ *   only reads entries AFTER the trusted checkpoint — that is what "incremental"
+ *   means, and test/chain-checkpoints.test.js documents the same line
+ *   ("from the NEWEST checkpoint nothing before it is read... that is what
+ *   'incremental' means"). A same-length edit under the kept checkpoint is
+ *   therefore invisible to `check` BY DESIGN. What the covered region still
+ *   owes is its certified byte extent (the sidecar record vouches that entries
+ *   0..size-1 end at a byte offset), so the literal case-5 tamper below is a
+ *   ONE-BYTE SHRINK of a string value inside the first five lines — the
+ *   certified extent fails closed and `check` reports INCONSISTENT. Two
+ *   companion cases then pin the honest whole picture: the same-length
+ *   substitution under the checkpoint stays CONSISTENT to `check` (and IS
+ *   caught by `verify`), and a same-length substitution after the covered
+ *   prefix is caught INCONSISTENT by the forward walk.
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createStore } from '../src/store/index.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.join(__dirname, '..');
+
+function tmpHome() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lotor-seal-cli-'));
+}
+
+function cleanup(home) {
+  fs.rmSync(home, { recursive: true, force: true });
+}
+
+function chainPath(home) {
+  return path.join(home, 'receipts', 'chain.jsonl');
+}
+
+function sidecarPath(home) {
+  return path.join(home, 'receipts', 'checkpoints.jsonl');
+}
+
+function runSeal(args, home) {
+  return spawnSync(process.execPath, ['bin/seal.js', ...args], {
+    cwd: REPO,
+    env: { ...process.env, LOTOR_HOME: home },
+    encoding: 'utf8'
+  });
+}
+
+/** Append n receipts through the real store — same approach as test/chain-checkpoints.test.js. */
+function appendMany(store, n, tag = 'r') {
+  for (let i = 0; i < n; i++) store.appendReceipt({ type: 'test', tag, i });
+}
+
+function readSidecar(home) {
+  if (!fs.existsSync(sidecarPath(home))) return [];
+  return fs.readFileSync(sidecarPath(home), 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+}
+
+/** Seal at the head through the CLI and keep the note, as the operator would. */
+function sealAtHead(home, notePath) {
+  const r = runSeal(['seal', '--at-head', '--out', notePath], home);
+  assert.equal(r.status, 0, `setup seal failed: ${r.stderr}`);
+  return r;
+}
+
+describe('bin/seal.js (WO-L86-01)', () => {
+  it('case 1: a usage error exits 1 with usage on stderr', () => {
+    const home = tmpHome();
+    try {
+      const bad = runSeal(['frobnicate'], home);
+      assert.equal(bad.status, 1);
+      assert.match(bad.stderr, /usage:/);
+
+      const none = runSeal([], home);
+      assert.equal(none.status, 1);
+      assert.match(none.stderr, /usage:/);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 2: seal without --at-head on a 5-entry chain seals nothing (exit 0)', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+
+      const r = runSeal(['seal'], home);
+      assert.equal(r.status, 0);
+      assert.ok(r.stdout.includes('nothing sealed'), r.stdout);
+      assert.ok(r.stdout.includes('pass --at-head to seal the head now'), r.stdout);
+      // The segment size is 1024, so 5 entries never become a checkpoint.
+      assert.deepEqual(readSidecar(home), []);
+      // The honest line is printed unconditionally on the seal path.
+      assert.ok(r.stdout.includes('A kept note catches a later rewrite only if the holder is not the key holder'), r.stdout);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 3: seal --at-head --out writes a non-empty note file and one size-5 sidecar record', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+
+      const notePath = path.join(home, 'note.txt');
+      const r = sealAtHead(home, notePath);
+      assert.ok(r.stdout.includes('sealed 1 new checkpoint(s); newest covers 5 entries'), r.stdout);
+
+      const recs = readSidecar(home);
+      assert.equal(recs.length, 1);
+      assert.equal(recs[0].size, 5);
+
+      const note = fs.readFileSync(notePath, 'utf8');
+      assert.ok(note.length > 0);
+      assert.ok(note.endsWith('\n'), 'the note format ends with a newline');
+      assert.equal(note, recs[0].note, 'the note file is the signed note text, byte for byte');
+      assert.ok(r.stdout.includes('KNOWN-LIMITS 84'), r.stdout);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 4: check of the kept note stays CONSISTENT while the chain grows forward', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      appendMany(store, 3);
+      const r = runSeal(['check', notePath], home);
+      assert.equal(r.status, 0);
+      assert.match(r.stdout, /CONSISTENT  chain still contains the checkpoint you kept \(size 5\), and verifies forward to 8 entries/);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it("case 5: a one-byte tamper of a field inside the first five lines is INCONSISTENT (exit 2)", () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      // One byte of a string value inside the covered prefix is gone. The kept
+      // note's record certified that entries 0..4 end at a byte offset; one
+      // byte less and the certified extent fails closed.
+      const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
+      assert.ok(lines[2].includes('"type":"test"'), lines[2]);
+      lines[2] = lines[2].replace('"type":"test"', '"type":"tet"');
+      fs.writeFileSync(chainPath(home), lines.join('\n'));
+
+      const r = runSeal(['check', notePath], home);
+      assert.equal(r.status, 2);
+      assert.match(r.stdout, /INCONSISTENT/);
+      assert.match(r.stdout, /truncated/, `the certified byte extent is what caught it: ${r.stdout}`);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 5 companion (disclosed): a same-length rewrite UNDER the kept checkpoint is invisible to check, and verify catches it', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      // Same-length substitution inside the covered prefix: from the kept
+      // checkpoint, verifyIncremental never reads entries 0..4, so `check`
+      // stays CONSISTENT — by design, not by accident.
+      const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
+      assert.ok(lines[2].includes('"tag":"r"'), lines[2]);
+      lines[2] = lines[2].replace('"tag":"r"', '"tag":"R"');
+      fs.writeFileSync(chainPath(home), lines.join('\n'));
+
+      const r = runSeal(['check', notePath], home);
+      assert.equal(r.status, 0);
+      assert.match(r.stdout, /CONSISTENT/);
+
+      // The same tamper IS caught by the full walk from genesis.
+      const sealed = createStore(home).verifySealed();
+      assert.equal(sealed.ok, false);
+      assert.match(sealed.reason, /hash mismatch at entry 2/);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 5 companion: a same-length rewrite the note does NOT cover is caught by the forward walk', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      const notePath = path.join(home, 'note.txt');
+      sealAtHead(home, notePath);
+
+      appendMany(store, 3);
+      // Entry 5 is the first entry after the kept checkpoint: the walk reads
+      // it, and this one-byte substitution breaks its hash.
+      const lines = fs.readFileSync(chainPath(home), 'utf8').split('\n');
+      assert.ok(lines[5].includes('"tag":"r"'), lines[5]);
+      lines[5] = lines[5].replace('"tag":"r"', '"tag":"R"');
+      fs.writeFileSync(chainPath(home), lines.join('\n'));
+
+      const r = runSeal(['check', notePath], home);
+      assert.equal(r.status, 2);
+      assert.match(r.stdout, /INCONSISTENT/);
+    } finally {
+      cleanup(home);
+    }
+  });
+
+  it('case 6: a note from another chain under the same key is a fork (exit 2)', () => {
+    const homeA = tmpHome();
+    const homeB = tmpHome();
+    try {
+      const storeA = createStore(homeA);
+      appendMany(storeA, 5, 'a');
+      const noteA = path.join(homeA, 'note.txt');
+      sealAtHead(homeA, noteA);
+
+      // Home B: same key (copied keys dir), a DIFFERENT 5-entry chain, sealed
+      // at the head. Same size, same signature, different root.
+      fs.cpSync(path.join(homeA, 'keys'), path.join(homeB, 'keys'), { recursive: true });
+      const storeB = createStore(homeB);
+      appendMany(storeB, 5, 'b');
+      assert.equal(runSeal(['seal', '--at-head'], homeB).status, 0);
+
+      const r = runSeal(['check', noteA], homeB);
+      assert.equal(r.status, 2);
+      assert.match(r.stdout, /INCONSISTENT/);
+      assert.match(r.stdout, /fork|does not/, r.stdout);
+    } finally {
+      cleanup(homeA);
+      cleanup(homeB);
+    }
+  });
+
+  it('case 7: verify on a good sealed chain is VALID (exit 0)', () => {
+    const home = tmpHome();
+    try {
+      const store = createStore(home);
+      appendMany(store, 5);
+      sealAtHead(home, path.join(home, 'note.txt'));
+
+      const r = runSeal(['verify'], home);
+      assert.equal(r.status, 0);
+      assert.match(r.stdout, /VALID  5 entries, 1 checkpoint\(s\), all from genesis/);
+    } finally {
+      cleanup(home);
+    }
+  });
+});
