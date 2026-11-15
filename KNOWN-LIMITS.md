@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 23a213afa39fb8f56d0783f0ba5ab24ad4323320
+ This file describes commit 60c5406d7e362bb1d794ac9c26ff8a625116fb1d
  stamped 2026-10-28
- subject: Land chain checkpoints and inclusion proofs (PR 89) at the 2026-10-27 signing sitting; limits 87-89
- body-sha256: f037bc54db74e50e3a9711b4549dea8f153686621f70b8b2d0020723699bea43
+ subject: Merge main (22ae903, PR 89 landed) into the l79 branch; pin header conflict only
+ body-sha256: 1c252b58db946798a21a4c134101cb40ab335bdffd50af2a9617ab9312643d81
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3248,9 +3248,15 @@ Before this change, `observeRungs` found content markers with two case-sensitive
 regex, so content ending in an upper- or mixed-case closing think tag was inline
 reasoning to one witness and not R3 to the other. Reach now uses the same regex,
 and `test/reach-glm-leak-fixtures.test.js` pins agreement on eight probes plus six
-real glm-5.3-flash bodies where `think:false` still leaked a closing tag. What
-remains: the two regexes are two copies, not one import, so they can drift again;
-the probe table is the only tripwire. Separately, the `ollama launch claude`
+real glm-5.3-flash bodies where `think:false` still leaked a closing tag. The
+two copies are now one: `src/reasoning/think-tag.js` defines `THINK_TAG`, both
+witnesses import and re-export it, and `test/think-tag-one-source.test.js` pins
+object identity, the `i` flag, a match table, and a source scan that fails if
+either witness file defines its own `const THINK_TAG` again (closed 2026-10-27,
+branch `lotor-lane/l79-think-tag-one-source`). What remains: the scan keys on
+that one spelling, so a copy under another name would pass it; identity is the
+real check, and it only holds while both witnesses read the shared binding.
+Separately, the `ollama launch claude`
 executor channel drops lowercase think tags (glm) and mangles backslash escapes
 (minimax), so test sources on this lane build the less-than sign with
 `String.fromCharCode(60)`. That is a property of the authoring channel, not of
