@@ -3,8 +3,9 @@
  *
  * `git apply`, `git am` and `patch` write targets named only inside the patch file; this
  * reads the patch(es) and returns those targets, failing closed when a source cannot be
- * read. Verbs hidden behind env assignments, wrappers or a `shell -c` string are still
- * found; xargs feeding the verb means stdin patch names, so it fails closed.
+ * read. Verbs hidden behind env assignments, wrappers, shell keywords, an `&` separator,
+ * an `env -S` string or a `shell -c` string are still found; and git's global options
+ * before the subcommand and stdin patch spellings are parsed instead of left fail-open.
  */
 
 import fs from 'node:fs';
@@ -17,7 +18,13 @@ const PATCH_VALUE_OPTS = new Set(['p', 'd', 'o', 'r', 'D', 'F', 'B', 'z', 'V', '
 // Re-entry shells; wrappers and the flags that eat a value next to them.
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'pwsh', 'powershell']);
 // Wrappers hide the verb after them; the listed flag swallows the next token.
-const WRAPPERS = new Map([['sudo', ['-u']], ['env', []], ['command', []], ['exec', []], ['nohup', []], ['time', []], ['nice', ['-n']], ['xargs', ['-I', '-n', '-L', '-d']]]);
+const WRAPPERS = new Map([['sudo', ['-u']], ['env', ['-u', '-C', '--unset', '--chdir']], ['command', []], ['exec', []], ['nohup', []], ['time', []], ['nice', ['-n']], ['xargs', ['-I', '-n', '-L', '-d']]]);
+// Shell reserved words and a lone `(` lead the real command; skipped like wrappers.
+const SHELL_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time', 'coproc', 'in', 'esac']);
+// git global options that, without `=`, swallow the next token; with `=` they are one token.
+const GIT_VALUE_OPTS = new Set(['--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
+// These spell stdin, and readFileSync on them can hang: never reach the reader with one.
+const STDIN_SOURCES = new Set(['-', '/dev/stdin', '/dev/fd/0', '/proc/self/fd/0']);
 
 function baseName(tok) {
   const b = tok.replace(/\\/g, '/').split('/').pop();
@@ -78,22 +85,40 @@ function resolveSource(src, cwd) {
   return base + '/' + s;
 }
 
-// Env assignments and wrappers ahead of a hidden verb vanish; the return says how many
-// tokens went away and whether xargs was among them (its verb reads stdin).
-function skipHidden(toks) {
-  let k = 0, viaXargs = false;
+// Env assignments, shell keywords, wrappers and a leading `(` ahead of a hidden verb
+// vanish; the return says how many tokens went away, whether xargs was among them (its
+// verb reads stdin), and whether env carried -S/--split-string (its value is a whole
+// inner command, returned unquoted for the caller to scan — never swallowed as a flag
+// value, which would silently drop the verb it hides).
+function skipHidden(toks, s, offs) {
+  let k = 0, viaXargs = false, split = null;
   for (;;) {
     if (k >= toks.length) break;
     const name = baseName(toks[k]);
     if (envAssign(toks[k])) { k++; continue; }
+    if (SHELL_KEYWORDS.has(toks[k]) || toks[k] === '(') { k++; continue; }
+    // `case WORD in` heads a case statement: the word after `case` is not a command.
+    if (toks[k] === 'case') { k += 2; continue; }
+    // A quoted arg like `"a)"` is not a pattern. Unquoted `a)` ends with `)` and no `(`:
+    // a case pattern, so a following verb is still reached and it never names a patch.
+    if (toks[k].length > 1 && toks[k].endsWith(')') && !toks[k].includes('(') &&
+        toks[k][0] !== "'" && toks[k][0] !== '"') { k++; continue; }
     const valued = WRAPPERS.get(name);
     if (!valued) break;
     if (name === 'xargs') viaXargs = true;
     for (k++; k < toks.length && toks[k].startsWith('-'); k++) {
-      if (valued.includes(toks[k]) && k + 1 < toks.length) k++;
+      const t = toks[k];
+      if (name === 'env' && (t.startsWith('-S') || t.startsWith('--split-string'))) {
+        // The split string is the rest of the segment (sliced raw: tokens are whitespace-split).
+        split = t.startsWith('--split-string=') ? unquote(s.slice(offs[k] + 15).trim())
+          : t === '--split-string' ? unquote(s.slice(offs[k] + 14).trim())
+          : unquote(s.slice(offs[k] + 2).trim());
+        return { skip: k, viaXargs, split };
+      }
+      if (valued.includes(t) && k + 1 < toks.length) k++;
     }
   }
-  return { skip: k, viaXargs };
+  return { skip: k, viaXargs, split };
 }
 
 // Splitting on `;`/`|` can land inside a quoted string (an inner `shell -c 'cd r; ...'`),
@@ -126,8 +151,9 @@ function shellRest(s, toks, offs) {
 }
 
 function scanCommand(cmd, cwd, read, acc, depth) {
-  // Odd indices are the separators, so each even index knows what preceded it.
-  const parts = cmd.split(/(&&|\|\||[;|\n\r])/);
+  // Odd indices are the separators, so each even index knows what preceded it. A single
+  // `&` is a command separator too, but not inside `&&`, `2>&1`, `>&`, `<&` or `&>`.
+  const parts = cmd.split(/(&&|\|\||\|&|(?<![<>&|])&(?![>&])|[;|\n\r])/);
   for (let p = 0; p < parts.length; p += 2) {
     const seg = parts[p], prevSep = p > 0 ? parts[p - 1] : null;
     if (!seg.trim()) continue;
@@ -137,10 +163,24 @@ function scanCommand(cmd, cwd, read, acc, depth) {
     const toks = [], offs = [];
     for (const m of s.matchAll(/\S+/g)) { toks.push(m[0]); offs.push(m.index); }
     if (!toks.length) continue;
+    // A bare `)` closes a subshell group, so it never names a patch source.
+    for (let i = toks.length - 1; i >= 0; i--) {
+      if (toks[i] === ')') { toks.splice(i, 1); offs.splice(i, 1); }
+    }
+    if (!toks.length) continue;
     if (leadParen && toks[toks.length - 1].endsWith(')')) toks[toks.length - 1] = toks[toks.length - 1].slice(0, -1);
     stripUnpairedQuotes(toks, offs);
-    const { skip, viaXargs } = skipHidden(toks);
+    const { skip, viaXargs, split } = skipHidden(toks, s, offs);
     if (skip) { toks.splice(0, skip); offs.splice(0, skip); }
+    // env -S/--split-string: the flag value is a space-split inner command, so the rest
+    // of the segment is scanned like a shell -c body instead of parsed as tokens.
+    if (split !== null) {
+      if (split) {
+        if (depth >= 8) { acc.matched = true; acc.failClosed = true; } // too deep to parse: stay closed
+        else scanCommand(split, cwd, read, acc, depth + 1);
+      }
+      continue;
+    }
     if (!toks.length) continue;
     // The inner string of a shell re-entry is scanned on its own; its result lands in acc.
     const rest = shellRest(s, toks, offs);
@@ -152,12 +192,15 @@ function scanCommand(cmd, cwd, read, acc, depth) {
     const base = baseName(toks[0]);
     let verb = null, start = 1;
     if (base === 'git') {
+      // Global options before the subcommand: -C/-c take a value; the ones in
+      // GIT_VALUE_OPTS take the next token when spelled without `=`; with `=` or any
+      // other flag they are self-contained. Keep looking until the verb shows up.
       let i = 1;
       while (i < toks.length) {
         const t = toks[i];
         if (t === '-C' || t === '-c') i += 2;
-        else if ((t.startsWith('-C') || t.startsWith('-c')) && t.length > 2) i++;
-        else if (t === '--no-pager' || t.startsWith('--git-dir=') || t.startsWith('--work-tree=')) i++;
+        else if (GIT_VALUE_OPTS.has(t)) i += i + 1 < toks.length ? 2 : 1;
+        else if (t.startsWith('-')) i++;
         else break;
       }
       if (toks[i] === 'apply' || toks[i] === 'am') { verb = toks[i]; start = i + 1; } else continue;
@@ -183,7 +226,7 @@ function scanCommand(cmd, cwd, read, acc, depth) {
       else if (t.startsWith('<(')) { fed.add(i); acc.failClosed = true; } // never a readable patch file
       else if (t.startsWith('<') && !t.startsWith('<<') && t.length > 1) { fed.add(i); sources.push(unquote(t.slice(1))); }
     }
-    if (prevSep === '|') acc.failClosed = true; // the verb reads its patch from stdin
+    if (prevSep === '|' || prevSep === '|&') acc.failClosed = true; // the verb reads its patch from stdin
     if (viaXargs) acc.failClosed = true; // xargs feeds the verb patch names from stdin
     const hasHeredoc = toks.some((t) => t.startsWith('<<'));
     if (hasHeredoc) {
@@ -223,6 +266,7 @@ function scanCommand(cmd, cwd, read, acc, depth) {
 
     for (const src of sources) {
       if (src.startsWith('<(') || src.includes('$(') || src.includes('`')) { acc.failClosed = true; continue; }
+      if (STDIN_SOURCES.has(src)) { acc.failClosed = true; continue; } // stdin: reading it can hang, so stay closed
       let text;
       try { text = read(resolveSource(src, cwd)); }
       catch { acc.failClosed = true; continue; } // cannot see what the patch writes: fail closed
