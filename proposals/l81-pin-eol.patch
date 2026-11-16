@@ -1,0 +1,25 @@
+diff --git a/src/limits/pin.js b/src/limits/pin.js
+--- a/src/limits/pin.js
++++ b/src/limits/pin.js
+@@ -89,7 +89,20 @@ function stripPinBlock(text) {
+  * @returns {string} 64 hex characters
+  */
+ function bodyDigest(text) {
+-  return crypto.createHash('sha256').update(stripPinBlock(text), 'utf8').digest('hex');
++  // A CRLF checkout (core.autocrlf=true) gives the log CR bytes an LF
++  // checkout of the same commit does not have, so the body digest moved
++  // with the checkout and not the log (KNOWN-LIMITS 81). The fold runs
++  // BEFORE the pin block is stripped: stripPinBlock trims blank lines
++  // with a bare-LF match, so stripping first would keep the blank lines a
++  // CRLF checkout carries in front of the body and an LF digest would
++  // still differ. Folding first keeps an LF digest byte-identical before
++  // and after this change and moves only CRLF digests onto the LF value.
++  const CRLF = String.fromCharCode(13, 10);
++  const LF = String.fromCharCode(10);
++  return crypto.createHash('sha256').update(
++    stripPinBlock(typeof text === 'string' ? text.split(CRLF).join(LF) : text),
++    'utf8'
++  ).digest('hex');
+ }
+ 
+ /**
