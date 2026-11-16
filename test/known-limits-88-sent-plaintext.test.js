@@ -3,9 +3,11 @@
  *
  * Tripwire for KNOWN-LIMITS 88 (2026-11-05). It pins the parser's current
  * behaviour on `sent.items[].target`: the value is plaintext, nothing
- * redacts it, and the Bash network test is a bare substring over the
- * lowercased command, so it matches wider than the verb names suggest.
- * This pins today's behaviour; it is not an endorsement of it.
+ * redacts it. The wide-match half of the limit is now closed — the Bash
+ * network test is whole-word, not a bare substring over the lowercased
+ * command — so non-network commands no longer qualify through a fragment of
+ * a verb. The plaintext behaviour is still pinned here; this file is not an
+ * endorsement of it.
  */
 
 import { describe, it } from 'node:test';
@@ -77,15 +79,52 @@ describe('KNOWN-LIMITS 88: sent targets are plaintext', () => {
     assert.equal(hit.target, LONG_COMMAND.slice(0, 100));
   });
 
-  it('qualifies a non-network command through a bare substring (pinning the wide match)', () => {
+  it('writes no sent item for cat mapping.txt — the Bash network match is whole-word (limit 88 wide-match half closed)', () => {
     const hit = items.find(i => i.tool === 'Bash' && i.target === 'cat mapping.txt');
-    assert.ok(hit, 'cat mapping.txt did not land in sent; the bare substring match on ping has changed');
+    assert.ok(!hit, 'cat mapping.txt produced a sent item; the whole-word match regressed to a bare substring');
   });
 
   it('writes no sent item for a plain ls or a Write call', () => {
     assert.ok(!items.some(i => i.target.includes('ls -la')), 'plain ls produced a sent item');
     assert.ok(!items.some(i => i.tool === 'Write'), 'a Write call produced a sent item');
-    // Everything else in the transcript is accounted for above.
-    assert.equal(items.length, 5);
+    // Everything else in the transcript is accounted for above. The bare
+    // substring no longer qualifies `cat mapping.txt`, so one fewer item.
+    assert.equal(items.length, 4);
   });
+});
+
+describe('KNOWN-LIMITS 88 wide-match half: whole-word network verbs, per row', () => {
+  // Required outcomes, lowercased command -> recorded in sent?
+  const CASES = [
+    ['cat mapping.txt', false],
+    ['ls scpfiles/', false],
+    ['echo skipping', false],
+    ['ping 1.1.1.1', true],
+    ['curl https://x.test', true],
+    ['/usr/bin/curl https://x.test', true],
+    ['curl.exe https://x.test', true],
+    ['echo hi && curl https://x.test', true],
+    ['x=$(curl -s https://x.test)', true],
+    ['git  push origin main', true],
+    ['nc -l 8080', true],
+    ['sync', false],
+    ['ls -la', false],
+  ];
+
+  // One synthetic transcript per table row, each a lone Bash command, so a
+  // row's sent item (target === command.slice(0, 100), all rows < 100 chars)
+  // is directly attributable to its own command.
+  const tableJsonl = CASES.map(([cmd], i) => toolUseLine(`w${i}`, 'Bash', { command: cmd }));
+
+  const tableItems = parseSession(tableJsonl.join('\n')).sent.items;
+
+  assert.equal(tableItems.length, CASES.filter(([, expected]) => expected).length,
+    'the transcript produced an unexpected number of sent items');
+
+  for (const [cmd, expected] of CASES) {
+    it(`${expected ? 'records' : 'does not record'} \`${cmd}\``, () => {
+      assert.equal(tableItems.some(i => i.tool === 'Bash' && i.target === cmd), expected,
+        `\`${cmd}\` should ${expected ? '' : 'not '}land in sent`);
+    });
+  }
 });

@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 24facb3f7f57dc0740cbf89c4c79eb5a8d74c870
- stamped 2026-11-15
- subject: Merge branch 'pr98' into integrate
- body-sha256: 942161f1466d3d87695e665f6598e7b4a47d0020a9e605790947a7ef300bb175
+ This file describes commit f7482714478b652534d8fd0dd3783388921d51a3
+ stamped 2026-11-16
+ subject: parser: network verbs match whole words, not substrings (limit 88, wide-match half)
+ body-sha256: 9bbcd937b829ce7a91b53b4e22e46de685e7c4bb2e18d64d74e38d1d76ad51f9
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3532,11 +3532,13 @@ Bash command puts the first 100 characters of the command there. Nothing
 redacts any of it, and ingest passes the field through to the chain
 unchanged.
 
-The Bash test is a bare substring over network verbs, so it fires wider than
-the name suggests. The verb list is matched with `includes` against the
-lowercased command, not parsed as a command line, so `mapping` qualifies
-through the `ping` it contains and a filename containing `scp` qualifies.
-A command with no network verb anywhere in its text does not.
+The Bash test was a bare substring over network verbs, so it fired wider than
+the name suggests: `mapping` qualified through the `ping` it contains. Since
+2026-11-16 (WO-L88-01) each verb matches only as a whole word against the
+lowercased command, so `cat mapping.txt` and `ls scpfiles/` no longer land in
+`sent`. It is still not parsed as a command line: a quoted or echoed verb
+qualifies, and a send with no listed verb in its text (`git -C dir push`,
+`npm i`, `gh`, `Invoke-WebRequest`) does not.
 
 The consequence is that readable text lands on the chain: a credential in a
 `curl` header, an API key in a fetched URL's query string, or a private
@@ -3548,7 +3550,7 @@ Limit 18 discloses authorised command strings in plaintext on grant rows.
 This is a different writer: the parser puts the target on the chain as part
 of every session receipt, and it needs no grant to do it.
 
-`test/known-limits-87-sent-plaintext.test.js` is a tripwire over a synthetic
+`test/known-limits-88-sent-plaintext.test.js` is a tripwire over a synthetic
 transcript with fake values. It pins today's behaviour; it is not an
 endorsement of it.
 
