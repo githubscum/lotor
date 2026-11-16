@@ -1,0 +1,48 @@
+diff --git a/src/grant/core-paths.js b/src/grant/core-paths.js
+--- a/src/grant/core-paths.js
++++ b/src/grant/core-paths.js
+@@ -214,9 +214,28 @@ function classifyPath(inputPath, repoRoot = resolveRepoRoot()) {
+   const root = path.resolve(repoRoot);
+   // path.resolve handles absolute inputs, relative inputs, "." and ".." in
+   // one step and on the platform's own rules. We never hand-roll traversal.
++  // KNOWN-LIMITS 83: path.resolve treats a backslash as a separator
++  // only on win32, so the Windows spellings classify differently on
++  // non-Windows hosts. Fold backslash to forward slash before
++  // classification on every platform.
++  const BS = String.fromCharCode(92);
++  const slashed = inputPath.split(BS).join('/');
++  if (process.platform !== 'win32') {
++    const c0 = slashed.charCodeAt(0);
++    const c1 = slashed.charCodeAt(1);
++    const c2 = slashed.charCodeAt(2);
++    const driveStart = (c0 >= 65 && 90 >= c0) || (c0 >= 97 && 122 >= c0);
++    if (driveStart && c1 === 58 && c2 === 47) {
++      return {
++        verdict: 'refused',
++        reason: 'drive-letter absolute path on a non-Windows host',
++        relative: null
++      };
++    }
++  }
+   let resolved;
+   try {
+-    resolved = path.resolve(root, inputPath);
++    resolved = path.resolve(root, slashed);
+   } catch (e) {
+     return { verdict: 'refused', reason: `unresolvable: ${e.message}`, relative: null };
+   }
+diff --git a/src/policy/index.js b/src/policy/index.js
+--- a/src/policy/index.js
++++ b/src/policy/index.js
+@@ -1510,7 +1510,10 @@ function extensionlessLocalFileKind(segment, cwd) {
+   if (!candidate || path.extname(candidate) !== '') return null;
+ 
+   try {
+-    const resolved = fs.realpathSync(path.resolve(cwd, candidate));
++    // KNOWN-LIMITS 83: path.resolve treats a backslash as a separator
++    // only on win32; fold backslash to forward slash so an explicit
++    // local path resolves to the same file on every host.
++    const resolved = fs.realpathSync(path.resolve(cwd, candidate.split(String.fromCharCode(92)).join('/')));
+     if (!fs.statSync(resolved).isFile()) return null;
+     const fd = fs.openSync(resolved, 'r');
+     try {
