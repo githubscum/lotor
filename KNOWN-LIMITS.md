@@ -2,7 +2,7 @@
  This file describes commit f7482714478b652534d8fd0dd3783388921d51a3
  stamped 2026-11-16
  subject: parser: network verbs match whole words, not substrings (limit 88, wide-match half)
- body-sha256: 99272e03c1e507fa04392f6c4c15bc76e37a6fc681653f137c954ed0a1d8c0b7
+ body-sha256: 9bbcd937b829ce7a91b53b4e22e46de685e7c4bb2e18d64d74e38d1d76ad51f9
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
@@ -3550,7 +3550,7 @@ Limit 18 discloses authorised command strings in plaintext on grant rows.
 This is a different writer: the parser puts the target on the chain as part
 of every session receipt, and it needs no grant to do it.
 
-`test/known-limits-87-sent-plaintext.test.js` is a tripwire over a synthetic
+`test/known-limits-88-sent-plaintext.test.js` is a tripwire over a synthetic
 transcript with fake values. It pins today's behaviour; it is not an
 endorsement of it.
 
