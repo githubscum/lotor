@@ -1,8 +1,8 @@
 <!-- known-limits:pin v1
- This file describes commit 24facb3f7f57dc0740cbf89c4c79eb5a8d74c870
- stamped 2026-11-15
- subject: Merge branch 'pr98' into integrate
- body-sha256: 942161f1466d3d87695e665f6598e7b4a47d0020a9e605790947a7ef300bb175
+ This file describes commit f7482714478b652534d8fd0dd3783388921d51a3
+ stamped 2026-11-16
+ subject: parser: network verbs match whole words, not substrings (limit 88, wide-match half)
+ body-sha256: 99272e03c1e507fa04392f6c4c15bc76e37a6fc681653f137c954ed0a1d8c0b7
  Re-stamp after updating this log: npm run limits-pin -- --stamp
  Divergent checkout? See: npm run limits-pin -- --check
 known-limits:pin end -->
