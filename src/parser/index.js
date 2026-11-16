@@ -651,8 +651,28 @@ function digestContent(content) {
   return text.slice(0, 50);
 }
 
+// Bash network verbs, in the same order isNetworkTool has always used. The
+// list is unchanged except the former `'nc '` entry: KNOWN-LIMITS 88's
+// wide-match half is closed by matching each verb as a whole word (start of
+// string, or a non-[a-z0-9_] character, on either side of it), so the boundary
+// now does the work the trailing space did — and filenames like mapping.txt
+// or scpfiles/ no longer qualify through ping or scp.
+const NETWORK_VERBS = [
+  'curl', 'wget', 'git push', 'git pull', 'git fetch',
+  'npm publish', 'npm install', 'npx', 'ssh', 'scp', 'rsync',
+  'ping', 'telnet', 'nc', 'netcat'
+];
+
+// One whole-word matcher per verb, built once. Multi-word verbs allow one or
+// more whitespace characters where the entry has a single space. Safe to
+// interpolate: the verbs are only lower-case letters and spaces.
+const NETWORK_VERB_PATTERNS = NETWORK_VERBS.map(verb =>
+  new RegExp(`\\b${verb.replace(/ /g, '\\s+')}\\b`)
+);
+
 /**
- * Check if a tool invocation is network-capable
+ * Check if a tool invocation is network-capable. Bash commands qualify only
+ * through a whole-word network verb, never a bare substring of the command.
  */
 function isNetworkTool(toolName, input) {
   const networkTools = ['WebFetch', 'WebSearch'];
@@ -663,10 +683,7 @@ function isNetworkTool(toolName, input) {
   // Bash commands with network verbs
   if (toolName === 'Bash' && input?.command) {
     const cmd = input.command.toLowerCase();
-    const networkVerbs = ['curl', 'wget', 'git push', 'git pull', 'git fetch',
-                          'npm publish', 'npm install', 'npx', 'ssh', 'scp', 'rsync',
-                          'ping', 'telnet', 'nc ', 'netcat'];
-    return networkVerbs.some(verb => cmd.includes(verb.toLowerCase()));
+    return NETWORK_VERB_PATTERNS.some(pattern => pattern.test(cmd));
   }
 
   return false;
@@ -715,6 +732,7 @@ export function parserVersionHash() {
   const parts = [
     parseSession.toString(),
     isNetworkTool.toString(),
+    NETWORK_VERB_PATTERNS.map(p => p.source).join('\n'),
     extractTarget.toString(),
     entryTimestamp.toString(),
     usageIdentity.toString(),

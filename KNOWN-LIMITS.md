@@ -3532,11 +3532,13 @@ Bash command puts the first 100 characters of the command there. Nothing
 redacts any of it, and ingest passes the field through to the chain
 unchanged.
 
-The Bash test is a bare substring over network verbs, so it fires wider than
-the name suggests. The verb list is matched with `includes` against the
-lowercased command, not parsed as a command line, so `mapping` qualifies
-through the `ping` it contains and a filename containing `scp` qualifies.
-A command with no network verb anywhere in its text does not.
+The Bash test was a bare substring over network verbs, so it fired wider than
+the name suggests: `mapping` qualified through the `ping` it contains. Since
+2026-11-16 (WO-L88-01) each verb matches only as a whole word against the
+lowercased command, so `cat mapping.txt` and `ls scpfiles/` no longer land in
+`sent`. It is still not parsed as a command line: a quoted or echoed verb
+qualifies, and a send with no listed verb in its text (`git -C dir push`,
+`npm i`, `gh`, `Invoke-WebRequest`) does not.
 
 The consequence is that readable text lands on the chain: a credential in a
 `curl` header, an API key in a fetched URL's query string, or a private
