@@ -13,7 +13,8 @@ fingerprint the bundle itself carries (trust: `self-consistent`). The page has n
 of its own to check against, so it cannot say who signed it; compare the printed
 fingerprint with one you already trust. A bundle larger than the 2,953 B QR cap is
 refused before any decoding, and a decoded spine over 4 MiB is refused (the
-vendored brotli decoder has no output limit of its own, KNOWN-LIMITS 83).
+vendored brotli decoder has no output limit of its own; see KNOWN-LIMITS, "The
+offline reader is only as trustworthy as the copy of it you run").
 
 It also reads sealed (v2) bundles, specified in `docs/PAP-SEALED.md`. The node side
 of sealed mode is queued for a signing sitting; this page can read v2 now, and the
