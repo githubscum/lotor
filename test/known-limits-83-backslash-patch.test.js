@@ -139,14 +139,14 @@ describe('KNOWN-LIMITS 83 backslash-fold patch rehearsal (staged; proves the que
     );
   });
 
-  it('patched: a backslash spelling of a core file classifies as core on every host', async () => {
+  it('patched: a backslash spelling of a core file classifies as core on every host', async (t) => {
     if (LANDED) return t.skip('patch landed; the tree already carries the fold');
     const { grant, tmp } = await patchedCopy();
     const result = grant.classifyPath(['src', 'gate', 'index.js'].join(BS), tmp);
     assert.equal(result.verdict, 'core', 'verdict for src' + BS + 'gate' + BS + 'index.js after the fold');
   });
 
-  it('patched: a drive-letter backslash path into another directory refuses on every host', async () => {
+  it('patched: a drive-letter backslash path into another directory refuses on every host', async (t) => {
     if (LANDED) return t.skip('patch landed; the tree already carries the fold');
     const { grant, tmp } = await patchedCopy();
     const target = ['C:', 'other', 'repo', 'bin', 'x.js'].join(BS);
@@ -154,7 +154,7 @@ describe('KNOWN-LIMITS 83 backslash-fold patch rehearsal (staged; proves the que
     assert.equal(result.verdict, 'refused', 'a drive-letter absolute path must refuse, not classify grantable');
   });
 
-  it("patched: the forward-slash spelling still classifies core and a plain non-core file keeps today's verdict", async () => {
+  it("patched: the forward-slash spelling still classifies core and a plain non-core file keeps today's verdict", async (t) => {
     if (LANDED) return t.skip('patch landed; the tree already carries the fold');
     const { grant, tmp } = await patchedCopy();
     assert.equal(grant.classifyPath('src/gate/index.js', tmp).verdict, 'core');
@@ -168,7 +168,7 @@ describe('KNOWN-LIMITS 83 backslash-fold patch rehearsal (staged; proves the que
     );
   });
 
-  it('patched policy: the Windows spelling of an extensionless script gates as opaque exec', async () => {
+  it('patched policy: the Windows spelling of an extensionless script gates as opaque exec', async (t) => {
     if (LANDED) return t.skip('patch landed; the tree already carries the fold');
     const { policy } = await patchedCopy();
     const cwd = deployCwd();
