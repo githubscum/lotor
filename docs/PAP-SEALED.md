@@ -99,13 +99,14 @@ re-encrypt the plaintext. If they re-address it, or move it under another chain 
 or re-sign the outer as themselves while keeping the inner bytes, the inner check
 fails. It cannot stop a recipient who strips the inner signature and signs the
 plaintext as themselves; that bundle then truthfully names them as signer
-(KNOWN-LIMITS 84).
+(KNOWN-LIMITS, "Sealing controls who can open a bundle, not what a recipient does with it").
 
 **What it cannot prove about time.** The timestamp and chain head are the signer's
 claim. The head proves "signed no earlier than this chain entry", never "signed before
 the outcome"; that needs an outside witness, and publishing every bundle before the
 outcome is the only thing that stops an author sealing several predictions and
-revealing the winner (KNOWN-LIMITS 85).
+revealing the winner (KNOWN-LIMITS, "A bundle's time is the signer's claim; nothing
+proves it was signed before anything").
 
 **Reveal.** Opening returns the CEK. Publishing it later lets anyone open the bundle,
 and the public commitment proves it is the right key: commit now, reveal after.
